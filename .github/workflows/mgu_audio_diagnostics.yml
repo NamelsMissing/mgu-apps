@@ -4,6 +4,7 @@ on:
     paths:
       - 'apps/mgu_audio_diagnostics/**'
       - 'tests/mgu_audio_diagnostics.test.js'
+      - 'tests/mgu_audio_manager.test.js'
       - '.github/workflows/mgu_audio_diagnostics.yml'
   pull_request:
     paths:
@@ -25,5 +26,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: node --check apps/mgu_audio_diagnostics/main.js
       - run: node --check apps/mgu_audio_diagnostics/inventory.js
+      - run: node --check apps/mgu_audio_diagnostics/audio_manager.js
       - if: matrix.node == 22
         run: node tests/mgu_audio_diagnostics.test.js
+      - run: node tests/mgu_audio_manager.test.js

@@ -37,7 +37,7 @@ function collect(io, root) {
         const comm = (read(target('/proc/' + pid + '/comm'), 80, io) || '').trim();
         if (expected.test(comm) && services.indexOf(comm) < 0) services.push(comm);
     }
-    return {schema:1, app:'mgu_audio_diagnostics', version:'0.1.0', at:new Date().toISOString(), arch:process.arch,
+    return {schema:1, app:'mgu_audio_diagnostics', version:'0.1.1', at:new Date().toISOString(), arch:process.arch,
         alsaLib:!!stat(target('/usr/lib/libasound.so.2'),io),
         smartxLib:!!stat(target('/usr/lib/alsa-lib/libasound_module_pcm_smartx.so'),io),
         cards:lines('/proc/asound/cards',2048,6), pcm:lines('/proc/asound/pcm',2048,8),
@@ -46,10 +46,10 @@ function collect(io, root) {
 }
 function exportReport(dir, data) {
     const out = path.join(dir,'mgu-audio-diagnostics.json'), temp=out+'.tmp';
-    const text = JSON.stringify({schema:1,app:'mgu_audio_diagnostics',version:'0.1.0',
+    const text = JSON.stringify({schema:1,app:'mgu_audio_diagnostics',version:'0.1.1',
         at:data.at,arch:data.arch,alsaLib:data.alsaLib,smartxLib:data.smartxLib,
         cards:data.cards,pcm:data.pcm,endpointCount:data.endpointCount,
-        endpoints:data.endpoints,services:data.services,dsp:data.dsp||null,note:data.note},null,2);
+        endpoints:data.endpoints,services:data.services,dsp:data.dsp||null,audioManager:data.audioManager||null,note:data.note},null,2);
     if (Buffer.byteLength(text)>48000) throw new Error('Diagnose zu gross');
     const fd=fs.openSync(temp,'w',0o600);
     try {fs.writeFileSync(fd,text);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}

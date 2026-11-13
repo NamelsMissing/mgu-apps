@@ -283,7 +283,7 @@
       "id": "mgu_audio_diagnostics",
       "kind": "app",
       "title": "MGU Audio Diagnostics (read-only)",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "path": "apps/mgu_audio_diagnostics",
       "mguHmi": [
         "ID7"

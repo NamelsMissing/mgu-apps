@@ -2,7 +2,7 @@
   "id": "mgu_audio_diagnostics",
   "title": "MGU Audio Diagnostics",
   "description": "Read-only SmartX, ALSA and DSP diagnostics; no music playback.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "vendor": "NamelsMissing",
   "loggingId": "OAUD",
   "iconGlyph": "AUD",
@@ -10,15 +10,15 @@
     {
       "name": "MAIN",
       "kind": "canvas",
-      "title": "Audio Diagnostics",
+      "title": "Audio Probe",
       "buttons": [
         [
           "BTN_PAGE",
-          "Ansicht wechseln"
+          "Ansicht"
         ],
         [
           "BTN_NEXT",
-          "Weitere Einträge"
+          "Weitere"
         ],
         [
           "BTN_REFRESH",
@@ -26,9 +26,20 @@
         ],
         [
           "BTN_EXPORT",
-          "Diagnose exportieren"
+          "Export"
         ]
       ]
     }
-  ]
+  ],
+  "signals": {
+    "org.genivi.am.commandinterface.CommandControl": {
+      "_instances": "1",
+      "_optional": "AudioManager-Leseabfragen nur soweit verfuegbar",
+      "_methods": [
+        "getListMainSources",
+        "getListMainSinks",
+        "getListMainConnections"
+      ]
+    }
+  }
 }

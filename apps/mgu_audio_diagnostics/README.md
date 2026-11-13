@@ -1,28 +1,27 @@
-# MGU Audio Diagnostics 0.1.0
+# MGU Audio Diagnostics 0.1.1
 
-Installierbare, **rein lesende** MGU-App für iDrive 7. Sie ist nicht der Musikplayer und spielt noch keinen Ton ab.
+MGU-Store-App fuer iDrive 7. Nur lesende Audio-/DSP-Diagnose. Kein PCM-Geraet wird geoeffnet, kein CarPlay-Dienst geaendert.
+
+## Was die App zeigt
+
+- Ueberblick: ALSA, SmartX, vorhandene Kanaele und DSP-Dienst.
+- SmartX-Kanaele: lesende Metadaten und Dateirechte. Die Anzahl der vorhandenen Kanaele ist **nicht** die Anzahl aktiver Streams.
+- **AudioManager (neu 0.1.1):** Abfragen `getListMainSources`, `getListMainSinks` und `getListMainConnections` der GENIVI-CommandControl-Schnittstelle. Die Befehle sind rein lesend; falls BMW sie nicht freigibt, erscheint eine entsprechende Meldung. Ein MainConnection-Datensatz beweist noch nicht, dass sich PCM aus der Verbindung abgreifen laesst.
+- DSP & Dienste: Bypass, PCM-Frameanzahl, verbundene PCM-Clients und expliziter Hinweis, dass Stock-CarPlay nicht am DSP haengt.
+- Export: `mgu-audio-diagnostics.json` im App-Datenordner mit strukturierten, begrenzten AudioManager-Namen/IDs, ohne Audio, Kommandozeilen, VIN, Zugangsdaten oder Shared-Memory-Inhalte.
+
+Die Oberflaeche benutzt wegen fehlender Umlaute im Renderer ASCII-Bezeichnungen und kuerzere Spalten.
+
+## Naechster Test im Fahrzeug
+
+1. Bei stehendem Fahrzeug CarPlay-Musik starten.
+2. MGU Audio Diagnostics oeffnen, `Neu einlesen` waehlen und die Seite `AudioManager` aufrufen.
+3. `Diagnose exportieren` waehlen und die neue JSON senden. Falls die AudioManager-Methode nicht unterstuetzt wird, liefert `audioManager.errors` die jeweilige Diagnose.
+
+Diese App ersetzt weder einen AudioManager-registrierten Medienplayer noch den separaten [ALSA Null-Diagnoseplayer](../../experiments/mgu_alsa). Der vorhandene Equalizer 0.2.3 bleibt unveraendert.
 
 ## Installation
 
-Im MGU Store die Quelle `NamelsMissing/mgu-apps` auf `main` aktualisieren, **MGU Audio Diagnostics** auswählen und installieren. Der Store baut die App mit dem MGU-SDK. Benötigt Renderer, Inputgate und den vorhandenen DSP-Dienst 0.2.0.
+Im MGU Store die Quelle `NamelsMissing/mgu-apps` auf `main` aktualisieren und MGU Audio Diagnostics auf 0.1.1 aktualisieren.
 
-## Funktionen
-
-- Übersicht: Architektur, ALSA-Bibliothek, SmartX-Plugin, Anzahl der Shared-Memory-Kanäle und DSP-Erreichbarkeit
-- SmartX-Kanäle: Kanalnamen und Berechtigungen, Klassifizierung als reservierte CarPlay-, Telefonie- oder Medienkanäle
-- Dienste & DSP: Prozessnamen sowie aktueller DSP-/Bypass-Status und echte PCM-Framezahlen
-- Diagnose exportieren: Datei `mgu-audio-diagnostics.json` im App-Datenordner; keine VIN, Zugangsdaten, Ringbufferdaten oder Prozesskommandozeilen
-
-**Wichtig:** Die App öffnet keine ALSA-Geräte, überschreibt keine Audiokanäle und ändert weder CarPlay noch AudioManager oder systemd. Sie ist auch nicht der getrennte experimentelle native `mgu-audio-probe`, der einen stummen ALSA-Null-Test ausführen kann. Das Programm liegt weiterhin unter [experiments/mgu_alsa](../../experiments/mgu_alsa).
-
-Das vollständige Routing von Testmusik zu BMW-Lautsprechern ist noch nicht identifiziert. Diese App hilft, die Umgebung direkt im iDrive zu dokumentieren; ein hörbarer Audio-Test wird dadurch nicht vorgetäuscht.
-
-## Tests
-
-```sh
-node --check apps/mgu_audio_diagnostics/main.js
-node tests/mgu_audio_diagnostics.test.js
-python3 tools/build_store_app.py mgu_audio_diagnostics
-```
-
-Der Store-Build benötigt das BMW-SDK auf der MGU; die Node-Tests sind offline. Bisher keine Fahrzeugbestätigung der neuen App.
+GENIVI-Methodendokumentation: https://genivi.github.io/AudioManager/classam_1_1IAmCommandReceive.html
