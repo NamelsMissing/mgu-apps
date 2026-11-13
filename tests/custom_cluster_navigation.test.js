@@ -45,6 +45,7 @@ const ctx = {
 const cluster = {
     settings() {}, sample() {}, observeVehicle() {}, apply() {}, pollStatus() {}, badge() {}, close() {},
     clearHistory() { clearedMemory++; },
+    setTraceSink() {},
     armPanel() { return false; },
     rendererStatus() { return ''; },
     status() { return { disarmReason: 'Selector N - P required', testGuard: 'Selector N - P required',
@@ -70,6 +71,8 @@ const deps = {
     './cluster_colors.js': { resolveColor() { return []; }, resolve6WBColor() { return []; }, colorHex() { return ''; } },
     './kit/canvas': { withAlpha() { return ''; } },
     './cluster_diagnostics.js': { report, matrix: (data) => data, draw() {},
+        startJournal() { return { path: '/tmp/mock-cluster-session.txt', write() { return true; },
+            reset() {} }; },
         clearSaved() { cleared++; return { deleted: 2, errors: [], usbPreserved: true }; } },
 };
 vm.runInNewContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), {
