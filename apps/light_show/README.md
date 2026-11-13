@@ -1,4 +1,48 @@
-# Light Show 0.3.0
+# Light Show 0.3.1
+
+## 0.3.1 – Test while naming, up to 30 LEDs in shows, millisecond timing
+
+**Simpler navigation:** Main menu offers **Light Show**, **LEDs - test & name**
+and **Diagnostics**, plus a permanent STOP. No old BDC light commands have
+been enabled. The Show editor holds all effect settings and the ordered
+playlist. Tap **Select / reorder LED channels**, then choose LEFT or RIGHT;
+adding channels places them at the end of the playlist. Tap a selected channel
+to remove it. Up to **30 distinct channels** across both FLM02 modules can be
+selected, subject to visible/no-noise evidence; the total show remains bounded
+by 90 steps / 120 seconds. You can append dark pauses, remove the final step,
+and preview the complete order using saved channel labels. Pattern modes:
+Alternate, Double, Triple, Together (cross-module pairs), Cross (reversed
+right order), Wave (forward/back), and Custom (exact selected order). FLM
+Kanal uses a shared routine per headlamp: the app **never assumes two channels
+on the same FLM module can light simultaneously**. Both-headlamp requests are
+serialized and may not illuminate simultaneously.
+
+**Immediate naming test:** At **LEDs - test & name → Left/Right → Channel**, you
+can now press **TEST this LED now**, optionally **STOP**, and record its effect
+(no noise/visible, no effect, visible with noise, or noise only) *without
+leaving the naming editor*. Then save a preset or custom name in the same
+screen. Names are local in `light-show-channel-names.json` and remain after
+updates when app data is preserved. A name alone never enables an untested LED.
+
+**Faster adjustable effects:** Nominal ON timing is 200, 300, 400, 500, 750,
+1000, 1500, 2000 or 3000 ms; dark gap requests 100, 150, 200, 300, 500,
+750 or 1000 ms. The underlying FLM02 diagnostic RoutineControl accepts only
+whole seconds; the app requests a finite ECU timeout of ceil(ON ms / 1000)
+seconds and issues the original FLM StopRoutine early. **The chosen milliseconds
+are NOT guaranteed physical on/off durations:** TASU transport latency and ECU
+processing may lengthen or shorten visible times. A requested 100-ms dark
+interval starts *after* a positive StopRoutine response; the next START has
+further diagnostic latency. No high-frequency precision strobe is implied.
+
+Every show requires P and zero speed, is serialized, and uses a durable recovery
+journal. Before the next step each affected module receives STOP, followed by
+final STOP/default-session requests at termination. An intermediate STOP
+failure keeps the recovery lock even if later final STOP attempts respond.
+Right channel 13 stays excluded from automatic animation due to its reported
+unusual noise. Only test on private property while securely parked, with
+no one in the beam; normal vehicle lights must work before driving.
+
+
 
 ## 0.3.0 – FLM02 animations return, with user-defined channel names
 

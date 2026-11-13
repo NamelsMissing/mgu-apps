@@ -9,7 +9,7 @@ const Journal = require('./journal');
 const Engine = require('./engine');
 const F = require('./flm-control');
 const {ChannelLabels, PRESETS} = require('./channel-labels');
-const {ShowConfig, PATTERNS, PWM, DURATION, GAP, CYCLES} = require('./flm-show');
+const {ShowConfig, PATTERNS, PWM, PULSE, GAP, CYCLES} = require('./flm-show');
 
 mgu.run({
     async start(ctx) {
@@ -25,57 +25,81 @@ mgu.run({
         } catch(e) { if(e.code!=='ENOENT')log.warn('Observation read: '+e.message); }
         let engine,link,guard,selectedOutput=null,selectedSide='left';
         let labelSide='left',labelChannel=1,editDraft='',charIndex=0;
+        let poolSide='left',lastLabelTestStatus='No test performed yet';
         let lastStatus='',lastShowStatus='',lastDiagnostic='',hiddenTimer=null,lastResult='';
         let confirmationReturn='DIAGNOSTICS',labelReturn='DIAGNOSTICS',flmReturn='MAIN';
         const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 -_';
         const flmConfig=()=>F.settings(Number(settings.get('flmPwm')),Number(settings.get('flmSeconds')));
         const openConfirmation=(dest)=>{confirmationReturn=dest;return ui.open('CONFIRM_LIGHTS');};
         const ensureIdle=()=>{if(engine.run)throw new Error('Stop the active lighting test first');};
-        const onFailure=(e)=>{log.warn('Light Show UI: '+(e.message||e));ui.text('STATUS','ERROR: '+(e.message||e));};
+        const onFailure=(e)=>{
+            const msg=String(e&&e.message||e);
+            log.warn('Light Show UI: '+msg);
+            ui.text('STATUS','ERROR: '+msg);
+            if(ui.isVisible('POOL_CHANNELS'))ui.text('POOL_SIDE','Cannot select this LED: '+msg);
+            if(ui.isVisible('PLAYLIST'))ui.text('POOL_INFO','Playlist: '+msg);
+            if(ui.isVisible('SHOW_SETUP'))ui.text('SHOW_INFO','Cannot start or change show: '+msg);
+            if(ui.isVisible('LABEL_EDITOR')){
+                lastLabelTestStatus='TEST/NAME ERROR: '+msg;
+                updateEditor();
+            }
+        };
         const observed=(side,c)=>names.status(observations,side,c);
         const label=(side,c)=>names.label(side,c)+' ('+(side==='left'?'L':'R')+c+')';
         const eligible=(side)=>names.eligible(observations,side);
         const describe=(st)=>st==='visible'?'VISIBLE, no noise':st==='noise'?'NOISE - excluded':st==='not-visible'?'no visible effect':'not yet observed';
-        const selectorDescription=(v)=>{
-            if(v==='OFF')return 'Dark pause';
-            if(v==='BOTH')return 'Both: '+label('left',show.state.left)+' + '+label('right',show.state.right);
-            const side=v[0]==='L'?'left':'right';
-            return label(side,Number(v.slice(1)));
+
+        const tokenLabel=(token)=>{
+            if(token==='OFF')return 'Dark pause';
+            const side=token[0]==='L'?'left':'right';
+            return label(side,Number(token.slice(1)));
         };
-        const planLines=(plan)=>{
-            const lines=[];
-            plan.steps.forEach((step,i)=>{
-                const components=[];
-                if(step.left)components.push(label('left',step.left));
-                if(step.right)components.push(label('right',step.right));
-                lines.push((i+1)+'. '+(components.join(' + ')||'Dark pause')
-                    + (components.length?' | '+plan.pwm+'% / '+plan.seconds+'s':'')
-                    + ' | dark gap '+plan.gapMs+'ms');
-            });
-            return lines.join('\n');
-        };
-        function updateShow() {
-            const s=show.state;
-            let planSummary;
-            try {const p=show.plan(names,observations);
-                planSummary=p.steps.length+' pulses / bounded (no rapid strobe)';
-            } catch(e) {planSummary='NOT READY: '+e.message;}
-            ui.text('SHOW_INFO','Effect: '+s.pattern+' | '+planSummary+
-                '\nLeft: '+label('left',s.left)+' | Right: '+label('right',s.right)+
-                '\nPWM '+s.pwm+'%, pulse '+s.seconds+'s, gap '+s.gapMs+'ms, repeats '+s.cycles);
-            [['BTN_SHOW_PATTERN','Effect: '+s.pattern],
-             ['BTN_SHOW_LEFT','Left: '+label('left',s.left)],
-             ['BTN_SHOW_RIGHT','Right: '+label('right',s.right)],
-             ['BTN_SHOW_PWM','Brightness: '+s.pwm+'%'],
-             ['BTN_SHOW_SECONDS','Pulse: '+s.seconds+' s'],
-             ['BTN_SHOW_GAP','Dark interval: '+s.gapMs+' ms'],
-             ['BTN_SHOW_CYCLES','Repeats: '+s.cycles]]
-                .forEach(row=>ui.text(row[0],row[1]));
+        const planLines=(plan)=>plan.steps.map((step,i)=>{
+            const active=[];
+            if(step.left)active.push(label('left',step.left));
+            if(step.right)active.push(label('right',step.right));
+            return (i+1)+'. '+(active.join(' + ')||'Dark pause')+
+                (active.length?' | approx. '+plan.pulseMs+'ms / '+plan.pwm+'%':'')+
+                ' | gap requested '+plan.gapMs+'ms';
+        }).join('\n');
+        function selectedLines() {
+            return show.state.playlist.map((tok,i)=>String(i+1).padStart(2,'0')+'. '+tokenLabel(tok)).join('\n');
         }
-        function updateCustom() {
-            ui.text('CUSTOM_INFO','Each step cycles through your visibly confirmed channels, both chosen sides or dark pause.\nA custom effect uses these four steps in order.');
-            for(let i=0;i<4;i++)
-                ui.text('BTN_CUSTOM_'+(i+1),'Step '+(i+1)+': '+selectorDescription(show.state.custom[i]));
+        function updateShow(){
+            const st=show.state;
+            let summary;
+            try {const p=show.plan(names,observations);
+                summary=p.steps.length+' steps | up to '+Math.round(p.steps.length*(p.pulseMs+p.gapMs)/1000)+' s nominal';
+            }catch(e){summary='Not ready: '+e.message;}
+            ui.text('SHOW_INFO','Pattern: '+st.pattern+' | '+summary+
+                '\n'+st.playlist.filter(tok=>tok!=='OFF').length+' selected LEDs (max 30).'+
+                '\nTASU is not precise: 200 ms is an approximate ON window, not measured light.');
+            ui.text('SHOW_SELECTED','Selected order:\n'+selectedLines());
+            [
+                ['BTN_SHOW_PATTERN','Pattern: '+st.pattern],
+                ['BTN_SHOW_POOL','Choose LEDs / order ('+st.playlist.length+' steps)'],
+                ['BTN_SHOW_PWM','Brightness: '+st.pwm+'%'],
+                ['BTN_SHOW_PULSE','ON: approx. '+st.pulseMs+' ms'],
+                ['BTN_SHOW_GAP','Dark gap: requested '+st.gapMs+' ms'],
+                ['BTN_SHOW_CYCLES','Cycles: '+st.cycles]
+            ].forEach(([id,msg])=>ui.text(id,msg));
+        }
+        function updatePool() {
+            ui.text('POOL_STATUS','LED playlist (up to 30 distinct channels):\n'+selectedLines()+
+                '\nTap Left/Right to add a tested LED; tap again to remove.\n'+
+                'Channel 13 right is blocked because an unusual noise was recorded.');
+            ui.text('POOL_INFO','Steps follow the order you add LEDs. Same-module LEDs run one after another.'+
+                '\nTogether pairs only LEFT and RIGHT channels; exact simultaneity not guaranteed.');
+        }
+        function updatePoolChannels(){
+            const side=poolSide,sel=new Set(show.state.playlist);
+            ui.text('POOL_SIDE',(side==='left'?'LEFT':'RIGHT')+' - tap to add/remove\n'+
+                'Only observed-visible/no-noise channels may be added.');
+            for(let ch=1;ch<=15;ch++){
+                const tok=(side==='left'?'L':'R')+ch;
+                ui.text('BTN_POOL_CH_'+ch.toString(16).toUpperCase().padStart(2,'0'),
+                    (sel.has(tok)?'REMOVE ':'ADD ')+tokenLabel(tok)+' ['+describe(observed(side,ch))+']');
+            }
         }
         function updateLabelChannels() {
             ui.text('LABEL_SIDE',labelSide==='left'?'Left FLM02 - select LED to name':'Right FLM02 - select LED to name');
@@ -94,9 +118,10 @@ mgu.run({
         function updateEditor(note) {
             ui.text('LABEL_EDIT_INFO',(labelSide==='left'?'Left':'Right')+' FLM02 channel '+labelChannel+
                 '\nObserved: '+describe(observed(labelSide,labelChannel))+
-                '\nUse preset or character editor; names do not verify an LED.');
+                '\nTEST this channel here, record its result, then assign a meaningful name.');
             ui.text('LABEL_DRAFT','Name draft: '+(editDraft||'(empty)')+(note?'\n'+note:''));
             ui.text('LABEL_CHAR','Next character: '+alphabet[charIndex]);
+            ui.text('LABEL_TEST_STATUS',lastLabelTestStatus);
         }
         function updateOverview() {
             const lines=['USER OBSERVATIONS / NOT AN ECU LAMP MEASUREMENT',
@@ -139,7 +164,7 @@ mgu.run({
         function diagnostics() {
             const s=engine.status(),g=guard.snapshot();
             const lines=[
-                'Light Show 0.3.0 - FLM02-only animation engine',
+                'Light Show 0.3.1 - FLM02 playlist animations',
                 'State: '+s.state+' | '+s.note,
                 'TASU: '+(link.available?'available':'unavailable')+
                     ' | BDC index: '+(link.index||'not read'),
@@ -172,7 +197,7 @@ mgu.run({
             try {
                 let preview=null,previewError=null;
                 try {preview=show.plan(names,observations);}catch(e){previewError=e.message;}
-                const report={app:'light_show',version:'0.3.0',at:new Date().toISOString(),
+                const report={app:'light_show',version:'0.3.1',at:new Date().toISOString(),
                     physicalEffectVerified:false, status:engine.status(),
                     guard:guard.snapshot(),flmSettings:flmConfig(),
                     showSettings:show.state,showPlan:preview,showPlanError:previewError,
@@ -195,8 +220,8 @@ mgu.run({
             try {
                 const p=show.plan(names,observations);
                 ui.text('SHOW_PREVIEW_TEXT','FLM02 SHOW PREVIEW (NO LIGHT COMMANDS)\n'+
-                    'Pattern: '+p.pattern+'\nPWM '+p.pwm+'%, pulse '+p.seconds+
-                    's, dark interval '+p.gapMs+'ms\n'+planLines(p));
+                    'Pattern: '+p.pattern+'\nPWM '+p.pwm+'%, requested pulse '+p.pulseMs+
+                    'ms (approximate), requested dark gap '+p.gapMs+'ms\n'+planLines(p));
             }catch(e){ui.text('SHOW_PREVIEW_TEXT','Cannot start: '+e.message+
                 '\nTest channels and record visible / no unusual noise first.');}
             return ui.open('SHOW_PREVIEW');
@@ -211,21 +236,28 @@ mgu.run({
         const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(onFailure));
         handler('BTN_SHOW_SETUP',openShow);
         handler('BTN_SHOW_BACK',()=>ui.open('MAIN'));
+
         handler('BTN_SHOW_PATTERN',()=>{ensureIdle();show.cycle('pattern',PATTERNS);updateShow();});
-        handler('BTN_SHOW_LEFT',()=>{ensureIdle();show.nextChannel('left',eligible('left'));updateShow();});
-        handler('BTN_SHOW_RIGHT',()=>{ensureIdle();show.nextChannel('right',eligible('right'));updateShow();});
-        [['BTN_SHOW_PWM','pwm',PWM],['BTN_SHOW_SECONDS','seconds',DURATION],
+        [['BTN_SHOW_PWM','pwm',PWM],['BTN_SHOW_PULSE','pulseMs',PULSE],
          ['BTN_SHOW_GAP','gapMs',GAP],['BTN_SHOW_CYCLES','cycles',CYCLES]]
             .forEach(([id,key,opts])=>handler(id,()=>{ensureIdle();show.cycle(key,opts);updateShow();}));
-        handler('BTN_SHOW_CUSTOM',()=>{
-            ensureIdle();
-            if(show.state.pattern!=='custom')show.set({pattern:'custom'});
-            updateCustom();return ui.open('CUSTOM_EDITOR');
-        });
-        handler('BTN_CUSTOM_BACK',openShow);
-        for(let i=0;i<4;i++)handler('BTN_CUSTOM_'+(i+1),()=>{
-            ensureIdle();show.nextCustom(i,eligible('left'),eligible('right'));updateCustom();
-        });
+        handler('BTN_SHOW_POOL',()=>{updatePool();return ui.open('PLAYLIST');});
+        handler('BTN_POOL_BACK',openShow);
+        [['BTN_POOL_LEFT','left'],['BTN_POOL_RIGHT','right']].forEach(([id,side])=>
+            handler(id,()=>{poolSide=side;updatePoolChannels();return ui.open('POOL_CHANNELS');}));
+        handler('BTN_POOL_CHANNEL_BACK',()=>{updatePool();return ui.open('PLAYLIST');});
+        for(let ch=1;ch<=15;ch++){
+            const id='BTN_POOL_CH_'+ch.toString(16).toUpperCase().padStart(2,'0');
+            handler(id,()=>{
+                ensureIdle();
+                const token=(poolSide==='left'?'L':'R')+ch;
+                show.toggle(token,names,observations);
+                updatePoolChannels();
+            });
+        }
+        handler('BTN_POOL_ADD_PAUSE',()=>{ensureIdle();show.appendOff();updatePool();});
+        handler('BTN_POOL_UNDO',()=>{ensureIdle();show.undo();updatePool();});
+        handler('BTN_POOL_RESET',()=>{ensureIdle();show.clear();updatePool();});
         handler('BTN_SHOW_PREVIEW',previewShow);
         handler('BTN_PREVIEW_BACK',openShow);
         ['BTN_SHOW_START','BTN_PREVIEW_START'].forEach(id=>handler(id,startShow));
@@ -238,7 +270,6 @@ mgu.run({
         handler('BTN_OVERVIEW_BACK',()=>ui.open('DIAGNOSTICS'));
         handler('BTN_OVERVIEW_LABEL',()=>{labelReturn='CHANNEL_OVERVIEW';return ui.open('LABEL_INDEX');});
         handler('BTN_OVERVIEW_TEST',()=>{flmReturn='CHANNEL_OVERVIEW';return ui.open('FLM_INDEX');});
-        handler('BTN_FLM_HOME',()=>{flmReturn='MAIN';return ui.open('FLM_INDEX');});
         handler('BTN_FLM_DIAG',()=>{flmReturn='DIAGNOSTICS';return ui.open('FLM_INDEX');});
         handler('BTN_FLM_BACK',()=>ui.open(flmReturn));
         for(const side of ['left','right'])
@@ -308,7 +339,8 @@ mgu.run({
             const id='BTN_LABEL_CH_'+c.toString(16).toUpperCase().padStart(2,'0');
             handler(id,()=>{
                 ensureIdle();labelChannel=c;editDraft=names.name(labelSide,c);
-                charIndex=0;updateEditor();return ui.open('LABEL_EDITOR');
+                charIndex=0;lastLabelTestStatus='Press TEST to identify this LED before naming it.';
+                updateEditor();return ui.open('LABEL_EDITOR');
             });
         }
         for(let i=0;i<PRESETS.length;i++)
@@ -316,6 +348,35 @@ mgu.run({
                 ensureIdle();editDraft=PRESETS[i];names.set(labelSide,labelChannel,editDraft);
                 updateEditor('Saved preset: '+editDraft);
             });
+
+        handler('BTN_LABEL_TEST',async()=>{
+            ensureIdle();
+            if(journal.pending())throw new Error('Stop lock pending: check normal lights in Diagnostics first');
+            const opts=flmConfig();
+            selectedOutput={route:'flm',side:labelSide,channel:labelChannel,pwm:opts.pwm,
+                seconds:opts.seconds,label:label(labelSide,labelChannel),
+                prg:F.MODULES[labelSide].name+'_KANAL_'+labelChannel};
+            lastLabelTestStatus='Running '+labelSide+' channel '+labelChannel+
+                ' / '+opts.pwm+'% for '+opts.seconds+' s; STOP available.';
+            updateEditor();
+            await engine.testFlm(labelSide,labelChannel,opts.pwm,opts.seconds);
+            const st=engine.status();
+            lastLabelTestStatus=st.state+': '+st.note+
+                (st.stopConfirmed?'\nStopRoutine confirmed':'\nStop not confirmed: do not repeat');
+            updateEditor();
+        });
+        handler('BTN_LABEL_STOP',()=>engine.stop('STOP from name editor'));
+        [['BTN_LABEL_RESULT_VISIBLE','visible, no unusual noise'],
+         ['BTN_LABEL_RESULT_NO_EFFECT','no visible effect, no noise'],
+         ['BTN_LABEL_RESULT_VISIBLE_NOISE','visible and unusual noise'],
+         ['BTN_LABEL_RESULT_NOISE','unusual noise without visible light']]
+            .forEach(([id,value])=>handler(id,()=>{
+                if(!selectedOutput||selectedOutput.side!==labelSide||selectedOutput.channel!==labelChannel)
+                    throw new Error('Press TEST on this LED first');
+                observe(value);
+                lastLabelTestStatus=lastResult;
+                updateEditor();
+            }));
         handler('BTN_LABEL_NEXT_CHAR',()=>{charIndex=(charIndex+1)%alphabet.length;updateEditor();});
         handler('BTN_LABEL_APPEND_CHAR',()=>{if(editDraft.length>=24)throw Error('Maximum 24 characters');
             editDraft+=alphabet[charIndex];updateEditor();});
@@ -340,7 +401,7 @@ mgu.run({
         ui.onVisible(()=>{
             clearTimeout(hiddenTimer);
             hiddenTimer=setTimeout(()=>{
-                const pages=['MAIN','SHOW_SETUP','SHOW_PREVIEW','CUSTOM_EDITOR',
+                const pages=['MAIN','SHOW_SETUP','SHOW_PREVIEW','PLAYLIST','POOL_CHANNELS',
                     'DIAGNOSTICS','CHANNEL_OVERVIEW','LABEL_INDEX','LABEL_CHANNELS',
                     'LABEL_EDITOR','FLM_INDEX','FLM_CHANNELS','OUTPUT_OBSERVE','CONFIRM_LIGHTS'];
                 if(!pages.some(name=>ui.isVisible(name))&&engine.run)engine.stop('App closed');

@@ -101,25 +101,28 @@ class Engine {
         return this._start({ route: 'flm', side, channel, pwm, seconds, tempo: seconds * 1000 });
     }
     playFlmShow(plan) {
+        let pulseMs;
         try {
+            pulseMs = plan && Number.isInteger(plan.pulseMs) ? plan.pulseMs : (plan && plan.seconds * 1000);
             if (!plan || plan.route !== 'flm_show' || !Array.isArray(plan.steps)
-                || plan.steps.length < 1 || plan.steps.length > 20 || ![20,40,60,80,100].includes(plan.pwm)
-                || ![1,2,3].includes(plan.seconds) || ![500,750,1000].includes(plan.gapMs))
-                throw new Error('Invalid FLM02 animation configuration');
-            let counted = 0;
+                || plan.steps.length < 1 || plan.steps.length > 90
+                || ![20,40,60,80,100].includes(plan.pwm)
+                || ![200,300,400,500,750,1000,1500,2000,3000].includes(pulseMs)
+                || ![100,150,200,300,500,750,1000].includes(plan.gapMs))
+                throw new Error('Invalid FLM02 animation settings');
+            let active=0;
             for (const step of plan.steps) {
                 if (!step || typeof step !== 'object') throw new Error('Invalid FLM02 animation step');
                 for (const side of ['left','right']) {
                     if (step[side] !== null && step[side] !== undefined) {
-                        F.channelNumber(step[side]); counted++;
+                        F.channelNumber(step[side]); active++;
                     }
                 }
             }
-            if (counted * plan.seconds > 36
-                || plan.steps.length*(plan.seconds*1000+plan.gapMs)>55000)
-                throw new Error('Animation exceeds safe finite test budget');
-        } catch (e) { this.update('ERROR', String(e.message || e)); return Promise.resolve(); }
-        return this._start(plan);
+            if (!active || plan.steps.length * (pulseMs + plan.gapMs) > 120000)
+                throw new Error('Animation exceeds the bounded show budget');
+        } catch (e) { this.update('ERROR',String(e.message||e)); return Promise.resolve(); }
+        return this._start(Object.assign({},plan,{pulseMs,seconds:Math.ceil(pulseMs/1000)}));
     }
     _start(config) {
         const reason = this.guard.reason();
@@ -138,7 +141,7 @@ class Engine {
             seconds: ['flm','flm_show'].includes(config.route) ? config.seconds : null,
             sides, pattern: config.route === 'flm_show' ? config.pattern : null,
             stepsCount: config.route === 'flm_show' ? config.steps.length : null };
-        this.sent = 0; this.stepMs = 0; this.mask = [0, 0]; this.outputSamples = []; this.originalFault = null; this.cleanup = {};
+        this.sent = 0; this.stepMs = 0; this.mask = [0, 0]; this.outputSamples = []; this.originalFault = null; this.cleanup = {}; this.sequenceStopFault = false;
         this.update('STARTING', ['flm','flm_show'].includes(config.route)
             ? 'Checking BDC and FLM02 identity' : 'Checking BDC_G05');
         let resolve;
@@ -243,40 +246,43 @@ class Engine {
             await this.sleep(Math.min(25, c.seconds * 1000 - elapsed));
     }
     async _flmShow(c) {
-        // One serialized TASU request at a time. Both FLM modules can be commanded,
-        // but a combined pulse is not perfectly simultaneous (transport latency).
+        // ECU FLM_KANAL accepts only whole seconds. For 200-ms pulses,
+        // request a FINITE one-second ECU timeout, then ask the module
+        // to stop after a 200-ms host-side interval. Actual physical
+        // pulse timing is not guaranteed by TASU round-trip latency.
         const delay = async (duration) => {
-            for (let t = 0; t < duration && this.allowed(); t += 25)
-                await this.sleep(Math.min(25, duration-t));
+            for (let t=0; t<duration && this.allowed(); t+=25)
+                await this.sleep(Math.min(25,duration-t));
         };
-        this.deadline = this.now() + c.steps.length * (c.seconds*1000+c.gapMs);
-        for (let i = 0; i < c.steps.length && this.allowed(); i++) {
-            const s = c.steps[i], started = [];
-            this.control.stepIndex = i + 1;
-            this.update('RUNNING','FLM02 ' + c.pattern + ' / step ' + (i+1) + '/' + c.steps.length
-                + ' (PWM '+c.pwm+'%, '+c.seconds+'s)');
-            let failure = null;
+        const pulseMs=c.pulseMs || c.seconds*1000;
+        const ecuSeconds=Math.ceil(pulseMs/1000);
+        this.deadline=this.now()+c.steps.length*(pulseMs+c.gapMs);
+        for (let i=0;i<c.steps.length && this.allowed();i++) {
+            const step=c.steps[i], started=[];
+            this.control.stepIndex=i+1;
+            this.update('RUNNING','FLM02 '+c.pattern+' / '+(i+1)+'/'+c.steps.length
+                +' | '+c.pwm+'% | '+pulseMs+' ms nominal pulse');
+            let failure=null;
             try {
                 for (const side of ['left','right']) {
-                    if (s[side] === null || s[side] === undefined) continue;
+                    if (step[side] === null || step[side] === undefined) continue;
                     if (!this.allowed()) break;
-                    // Mark as possibly active BEFORE waiting for the ECU answer:
-                    // a timeout can happen after the physical command was accepted.
+                    // START may reach the ECU even if its reply times out.
+                    // Record the side BEFORE starting so final cleanup knows.
                     started.push(side);
-                    await this.link.flmStart(side,s[side],c.pwm,c.seconds);
-                    this.sent++; this.changed();
+                    await this.link.flmStart(side,step[side],c.pwm,ecuSeconds);
+                    this.sent++;this.changed();
                 }
-                if (started.length) await delay(c.seconds*1000);
-            } catch (e) { failure = e; }
-            // Always request StopRoutine for every possibly activated module
-            // before moving to the next step, regardless of cancellation/failure.
+                if (started.length) await delay(pulseMs);
+            } catch(e) {failure=e;}
+            // Never start the next step before STOP for every affected side.
             for (const side of started) {
                 try { await this.link.flmStop(side); }
-                catch (e) { failure = failure || e; }
+                catch(e) {this.sequenceStopFault=true;failure=failure||e;}
             }
             if (failure) throw failure;
             if (!this.allowed()) break;
-            await delay(c.gapMs); // Nonzero dark interval; no unbounded rapid strobe.
+            await delay(c.gapMs); // Requested dark gap AFTER confirmed STOP.
         }
     }
     async _timedLoop(c) {
@@ -355,6 +361,7 @@ class Engine {
         if (this.control.route === 'flm_show') {
             const sides = Array.isArray(this.control.sides) ? this.control.sides : [];
             const errors=[],stopped={},defaults={};
+            if (this.sequenceStopFault) errors.push('An intermediate FLM02 StopRoutine failed; manual normal-lights check required');
             // Release ALL identified sides even if an earlier side failed.
             for (const side of sides) {
                 try { await this.link.flmStop(side); stopped[side]=true; }

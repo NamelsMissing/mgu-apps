@@ -1,8 +1,8 @@
 {
   "id": "light_show",
   "title": "Light Show",
-  "description": "FLM02-only BMW ID7 light-show sequencer: selectable left/right LED channel patterns, custom four-step effects, user-defined channel labels, individual diagnosis and safe stop recovery.",
-  "version": "0.3.0",
+  "description": "FLM02 light effects with up to 30 user-selected LEDs, 200-ms nominal pulses, 100-ms minimum requested dark gap, and direct channel testing while assigning names; BDC light commands remain disabled in the UI.",
+  "version": "0.3.1",
   "vendor": "custom",
   "loggingId": "OAL9",
   "iconGlyph": "LS",
@@ -28,127 +28,256 @@
     {
       "name": "MAIN",
       "kind": "menu",
-      "title": "Light Show - FLM02",
+      "title": "Light Show | FLM02",
       "settings": true,
       "items": [
         [
           "text",
           "STATUS",
-          "Ready - choose an effect"
+          "Ready / vehicle stationary in P"
         ],
         [
           "button",
           "BTN_SHOW_SETUP",
-          "Light effects / animations"
-        ],
-        [
-          "button",
-          "BTN_STOP",
-          "STOP / return lights to vehicle"
-        ],
-        [
-          "button",
-          "BTN_FLM_HOME",
-          "Test individual FLM02 LED channels"
+          "1. Light Show - effects & timing"
         ],
         [
           "button",
           "BTN_LABEL_HOME",
-          "Name LED channels"
+          "2. LEDs - test & name"
         ],
         [
           "button",
           "BTN_DIAG",
-          "Diagnostics / export logs"
+          "3. Diagnostics & logs"
+        ],
+        [
+          "button",
+          "BTN_STOP",
+          "STOP / release FLM02"
         ],
         [
           "text3",
           "NOTICE",
-          "FLM02 ONLY. Light show requires P, zero speed, and recorded visible/no-noise channels. Use off-road, no bystanders in beam."
+          "FLM02 only. Select up to 30 tested, noise-free LED channels. 200 ms pulses are approximate: TASU latency prevents exact millisecond timing. Never use on public roads."
         ]
       ]
     },
     {
       "name": "SHOW_SETUP",
       "kind": "menu",
-      "title": "FLM02 - light effects",
+      "title": "Light Show | effects",
       "items": [
         [
           "text3",
           "SHOW_INFO",
-          "Choose effect, left/right channel and timing; use only visually observed LED channels."
+          "Build a playlist of LED channels and select a pattern."
         ],
         [
           "text",
           "SHOW_PROGRESS",
-          "Not running"
+          "Ready"
+        ],
+        [
+          "scroll",
+          "SHOW_SELECTED",
+          "No selected channels"
         ],
         [
           "button",
           "BTN_SHOW_PATTERN",
-          "Effect / pattern"
+          "Effect pattern"
         ],
         [
           "button",
-          "BTN_SHOW_LEFT",
-          "Left channel"
-        ],
-        [
-          "button",
-          "BTN_SHOW_RIGHT",
-          "Right channel"
+          "BTN_SHOW_POOL",
+          "Select / reorder LED channels"
         ],
         [
           "button",
           "BTN_SHOW_PWM",
-          "Show brightness"
+          "Brightness"
         ],
         [
           "button",
-          "BTN_SHOW_SECONDS",
-          "Pulse length"
+          "BTN_SHOW_PULSE",
+          "Nominal ON pulse (ms)"
         ],
         [
           "button",
           "BTN_SHOW_GAP",
-          "Dark interval"
+          "Requested dark gap (ms)"
         ],
         [
           "button",
           "BTN_SHOW_CYCLES",
-          "Repeat cycles"
-        ],
-        [
-          "button",
-          "BTN_SHOW_CUSTOM",
-          "Edit custom four-step sequence"
+          "Repeat count"
         ],
         [
           "button",
           "BTN_SHOW_PREVIEW",
-          "Preview step sequence"
+          "Preview planned order"
         ],
         [
           "button",
           "BTN_SHOW_START",
-          "START light show (P, standstill)"
+          "START light show (Park only)"
         ],
         [
           "button",
           "BTN_SHOW_STOP",
-          "STOP / return lights"
+          "STOP"
         ],
         [
           "button",
           "BTN_SHOW_BACK",
-          "Main menu"
+          "Back to main"
+        ]
+      ]
+    },
+    {
+      "name": "PLAYLIST",
+      "kind": "menu",
+      "title": "Show | selected LEDs",
+      "items": [
+        [
+          "text3",
+          "POOL_INFO",
+          "Select any combination of up to 30 distinct FLM02 channels. The order you add them is the animation order."
+        ],
+        [
+          "scroll",
+          "POOL_STATUS",
+          "Playlist empty"
+        ],
+        [
+          "button",
+          "BTN_POOL_LEFT",
+          "Add/remove LEFT channels"
+        ],
+        [
+          "button",
+          "BTN_POOL_RIGHT",
+          "Add/remove RIGHT channels"
+        ],
+        [
+          "button",
+          "BTN_POOL_ADD_PAUSE",
+          "Append dark pause"
+        ],
+        [
+          "button",
+          "BTN_POOL_UNDO",
+          "Remove last playlist step"
+        ],
+        [
+          "button",
+          "BTN_POOL_RESET",
+          "Reset playlist to L7, R7"
+        ],
+        [
+          "button",
+          "BTN_POOL_BACK",
+          "Back to effect settings"
+        ]
+      ]
+    },
+    {
+      "name": "POOL_CHANNELS",
+      "kind": "menu",
+      "title": "Show | select LED channels",
+      "items": [
+        [
+          "text3",
+          "POOL_SIDE",
+          "Left/right - tap channels to add or remove"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_01",
+          "Channel 1"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_02",
+          "Channel 2"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_03",
+          "Channel 3"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_04",
+          "Channel 4"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_05",
+          "Channel 5"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_06",
+          "Channel 6"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_07",
+          "Channel 7"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_08",
+          "Channel 8"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_09",
+          "Channel 9"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_0A",
+          "Channel 10"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_0B",
+          "Channel 11"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_0C",
+          "Channel 12"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_0D",
+          "Channel 13"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_0E",
+          "Channel 14"
+        ],
+        [
+          "button",
+          "BTN_POOL_CH_0F",
+          "Channel 15"
+        ],
+        [
+          "button",
+          "BTN_POOL_CHANNEL_BACK",
+          "Back to selected LEDs"
         ]
       ]
     },
     {
       "name": "SHOW_PREVIEW",
       "kind": "menu",
-      "title": "FLM02 - sequence preview",
+      "title": "Light Show | preview",
       "items": [
         [
           "scroll",
@@ -169,43 +298,6 @@
           "button",
           "BTN_PREVIEW_STOP",
           "STOP"
-        ]
-      ]
-    },
-    {
-      "name": "CUSTOM_EDITOR",
-      "kind": "menu",
-      "title": "FLM02 - 4 step editor",
-      "items": [
-        [
-          "text3",
-          "CUSTOM_INFO",
-          "Tap a step to cycle through eligible named channels, both sides, and dark pause."
-        ],
-        [
-          "button",
-          "BTN_CUSTOM_1",
-          "Step 1"
-        ],
-        [
-          "button",
-          "BTN_CUSTOM_2",
-          "Step 2"
-        ],
-        [
-          "button",
-          "BTN_CUSTOM_3",
-          "Step 3"
-        ],
-        [
-          "button",
-          "BTN_CUSTOM_4",
-          "Step 4"
-        ],
-        [
-          "button",
-          "BTN_CUSTOM_BACK",
-          "Back to effect settings"
         ]
       ]
     },
@@ -286,7 +378,7 @@
     {
       "name": "LABEL_INDEX",
       "kind": "menu",
-      "title": "FLM02 - name LED channels",
+      "title": "LED setup | select side",
       "items": [
         [
           "text3",
@@ -313,7 +405,7 @@
     {
       "name": "LABEL_CHANNELS",
       "kind": "menu",
-      "title": "FLM02 - select channel to name",
+      "title": "LED setup | select channel",
       "items": [
         [
           "text3",
@@ -405,7 +497,7 @@
     {
       "name": "LABEL_EDITOR",
       "kind": "menu",
-      "title": "FLM02 - edit channel label",
+      "title": "LED Setup | test & name",
       "items": [
         [
           "text3",
@@ -421,6 +513,41 @@
           "text",
           "LABEL_CHAR",
           "Next character: A"
+        ],
+        [
+          "button",
+          "BTN_LABEL_TEST",
+          "TEST this LED now (P, stationary)"
+        ],
+        [
+          "button",
+          "BTN_LABEL_STOP",
+          "STOP LED test"
+        ],
+        [
+          "text",
+          "LABEL_TEST_STATUS",
+          "No test performed in this editor"
+        ],
+        [
+          "button",
+          "BTN_LABEL_RESULT_VISIBLE",
+          "Result: visible / no noise"
+        ],
+        [
+          "button",
+          "BTN_LABEL_RESULT_NO_EFFECT",
+          "Result: no visible light"
+        ],
+        [
+          "button",
+          "BTN_LABEL_RESULT_VISIBLE_NOISE",
+          "Result: visible + unusual noise"
+        ],
+        [
+          "button",
+          "BTN_LABEL_RESULT_NOISE",
+          "Result: noise without visible light"
         ],
         [
           "button",

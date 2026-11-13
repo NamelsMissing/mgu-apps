@@ -458,7 +458,7 @@ test('Real TASU transport serializes third-brake-light control via BDC, not a gu
 
 test('FLM02 OEM routine uses only the bounded channel START candidate and captured StopRoutine', () => {
     const spec = require(path.join(app, 'app.json'));
-    assert.strictEqual(spec.version, '0.3.0');
+    assert.strictEqual(spec.version, '0.3.1');
     assert.deepStrictEqual(F.start(7), [0x01, 0xA5, 0x4B, 0x07, 60, 2]);
     assert.deepStrictEqual(F.start(7, 100, 5), [0x01, 0xA5, 0x4B, 0x07, 100, 5]);
     assert.strictEqual(F.isPermittedRoutine(F.start(7, 100, 5)), true);
@@ -543,41 +543,74 @@ test('Real TASU FLM transport requires verified module and refuses unbounded act
 });
 
 
-test('FLM02 pattern menu, custom editor and channel naming are reachable without legacy BDC controls', () => {
-    const spec = require(path.join(app, 'app.json'));
-    const keys = spec.screens.flatMap((s) => s.items.map((i) => i[1]));
-    assert.strictEqual(new Set(keys).size, keys.length, 'one unique RHMI component per action');
-    for (const forbidden of ['BTN_START','BTN_FUNCTION_TEST','BTN_OUTPUTS','BTN_IDENTIFY'])
-        assert(!keys.includes(forbidden), forbidden);
-    for (const required of ['BTN_SHOW_SETUP','BTN_SHOW_PATTERN','BTN_SHOW_START','BTN_SHOW_PREVIEW',
-        'BTN_CUSTOM_1','BTN_CUSTOM_4','BTN_LABEL_HOME','BTN_LABEL_DIAG','BTN_LABEL_SAVE','BTN_EXPORT'])
-        assert(keys.includes(required), required);
-    assert.deepStrictEqual(spec.settings.map((s) => s.key), ['flmPwm','flmSeconds']);
+
+test('FLM02 playlist and inline name/test controls are reachable without BDC light actions', () => {
+    const spec=require(path.join(app,'app.json'));
+    const ids=spec.screens.flatMap(s=>s.items.map(row=>row[1]));
+    assert.strictEqual(new Set(ids).size,ids.length,'unique BMW RHMI component IDs');
+    for(const no of ['BTN_START','BTN_FUNCTION_TEST','BTN_OUTPUTS','BTN_IDENTIFY','BTN_CUSTOM_1'])
+        assert(!ids.includes(no),no);
+    for(const yes of ['BTN_SHOW_SETUP','BTN_SHOW_PATTERN','BTN_SHOW_START','BTN_SHOW_PREVIEW',
+        'BTN_SHOW_POOL','BTN_POOL_LEFT','BTN_POOL_RIGHT','BTN_POOL_CH_0F','BTN_POOL_ADD_PAUSE',
+        'BTN_LABEL_HOME','BTN_LABEL_TEST','BTN_LABEL_STOP','BTN_LABEL_SAVE','BTN_EXPORT'])
+        assert(ids.includes(yes),yes);
+    assert.deepStrictEqual(spec.settings.map(s=>s.key),['flmPwm','flmSeconds']);
 });
-test('FLM02 show accepts observed, noise-free channels only and compiles bounded custom sequences', () => {
-    const { makePlan, DEFAULT } = require(path.join(app, 'flm-show'));
-    const { ChannelLabels } = require(path.join(app, 'channel-labels'));
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(),'light-show-names-'));
-    try {
-        const names = new ChannelLabels(dir);
-        const obs = [];
-        for (const side of ['left','right']) for (const channel of [1,5,7,8])
-            obs.push({route:'flm',side,channel,result:'visible, no unusual noise',cleanupConfirmed:true});
+test('FLM02 show permits up to 30 distinct observed channels, preserves order, rejects noise and has 200ms timing',()=>{
+    const {makePlan,DEFAULT,PULSE,GAP,fromOld,ShowConfig}=require(path.join(app,'flm-show'));
+    const {ChannelLabels}=require(path.join(app,'channel-labels'));
+    const dir=fs.mkdtempSync(path.join(os.tmpdir(),'light-show-playlist-'));
+    try{
+        const names=new ChannelLabels(dir),obs=[];
+        for(const side of ['left','right'])for(let ch=1;ch<=15;ch++)
+            obs.push({route:'flm',side,channel:ch,result:'visible, no unusual noise',cleanupConfirmed:true});
         obs.push({route:'flm',side:'right',channel:13,
             result:'unusual noise without visible light',cleanupConfirmed:true});
         names.set('left',7,'Fernlicht');
         assert.strictEqual(new ChannelLabels(dir).label('left',7),'Fernlicht');
-        assert.deepStrictEqual(names.eligible(obs,'left'),[1,5,7,8]);
         assert.strictEqual(names.allowed(obs,'right',13),false);
-        const custom=Object.assign({},DEFAULT,{pattern:'custom',custom:['L7','R8','BOTH','OFF']});
-        const plan=makePlan(custom,names,obs);
-        assert.strictEqual(plan.steps.length,8);
-        assert.deepStrictEqual(plan.steps[0],{left:7,right:null});
-        assert.deepStrictEqual(plan.steps[1],{left:null,right:8});
-        assert.deepStrictEqual(plan.steps[2],{left:7,right:7});
-        assert.throws(()=>makePlan(Object.assign({},custom,{custom:['R13','L7','OFF','OFF']}),names,obs),/no safe visible observation/);
-        assert.throws(()=>makePlan(Object.assign({},custom,{pattern:'triple',seconds:3,cycles:3}),names,obs),/budget/);
-    } finally {fs.rmSync(dir,{recursive:true,force:true});}
+        assert(PULSE.includes(200)&&GAP.includes(100));
+        const c=new ShowConfig(dir);
+        c.set({playlist:['L7','R8','L5','OFF'],pattern:'custom',pulseMs:200,gapMs:100,cycles:1});
+        let plan=c.plan(names,obs);
+        assert.strictEqual(plan.pulseMs,200);
+        assert.deepStrictEqual(plan.steps,[{left:7,right:null},{left:null,right:8},{left:5,right:null},{left:null,right:null}]);
+        assert.throws(()=>makePlan({...c.state,playlist:['L7','R13']},names,obs),/not marked visible/);
+        assert.throws(()=>makePlan({...c.state,playlist:['L7','L7']},names,obs),/duplicate/);
+        assert.throws(()=>makePlan({...c.state,pattern:'triple',cycles:3,pulseMs:3000,
+            playlist:['L7','R8','L5','L1','R1','L8','R5','R7','L3','R3','L4','R4']},names,obs),/too long/);
+        c.toggle('L1',names,obs);assert(c.state.playlist.includes('L1'));
+        c.toggle('L1',names,obs);assert(!c.state.playlist.includes('L1'));
+        c.appendOff();assert.strictEqual(c.state.playlist.at(-1),'OFF');
+        c.undo();assert.strictEqual(c.state.playlist.at(-1),'OFF');
+        const all=[];
+        for(const side of ['L','R'])for(let ch=1;ch<=15;ch++)
+            if(!(side==='R'&&ch===13))all.push(side+ch);
+        const thirty=all.concat(['R13']);
+        assert.throws(()=>makePlan({...DEFAULT,playlist:thirty},names,obs),/not marked visible/);
+        assert.strictEqual(makePlan({...DEFAULT,playlist:all,pulseMs:200,gapMs:100,cycles:1},
+            names,obs).steps.length,29);
+        const noNoise=obs.filter(x=>!(x.side==='right'&&x.channel===13&&x.result==='unusual noise without visible light'));
+        assert.strictEqual(makePlan({...DEFAULT,playlist:thirty,pulseMs:200,gapMs:100,cycles:1},
+            names,noNoise).steps.length,30);
+        const migrated=fromOld({pattern:'alternate',left:7,right:8,pwm:60,seconds:1,
+            gapMs:500,cycles:2,custom:['L5','R5','L7','R8']});
+        assert.deepStrictEqual(migrated.playlist,['L5','R5','L7','R8']);
+        assert.strictEqual(migrated.pulseMs,1000);
+    }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('200 ms FLM02 show requests finite ECU timeout and an early, serialized STOP',async()=>{
+    const r=rig();
+    await r.engine.playFlmShow({route:'flm_show',pattern:'custom',pwm:100,pulseMs:200,gapMs:100,
+        steps:[{left:7,right:null},{left:null,right:8},{left:5,right:null}]});
+    const starts=r.calls.filter(x=>Array.isArray(x)&&x[0]==='flmStart');
+    assert.deepStrictEqual(starts,[['flmStart','left',7,100,1],
+        ['flmStart','right',8,100,1],['flmStart','left',5,100,1]]);
+    assert.strictEqual(r.now()-10000,900,'three 200ms windows plus dark gaps');
+    const idx=r.calls.findIndex(x=>Array.isArray(x)&&x[0]==='flmStart');
+    assert.deepStrictEqual(r.calls[idx+1],['flmStop','left']);
+    assert(!r.calls.includes('release') && !r.calls.includes('session'));
+    assert.strictEqual(r.journal.pending(),false);
 });
 test('FLM02 animation uses no BDC control, stops both sides and clears journal only after successful cleanup',async()=>{
     const r=rig();
