@@ -22,6 +22,7 @@ void main() {
 const MODES = { stock: 0, sport: 1, classic: 2, minimal: 3, g80: 4, oem: 5, sixwb: 6 };
 const finite = (x) => typeof x === 'number' && Number.isFinite(x);
 const PANEL_TEST_MS = 12000;
+const SIGNAL_MAX_AGE_MS = 15000;
 const PANEL_TARGETS = { panel: true, panel201: true, panel202: true };
 
 class ClusterLayers {
@@ -46,6 +47,8 @@ class ClusterLayers {
         this.activeTestMode = '';
         this.lastSample = 0;
         this.data = {};
+        this.latestSignalTimes = {};
+        this.lastIncompleteTraceAt = 0;
         this.panelEvents = [];
         this.traceSink = null;
         this.suspended = false;
@@ -180,6 +183,20 @@ class ClusterLayers {
     }
     sample(d) {
         if (!d || d.demo || !finite(d.speed) || !finite(d.rpm) || d.speed < 0 || d.speed > 350 || d.rpm < 0 || d.rpm > 8000) return;
+        if (d.receivedAt) {
+            this.latestSignalTimes = d.receivedAt;
+            const now = Date.now(), speedAt = d.receivedAt.speed, rpmAt = d.receivedAt.rpm;
+            if (!finite(speedAt) || !finite(rpmAt) || now - speedAt > SIGNAL_MAX_AGE_MS ||
+                now - rpmAt > SIGNAL_MAX_AGE_MS || speedAt > now + 1000 || rpmAt > now + 1000) {
+                if (now - this.lastIncompleteTraceAt > 15000) {
+                    this.lastIncompleteTraceAt = now;
+                    this.tracePanel('read-only getter samples incomplete: speedAge=' +
+                        (finite(speedAt) ? Math.round((now - speedAt) / 1000) : '?') +
+                        's rpmAge=' + (finite(rpmAt) ? Math.round((now - rpmAt) / 1000) : '?') + 's');
+                }
+                return; // never accept a fresh RPM paired with a stale speed
+            }
+        }
         this.data = d;
         this.lastSample = Date.now();
         this.apply();
@@ -341,6 +358,8 @@ class ClusterLayers {
             speedKmh: finite(this.data.speed) ? this.data.speed : null,
             engineRpm: finite(this.data.rpm) ? this.data.rpm : null,
             sampleAgeSeconds: this.lastSample ? Math.max(0, Math.floor((Date.now() - this.lastSample) / 1000)) : null,
+            speedAgeSeconds: finite(this.latestSignalTimes.speed) ? Math.max(0, Math.floor((Date.now() - this.latestSignalTimes.speed) / 1000)) : null,
+            rpmAgeSeconds: finite(this.latestSignalTimes.rpm) ? Math.max(0, Math.floor((Date.now() - this.latestSignalTimes.rpm) / 1000)) : null,
             panelActive: !!this.panelRef, panelLayer: this.panelLayerState,
             panelLayerReason: this.panelLayerReason,
             panelTarget: this.activePanelTarget, panelTargetState: this.panelTargetState,
