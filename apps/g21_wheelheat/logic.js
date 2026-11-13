@@ -62,6 +62,13 @@ function decodeSeatReadback(payload) {
         emergency: payload.length > 5 ? payload[5] === 1 : null,
         timedOut: payload.length > 6 ? payload[6] === 1 : null };
 }
+/** Display only the latest decoded ECU state. Manual state transitions should
+ * not be mistaken for readback instability. Raw replies remain in the log. */
+function readbackLabel(decoded, seat) {
+    if (!decoded) return null;
+    if (seat) return decoded.on ? 'ON  |  Level ' + decoded.level : 'OFF (BDC report)';
+    return decoded.on ? 'ON  |  LED ' + (decoded.led ? 'ON' : 'OFF') : 'OFF (BDC report)';
+}
 module.exports = { ECU, DID_HEAT, DID_LED, DID_SEAT_DRIVER, DID_SEAT_PASSENGER,
     TIMES, heating, led, seat, exteriorTemp, temperatureInput,
-    decodeWheelReadback, decodeSeatReadback };
+    decodeWheelReadback, decodeSeatReadback, readbackLabel };
