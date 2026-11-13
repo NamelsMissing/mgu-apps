@@ -73,8 +73,12 @@ class GearGuess {
 }
 
 class Car {
-    constructor(ctx, groups) {
+    constructor(ctx, groups, opts) {
         this.ctx = ctx; this.log = ctx.log;
+        // Optional per-instance read-only refresh. Default remains event-only
+        // for every existing app; Custom Cluster opts into the 5-second polls.
+        this.pollMs = opts && Number.isFinite(opts.pollMs) &&
+            opts.pollMs >= 3000 && opts.pollMs <= 60000 ? opts.pollMs : 0;
         const over = (ctx.spec.config && ctx.spec.config.scaling) || {};
         this.S = Object.assign({}, SCALE, over);
         this.live = {}; this.lastCar = 0; this.listeners = [];
@@ -123,8 +127,21 @@ class Car {
         // a while" doesn't mean "no car": once a signal's provider is there, stay on live data
         this.subs = [];
         this.t0 = Date.now();
-        Object.keys(watches).forEach((iface) => ctx.signals.watch(iface, '1', watches[iface], this.log)
-            .then((s) => { this.subs.push(s); this.log.info('signal ' + iface.split('.').pop() + (s.error ? ' error: ' + s.error : ' subscribed')); }));
+        Object.keys(watches).forEach((iface) => {
+            // BMW publishes stationary speed/RPM on change only. A real getter
+            // readback can refresh the timestamp without manufacturing samples.
+            // Request it only for the two explicitly opted-in read-only fields.
+            const pollable = iface === 'de.bmw.infotainment.vehicle.CDS' ||
+                iface === 'de.bmw.infotainment.vehicle.Vehicle2';
+            const optsForInterface = pollable && this.pollMs ? { pollMs: this.pollMs } : undefined;
+            ctx.signals.watch(iface, '1', watches[iface], this.log, optsForInterface)
+                .then((s) => {
+                    this.subs.push(s);
+                    this.log.info('signal ' + iface.split('.').pop() +
+                        (s.error ? ' error: ' + s.error : ' subscribed') +
+                        (optsForInterface ? ' getter poll ' + this.pollMs + 'ms (if supported)' : ''));
+                });
+        });
 
         // demo feed (20 Hz) - also keeps the sim warm so switching is seamless. On a busy or
         // slow CPU the timer fires late; replay every missed 50 ms step (up to 3 s) with its own
