@@ -1,0 +1,33 @@
+name: CarPlay Native PCM Prototype
+on:
+  push:
+    paths:
+      - 'experiments/carplay_alsa/**'
+      - '.github/workflows/carplay_pcm_prototype.yml'
+  pull_request:
+    paths:
+      - 'experiments/carplay_alsa/**'
+      - '.github/workflows/carplay_pcm_prototype.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile fake ALSA and isolated filter
+        run: |
+          cd experiments/carplay_alsa
+          mkdir -p build
+          cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -o build/libfakealsa_live.so fake_alsa_live.c -lm
+          cc -std=c11 -O2 -Wall -Wextra -Werror -fPIC -shared -o build/libmgu_cp_live.so carplay_live_filter.c eq_dsp.c -ldl -lm -pthread
+          cc -std=c11 -O2 -Wall -Wextra -Werror -o build/test_cp_live test_carplay_live.c \
+            -Lbuild -lfakealsa_live -lmgu_cp_live -lm -pthread -Wl,-rpath,'$ORIGIN'
+      - name: Simulated CarPlay PCM writes
+        run: |
+          cd experiments/carplay_alsa
+          LD_PRELOAD=./build/libmgu_cp_live.so ./build/test_cp_live
+      - name: Enforce default bypass and vehicle isolation
+        run: |
+          ! grep -q 'libmgu_cp_live.so' native/equalizer-dsp/component.json
+          ! grep -q 'LD_PRELOAD' apps/equalizer/main.js
