@@ -1,4 +1,56 @@
-# Light Show 0.2.5
+# Light Show 0.3.0
+
+## 0.3.0 – FLM02 animations return, with user-defined channel names
+
+The **original Light Show idea is restored**, but **all new physical lamp
+commands use FLM02_L / FLM02_R exclusively**, not legacy BDC IOControl or
+BDC timed-function paths. Choose **Light effects / animations** on the main
+screen. Supported patterns: **Alternate**, **Double**, **Triple**, **Together**,
+**Cross**, **Wave**, plus a user-configurable **four-step sequence**. Select
+which observed left and right channels to use, LED PWM (20–100%), each pulse
+(1–3 seconds), minimum dark interval (500/750/1000 ms), and repeat count
+(1–3). The App shows a readable step-by-step preview, including your lamp
+names, before starting. These are deliberately **slow, bounded diagnostic
+pulses, not a rapid high-frequency strobe**; both-side commands are delivered
+sequentially over TASU and therefore are not precisely synchronized.
+
+**Name each channel:** Under **Diagnostics → Assign or edit channel names**
+select the side and any of its fifteen channels. Choose German presets such as
+Abblendlicht, Fernlicht, Tagfahrlicht, Positionslicht, Blinker, Kurvenlicht,
+Akzentlicht and LED-Element, or type a personal name with the in-car
+character-cycle/add/delete editor (up to 24 characters). Names persist in the
+private app file `light-show-channel-names.json`, without modifying any ECU
+coding. The channel overview shows every channel, alias and recorded effect.
+The custom animation editor lets you choose any previously observed-safe left
+or right channel per step, both selected sides together, or a dark pause.
+Custom effect settings persist in `light-show-effect-config.json`.
+
+**Evidence gate:** A channel is offered for animation only after an observation
+saved as **visible, no unusual noise** after a confirmed StopRoutine. A channel
+with *any* saved unusual-noise observation is excluded. This means the owner's
+current vehicle observations make channels **1, 5, 7, 8 on both sides**
+available, while **right 13** is excluded due to one noise report. Naming an
+untested channel alone does **not** authorize animation. Manual FLM02 tests
+remain available for all fifteen channels per side; the physical mapping to
+named lamps has to be supplied by the user, not guessed from BMW data.
+
+**Fail-safe flow:** Before a sequence, BDC and every participating FLM02 are
+identified. A durable recovery journal is written before any diagnostic session
+change, then a bounded FLM02 StartRoutine is issued. Each step requests OEM
+StopRoutine for every side it may have activated. At sequence end (also after
+error or STOP), all participating FLM02s receive a final OEM StopRoutine and
+default session. A failed release keeps the recovery lock; on next app launch
+recovery checks both saved sides. The app still gates requests on **P and
+stationary vehicle**. No indefinite duration, all-channel command, fast
+unbounded strobe, or automatic BDC fallback has been introduced. Test only
+while parked on private property, with no persons/traffic in beam; check
+regular lamps before driving. This is not road-legal lighting functionality.
+
+**Diagnostic JSON:** The existing **Save diagnostic log** now additionally
+includes channel labels/status, saved effect, the expanded preview plan and
+raw UDS request/response trace. Test observations and settings remain local.
+
+
 
 ## 0.2.5: FLM02-only interface
 

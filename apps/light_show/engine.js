@@ -100,20 +100,47 @@ class Engine {
         catch (e) { this.update('ERROR', e.message); return Promise.resolve(); }
         return this._start({ route: 'flm', side, channel, pwm, seconds, tempo: seconds * 1000 });
     }
+    playFlmShow(plan) {
+        try {
+            if (!plan || plan.route !== 'flm_show' || !Array.isArray(plan.steps)
+                || plan.steps.length < 1 || plan.steps.length > 20 || ![20,40,60,80,100].includes(plan.pwm)
+                || ![1,2,3].includes(plan.seconds) || ![500,750,1000].includes(plan.gapMs))
+                throw new Error('Invalid FLM02 animation configuration');
+            let counted = 0;
+            for (const step of plan.steps) {
+                if (!step || typeof step !== 'object') throw new Error('Invalid FLM02 animation step');
+                for (const side of ['left','right']) {
+                    if (step[side] !== null && step[side] !== undefined) {
+                        F.channelNumber(step[side]); counted++;
+                    }
+                }
+            }
+            if (counted * plan.seconds > 36
+                || plan.steps.length*(plan.seconds*1000+plan.gapMs)>55000)
+                throw new Error('Animation exceeds safe finite test budget');
+        } catch (e) { this.update('ERROR', String(e.message || e)); return Promise.resolve(); }
+        return this._start(plan);
+    }
     _start(config) {
         const reason = this.guard.reason();
         if (this.run) return this.run;
         if (reason) { this.update('BLOCKED', reason); return Promise.resolve(); }
         if (this.journal.pending()) { this.update('ERROR', 'Saved stop lock pending - use STOP or Diagnostics'); return Promise.resolve(); }
         this.cancel = false; this.stopRequested = false; this.stopReason = null; this.releaseConfirmed = false;
+        const sides = config.route === 'flm_show'
+            ? ['left','right'].filter((side) => config.steps.some((s) => s[side] !== null && s[side] !== undefined))
+            : null;
         this.stopConfirmed = false; this.control = { route: config.route || 'digital',
             lights: config.lights || null, outputId: config.route === 'single' ? config.outputId : null,
             side: config.route === 'flm' ? config.side : null,
             channel: config.route === 'flm' ? config.channel : null,
-            pwm: config.route === 'flm' ? config.pwm : null,
-            seconds: config.route === 'flm' ? config.seconds : null };
+            pwm: ['flm','flm_show'].includes(config.route) ? config.pwm : null,
+            seconds: ['flm','flm_show'].includes(config.route) ? config.seconds : null,
+            sides, pattern: config.route === 'flm_show' ? config.pattern : null,
+            stepsCount: config.route === 'flm_show' ? config.steps.length : null };
         this.sent = 0; this.stepMs = 0; this.mask = [0, 0]; this.outputSamples = []; this.originalFault = null; this.cleanup = {};
-        this.update('STARTING', config.route === 'flm' ? 'Checking BDC and FLM02 identity' : 'Checking BDC_G05');
+        this.update('STARTING', ['flm','flm_show'].includes(config.route)
+            ? 'Checking BDC and FLM02 identity' : 'Checking BDC_G05');
         let resolve;
         this.run = new Promise((r) => { resolve = r; });
         this._play(config).then(() => { this.run = null; resolve(); }, (e) => {
@@ -133,14 +160,23 @@ class Engine {
             await this.link.identify();
             if (!this.allowed()) return;
             if (c.route === 'flm') { await this.link.identifyFlm(c.side); if (!this.allowed()) return; }
+            if (c.route === 'flm_show') {
+                for (const side of this.control.sides) {
+                    await this.link.identifyFlm(side);
+                    if (!this.allowed()) return;
+                }
+            }
             // A durable marker is written BEFORE any request that can change the
             // session/lamps. If persistence fails, no control request is sent.
             this.journal.mark(this.link.index, this.control); dirty = true;
             if (c.route === 'flm') await this.link.flmSession(c.side);
-            else { await this.link.session(); await this.sampleOutputs('Before control'); }
+            else if (c.route === 'flm_show') {
+                for (const side of this.control.sides) await this.link.flmSession(side);
+            } else { await this.link.session(); await this.sampleOutputs('Before control'); }
             let afterSampled = false;
             if (!this.allowed()) return;
             if (c.route === 'flm') { await this._flmPulse(c); return; }
+            if (c.route === 'flm_show') { await this._flmShow(c); return; }
             if (c.route === 'timed') { await this._timedLoop(c); return; }
             if (c.route === 'single') { await this._singlePulse(c); return; }
             const pair = P.PAIRS[c.lights], pattern = P.PATTERNS[c.pattern].steps;
@@ -178,6 +214,7 @@ class Engine {
                 if (released) this.update(fault ? 'ERROR' : 'IDLE', fault || this.stopReason
                     || (c.route === 'timed' ? 'Timed function stopped; physical effect not verified'
                         : c.route === 'flm' ? 'FLM StopRoutine acknowledged; physical lamp state not verified'
+                        : c.route === 'flm_show' ? 'FLM02 sequence finished; both StopRoutines acknowledged, physical state not measured'
                         : 'BDC IO return acknowledged; physical effect not verified'));
             } else this.update(fault ? 'ERROR' : 'IDLE', fault || this.stopReason || 'Stopped before lamp control');
             this.stopReason = null;
@@ -204,6 +241,43 @@ class Engine {
         // ECU time remains bounded; OEM StopRoutine is requested in finally.
         for (let elapsed = 0; elapsed < c.seconds * 1000 && this.allowed(); elapsed += 25)
             await this.sleep(Math.min(25, c.seconds * 1000 - elapsed));
+    }
+    async _flmShow(c) {
+        // One serialized TASU request at a time. Both FLM modules can be commanded,
+        // but a combined pulse is not perfectly simultaneous (transport latency).
+        const delay = async (duration) => {
+            for (let t = 0; t < duration && this.allowed(); t += 25)
+                await this.sleep(Math.min(25, duration-t));
+        };
+        this.deadline = this.now() + c.steps.length * (c.seconds*1000+c.gapMs);
+        for (let i = 0; i < c.steps.length && this.allowed(); i++) {
+            const s = c.steps[i], started = [];
+            this.control.stepIndex = i + 1;
+            this.update('RUNNING','FLM02 ' + c.pattern + ' / step ' + (i+1) + '/' + c.steps.length
+                + ' (PWM '+c.pwm+'%, '+c.seconds+'s)');
+            let failure = null;
+            try {
+                for (const side of ['left','right']) {
+                    if (s[side] === null || s[side] === undefined) continue;
+                    if (!this.allowed()) break;
+                    // Mark as possibly active BEFORE waiting for the ECU answer:
+                    // a timeout can happen after the physical command was accepted.
+                    started.push(side);
+                    await this.link.flmStart(side,s[side],c.pwm,c.seconds);
+                    this.sent++; this.changed();
+                }
+                if (started.length) await delay(c.seconds*1000);
+            } catch (e) { failure = e; }
+            // Always request StopRoutine for every possibly activated module
+            // before moving to the next step, regardless of cancellation/failure.
+            for (const side of started) {
+                try { await this.link.flmStop(side); }
+                catch (e) { failure = failure || e; }
+            }
+            if (failure) throw failure;
+            if (!this.allowed()) break;
+            await delay(c.gapMs); // Nonzero dark interval; no unbounded rapid strobe.
+        }
     }
     async _timedLoop(c) {
         const pat = P.pattern(c), fn = P.FUNCTIONS[c.lights];
@@ -249,25 +323,61 @@ class Engine {
             await this.link.identify();
             const saved = this.journal.value;
             if (saved) {
-                if (saved.corrupted || (saved.route && ['timed', 'digital', 'single', 'flm'].indexOf(saved.route) < 0)) throw new Error('Invalid recovery record; check normal lights first');
+                if (saved.corrupted || (saved.route && ['timed', 'digital', 'single', 'flm', 'flm_show'].indexOf(saved.route) < 0)) throw new Error('Invalid recovery record; check normal lights first');
                 if (saved.route === 'timed') P.timedControl(saved.lights, 0);
                 if (saved.route === 'single') DiagnosticOutputs.get(saved.outputId);
                 if (saved.route === 'flm') {
                     F.moduleFor(saved.side); F.channelNumber(saved.channel);
                     await this.link.identifyFlm(saved.side);
                 }
+                if (saved.route === 'flm_show') {
+                    if (!Array.isArray(saved.sides) || !saved.sides.length
+                        || saved.sides.length>2 || new Set(saved.sides).size !== saved.sides.length)
+                        throw new Error('Invalid FLM02 show recovery sides');
+                    for (const side of saved.sides) {
+                        F.moduleFor(side); await this.link.identifyFlm(side);
+                    }
+                }
                 this.control = { route: saved.route || 'digital', lights: saved.lights || null,
                     outputId: saved.route === 'single' ? saved.outputId : null,
                     side: saved.route === 'flm' ? saved.side : null,
                     channel: saved.route === 'flm' ? saved.channel : null,
                     pwm: saved.route === 'flm' ? saved.pwm || null : null,
-                    seconds: saved.route === 'flm' ? saved.seconds || null : null };
+                    seconds: ['flm','flm_show'].includes(saved.route) ? saved.seconds || null : null,
+                    sides: saved.route === 'flm_show' ? saved.sides.slice() : null,
+                    pattern: saved.route === 'flm_show' ? saved.pattern || 'recovery' : null };
             }
             if (await this._release()) this.update('IDLE', this.control.route === 'timed' ? 'Timed stop acknowledged' : 'OEM IO return acknowledged');
         } catch (e) { this.update('ERROR', 'Saved stop lock pending: ' + String(e.message || e)); }
     }
     async _release() {
         this.update('STOPPING', 'Sending stop and default-session requests');
+        if (this.control.route === 'flm_show') {
+            const sides = Array.isArray(this.control.sides) ? this.control.sides : [];
+            const errors=[],stopped={},defaults={};
+            // Release ALL identified sides even if an earlier side failed.
+            for (const side of sides) {
+                try { await this.link.flmStop(side); stopped[side]=true; }
+                catch (e) { stopped[side]=false; errors.push(side+' STOP: '+(e.message||e)); }
+            }
+            for (const side of sides) {
+                try { await this.link.flmDefaultSession(side); defaults[side]=true; }
+                catch (e) { defaults[side]=false; errors.push(side+' default: '+(e.message||e)); }
+            }
+            this.mask=[0,0]; this.releaseConfirmed=false;
+            this.cleanup={ flmStopBySide:stopped, defaultSessionBySide:defaults,
+                releaseError:errors.length?errors.join('; '):null };
+            this.stopConfirmed=sides.length>0 && errors.length===0;
+            if (!errors.length && sides.length) {
+                try { this.journal.clear(); }
+                catch (e) { errors.push('Cannot clear recovery file: '+e.message); }
+            }
+            if (errors.length) {
+                this.update('ERROR','FLM02 show cleanup pending: '+errors.join('; '));
+                return false;
+            }
+            return true;
+        }
         let error = null, released = false, offConfirmed = false, defaultConfirmed = false;
         // Always attempt the session return even if the stop request times out. A positive
         // session reply alone is not presented as proof of physical lamp state.

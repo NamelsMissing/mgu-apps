@@ -229,7 +229,7 @@
       "id": "light_show",
       "kind": "app",
       "title": "Light Show",
-      "version": "0.2.5",
+      "version": "0.3.0",
       "path": "apps/light_show",
       "icon": "icon.png",
       "mguHmi": [

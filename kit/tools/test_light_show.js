@@ -458,7 +458,7 @@ test('Real TASU transport serializes third-brake-light control via BDC, not a gu
 
 test('FLM02 OEM routine uses only the bounded channel START candidate and captured StopRoutine', () => {
     const spec = require(path.join(app, 'app.json'));
-    assert.strictEqual(spec.version, '0.2.5');
+    assert.strictEqual(spec.version, '0.3.0');
     assert.deepStrictEqual(F.start(7), [0x01, 0xA5, 0x4B, 0x07, 60, 2]);
     assert.deepStrictEqual(F.start(7, 100, 5), [0x01, 0xA5, 0x4B, 0x07, 100, 5]);
     assert.strictEqual(F.isPermittedRoutine(F.start(7, 100, 5)), true);
@@ -543,15 +543,64 @@ test('Real TASU FLM transport requires verified module and refuses unbounded act
 });
 
 
-test('FLM-only navigation exposes no BDC, timed show or preview start controls', () => {
+test('FLM02 pattern menu, custom editor and channel naming are reachable without legacy BDC controls', () => {
     const spec = require(path.join(app, 'app.json'));
-    const main = spec.screens.find((s) => s.name === 'MAIN');
-    const diagnostics = spec.screens.find((s) => s.name === 'DIAGNOSTICS');
-    const keys = [main, diagnostics].flatMap((s) => s.items.map((i) => i[1]));
-    for (const forbidden of ['BTN_START','BTN_FUNCTION_TEST','BTN_PREVIEW','BTN_OUTPUTS','BTN_IDENTIFY'])
-        assert(!keys.includes(forbidden));
-    assert(keys.includes('BTN_FLM_INDEX') && keys.includes('BTN_EXPORT'));
-    assert(spec.settings.every((s) => ['flmPwm', 'flmSeconds'].includes(s.key)));
+    const keys = spec.screens.flatMap((s) => s.items.map((i) => i[1]));
+    assert.strictEqual(new Set(keys).size, keys.length, 'one unique RHMI component per action');
+    for (const forbidden of ['BTN_START','BTN_FUNCTION_TEST','BTN_OUTPUTS','BTN_IDENTIFY'])
+        assert(!keys.includes(forbidden), forbidden);
+    for (const required of ['BTN_SHOW_SETUP','BTN_SHOW_PATTERN','BTN_SHOW_START','BTN_SHOW_PREVIEW',
+        'BTN_CUSTOM_1','BTN_CUSTOM_4','BTN_LABEL_HOME','BTN_LABEL_DIAG','BTN_LABEL_SAVE','BTN_EXPORT'])
+        assert(keys.includes(required), required);
+    assert.deepStrictEqual(spec.settings.map((s) => s.key), ['flmPwm','flmSeconds']);
+});
+test('FLM02 show accepts observed, noise-free channels only and compiles bounded custom sequences', () => {
+    const { makePlan, DEFAULT } = require(path.join(app, 'flm-show'));
+    const { ChannelLabels } = require(path.join(app, 'channel-labels'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(),'light-show-names-'));
+    try {
+        const names = new ChannelLabels(dir);
+        const obs = [];
+        for (const side of ['left','right']) for (const channel of [1,5,7,8])
+            obs.push({route:'flm',side,channel,result:'visible, no unusual noise',cleanupConfirmed:true});
+        obs.push({route:'flm',side:'right',channel:13,
+            result:'unusual noise without visible light',cleanupConfirmed:true});
+        names.set('left',7,'Fernlicht');
+        assert.strictEqual(new ChannelLabels(dir).label('left',7),'Fernlicht');
+        assert.deepStrictEqual(names.eligible(obs,'left'),[1,5,7,8]);
+        assert.strictEqual(names.allowed(obs,'right',13),false);
+        const custom=Object.assign({},DEFAULT,{pattern:'custom',custom:['L7','R8','BOTH','OFF']});
+        const plan=makePlan(custom,names,obs);
+        assert.strictEqual(plan.steps.length,8);
+        assert.deepStrictEqual(plan.steps[0],{left:7,right:null});
+        assert.deepStrictEqual(plan.steps[1],{left:null,right:8});
+        assert.deepStrictEqual(plan.steps[2],{left:7,right:7});
+        assert.throws(()=>makePlan(Object.assign({},custom,{custom:['R13','L7','OFF','OFF']}),names,obs),/no safe visible observation/);
+        assert.throws(()=>makePlan(Object.assign({},custom,{pattern:'triple',seconds:3,cycles:3}),names,obs),/budget/);
+    } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('FLM02 animation uses no BDC control, stops both sides and clears journal only after successful cleanup',async()=>{
+    const r=rig();
+    await r.engine.playFlmShow({route:'flm_show',pattern:'together',pwm:60,seconds:1,gapMs:500,
+        steps:[{left:7,right:8},{left:1,right:5}]});
+    const diagnostic = r.calls.filter(x=>Array.isArray(x));
+    assert(diagnostic.some(x=>x[0]==='flmStart'&&x[1]==='left'&&x[2]===7));
+    assert(diagnostic.some(x=>x[0]==='flmStart'&&x[1]==='right'&&x[2]===8));
+    assert(!r.calls.includes('session')&&!r.calls.includes('release')&&!diagnostic.some(x=>x[0]==='set'));
+    assert.deepStrictEqual(r.calls.slice(-5),[['flmStop','left'],['flmStop','right'],
+        ['flmDefault','left'],['flmDefault','right'],'clear']);
+    assert.strictEqual(r.journal.pending(),false);
+});
+test('Interrupted FLM02 two-sided sequence recovers both ECUs in the saved journal',async()=>{
+    const r=rig({flmStopFail:true});await r.engine.playFlmShow({
+        route:'flm_show',pattern:'alternate',pwm:60,seconds:1,gapMs:500,steps:[{left:7,right:null},{left:null,right:8}]
+    });
+    assert.strictEqual(r.journal.pending(),true);
+    assert.strictEqual(r.engine.stopConfirmed,false);
+    const recovery=rig({pending:true,record:{route:'flm_show',sides:['left','right'],pwm:60,seconds:1}});
+    await recovery.engine.stop();
+    assert.deepStrictEqual(recovery.calls,['identify',['flmIdentify','left'],['flmIdentify','right'],
+        ['flmStop','left'],['flmStop','right'],['flmDefault','left'],['flmDefault','right'],'clear']);
 });
 
 

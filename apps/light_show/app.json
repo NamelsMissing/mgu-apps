@@ -1,8 +1,8 @@
 {
   "id": "light_show",
   "title": "Light Show",
-  "description": "FLM02-only experimental LED channel diagnostics for BMW ID7: individually controlled left/right headlamp LEDs with configurable PWM and finite pulses, OEM stop routine, recovery and log export. Legacy BDC/timed controls hidden.",
-  "version": "0.2.5",
+  "description": "FLM02-only BMW ID7 light-show sequencer: selectable left/right LED channel patterns, custom four-step effects, user-defined channel labels, individual diagnosis and safe stop recovery.",
+  "version": "0.3.0",
   "vendor": "custom",
   "loggingId": "OAL9",
   "iconGlyph": "LS",
@@ -34,7 +34,12 @@
         [
           "text",
           "STATUS",
-          "Ready - select FLM02 left or right"
+          "Ready - choose an effect"
+        ],
+        [
+          "button",
+          "BTN_SHOW_SETUP",
+          "Light effects / animations"
         ],
         [
           "button",
@@ -43,8 +48,13 @@
         ],
         [
           "button",
-          "BTN_FLM_INDEX",
-          "FLM02 LED channel tests"
+          "BTN_FLM_HOME",
+          "Test individual FLM02 LED channels"
+        ],
+        [
+          "button",
+          "BTN_LABEL_HOME",
+          "Name LED channels"
         ],
         [
           "button",
@@ -54,7 +64,148 @@
         [
           "text3",
           "NOTICE",
-          "Only FLM02 LED tests are enabled. Previous BDC and timed lighting methods are hidden. Vehicle must be stationary in P; channel mapping and thermal limits remain unverified."
+          "FLM02 ONLY. Light show requires P, zero speed, and recorded visible/no-noise channels. Use off-road, no bystanders in beam."
+        ]
+      ]
+    },
+    {
+      "name": "SHOW_SETUP",
+      "kind": "menu",
+      "title": "FLM02 - light effects",
+      "items": [
+        [
+          "text3",
+          "SHOW_INFO",
+          "Choose effect, left/right channel and timing; use only visually observed LED channels."
+        ],
+        [
+          "text",
+          "SHOW_PROGRESS",
+          "Not running"
+        ],
+        [
+          "button",
+          "BTN_SHOW_PATTERN",
+          "Effect / pattern"
+        ],
+        [
+          "button",
+          "BTN_SHOW_LEFT",
+          "Left channel"
+        ],
+        [
+          "button",
+          "BTN_SHOW_RIGHT",
+          "Right channel"
+        ],
+        [
+          "button",
+          "BTN_SHOW_PWM",
+          "Show brightness"
+        ],
+        [
+          "button",
+          "BTN_SHOW_SECONDS",
+          "Pulse length"
+        ],
+        [
+          "button",
+          "BTN_SHOW_GAP",
+          "Dark interval"
+        ],
+        [
+          "button",
+          "BTN_SHOW_CYCLES",
+          "Repeat cycles"
+        ],
+        [
+          "button",
+          "BTN_SHOW_CUSTOM",
+          "Edit custom four-step sequence"
+        ],
+        [
+          "button",
+          "BTN_SHOW_PREVIEW",
+          "Preview step sequence"
+        ],
+        [
+          "button",
+          "BTN_SHOW_START",
+          "START light show (P, standstill)"
+        ],
+        [
+          "button",
+          "BTN_SHOW_STOP",
+          "STOP / return lights"
+        ],
+        [
+          "button",
+          "BTN_SHOW_BACK",
+          "Main menu"
+        ]
+      ]
+    },
+    {
+      "name": "SHOW_PREVIEW",
+      "kind": "menu",
+      "title": "FLM02 - sequence preview",
+      "items": [
+        [
+          "scroll",
+          "SHOW_PREVIEW_TEXT",
+          "No sequence created"
+        ],
+        [
+          "button",
+          "BTN_PREVIEW_START",
+          "START this sequence"
+        ],
+        [
+          "button",
+          "BTN_PREVIEW_BACK",
+          "Back to effect settings"
+        ],
+        [
+          "button",
+          "BTN_PREVIEW_STOP",
+          "STOP"
+        ]
+      ]
+    },
+    {
+      "name": "CUSTOM_EDITOR",
+      "kind": "menu",
+      "title": "FLM02 - 4 step editor",
+      "items": [
+        [
+          "text3",
+          "CUSTOM_INFO",
+          "Tap a step to cycle through eligible named channels, both sides, and dark pause."
+        ],
+        [
+          "button",
+          "BTN_CUSTOM_1",
+          "Step 1"
+        ],
+        [
+          "button",
+          "BTN_CUSTOM_2",
+          "Step 2"
+        ],
+        [
+          "button",
+          "BTN_CUSTOM_3",
+          "Step 3"
+        ],
+        [
+          "button",
+          "BTN_CUSTOM_4",
+          "Step 4"
+        ],
+        [
+          "button",
+          "BTN_CUSTOM_BACK",
+          "Back to effect settings"
         ]
       ]
     },
@@ -71,22 +222,280 @@
         [
           "button",
           "BTN_HEADLAMPS",
-          "Read FLM02 modules / LED mapping"
+          "Read FLM02 identities / mapping"
+        ],
+        [
+          "button",
+          "BTN_CHANNEL_OVERVIEW",
+          "Overview: tested LED channels and names"
+        ],
+        [
+          "button",
+          "BTN_LABEL_DIAG",
+          "Assign or edit channel names"
+        ],
+        [
+          "button",
+          "BTN_FLM_DIAG",
+          "Manual FLM02 channel tests"
         ],
         [
           "button",
           "BTN_EXPORT",
-          "Save diagnostic log"
+          "Save diagnostic JSON log"
         ],
         [
           "button",
           "BTN_CLEAR_LOCK",
-          "Maintenance: checked lights / clear saved stop lock"
+          "Check normal lights / reset saved lock"
         ],
         [
           "scroll",
           "DIAG_TEXT",
-          "Loading diagnostics..."
+          "Diagnostics..."
+        ]
+      ]
+    },
+    {
+      "name": "CHANNEL_OVERVIEW",
+      "kind": "menu",
+      "title": "FLM02 - channel overview",
+      "items": [
+        [
+          "scroll",
+          "CHANNEL_OVERVIEW_TEXT",
+          "No channel observations available"
+        ],
+        [
+          "button",
+          "BTN_OVERVIEW_LABEL",
+          "Name or correct channels"
+        ],
+        [
+          "button",
+          "BTN_OVERVIEW_TEST",
+          "Test individual channels"
+        ],
+        [
+          "button",
+          "BTN_OVERVIEW_BACK",
+          "Back to diagnostics"
+        ]
+      ]
+    },
+    {
+      "name": "LABEL_INDEX",
+      "kind": "menu",
+      "title": "FLM02 - name LED channels",
+      "items": [
+        [
+          "text3",
+          "LABEL_WARNING",
+          "Names describe your observations, not automatically identified vehicle lights. A name alone does not allow a channel in an animation."
+        ],
+        [
+          "button",
+          "BTN_LABEL_LEFT",
+          "Name left headlamp channels"
+        ],
+        [
+          "button",
+          "BTN_LABEL_RIGHT",
+          "Name right headlamp channels"
+        ],
+        [
+          "button",
+          "BTN_LABEL_INDEX_BACK",
+          "Back to diagnostics"
+        ]
+      ]
+    },
+    {
+      "name": "LABEL_CHANNELS",
+      "kind": "menu",
+      "title": "FLM02 - select channel to name",
+      "items": [
+        [
+          "text3",
+          "LABEL_SIDE",
+          "Select an LED channel"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_01",
+          "Channel 1"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_02",
+          "Channel 2"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_03",
+          "Channel 3"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_04",
+          "Channel 4"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_05",
+          "Channel 5"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_06",
+          "Channel 6"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_07",
+          "Channel 7"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_08",
+          "Channel 8"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_09",
+          "Channel 9"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_0A",
+          "Channel 10"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_0B",
+          "Channel 11"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_0C",
+          "Channel 12"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_0D",
+          "Channel 13"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_0E",
+          "Channel 14"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CH_0F",
+          "Channel 15"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CHANNEL_BACK",
+          "Back to headlamp selection"
+        ]
+      ]
+    },
+    {
+      "name": "LABEL_EDITOR",
+      "kind": "menu",
+      "title": "FLM02 - edit channel label",
+      "items": [
+        [
+          "text3",
+          "LABEL_EDIT_INFO",
+          "Use a preset or create a custom name using the character buttons."
+        ],
+        [
+          "text3",
+          "LABEL_DRAFT",
+          "Channel name"
+        ],
+        [
+          "text",
+          "LABEL_CHAR",
+          "Next character: A"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_1",
+          "Set: Abblendlicht"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_2",
+          "Set: Fernlicht"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_3",
+          "Set: Tagfahrlicht"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_4",
+          "Set: Positionslicht"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_5",
+          "Set: Blinker"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_6",
+          "Set: Kurvenlicht"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_7",
+          "Set: Akzentlicht"
+        ],
+        [
+          "button",
+          "BTN_LABEL_PRESET_8",
+          "Set: LED-Element"
+        ],
+        [
+          "button",
+          "BTN_LABEL_NEXT_CHAR",
+          "Next character A-Z/0-9"
+        ],
+        [
+          "button",
+          "BTN_LABEL_APPEND_CHAR",
+          "Add selected character"
+        ],
+        [
+          "button",
+          "BTN_LABEL_DELETE_CHAR",
+          "Delete last character"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CLEAR_DRAFT",
+          "Clear draft"
+        ],
+        [
+          "button",
+          "BTN_LABEL_SAVE",
+          "Save custom name"
+        ],
+        [
+          "button",
+          "BTN_LABEL_RESET",
+          "Reset to channel number"
+        ],
+        [
+          "button",
+          "BTN_LABEL_CANCEL",
+          "Back to channel list"
         ]
       ]
     },
@@ -98,7 +507,7 @@
         [
           "text3",
           "FLM_WARNING",
-          "FLM02 only. On the tested G21, channels 1, 5, 7, 8 responded visibly on both sides at 100% PWM / 3 s; other tested channels had no visible reaction. Right channel 13 was once reported with unusual noise: avoid further testing until clarified. No automatic sequences. Set PWM and duration in Settings. P and stationary on private property, no persons in the beam."
+          "Manual test: all 15 channels remain available per side. Only channels observed as visible without unusual noises are accepted by the light-show sequencer. Right channel 13 produced an unusual noise: avoid use. PWM and test duration in Settings. Stop is always requested."
         ],
         [
           "button",
@@ -125,7 +534,7 @@
         [
           "text3",
           "FLM_SIDE",
-          "Observed physical light effects at 100% / 3s: channels 1, 5, 7, 8 (both sides). Right channel 13 had one unusual-noise report; do not test further. Other channels and physical mapping unverified."
+          "Select an individual FLM02 LED channel. Tested/observed mappings are displayed in diagnostics and names can be changed."
         ],
         [
           "button",
@@ -212,7 +621,7 @@
     {
       "name": "OUTPUT_OBSERVE",
       "kind": "menu",
-      "title": "Single light - observe result",
+      "title": "FLM02 - record channel observation",
       "items": [
         [
           "text3",
@@ -267,7 +676,7 @@
         [
           "button",
           "BTN_OUTPUT_BACK",
-          "Back to selected light group"
+          "Back to FLM02 channels"
         ]
       ]
     },
