@@ -7,7 +7,13 @@ const path = require('path');
 const crypto = require('crypto');
 const { Transform } = require('stream');
 const { MusicSource, RATE, TOTAL_FRAMES } = require('./test_music');
-const Client = require('./kit/dsp-client');
+let Client;
+try { Client = require('./kit/dsp-client'); }
+catch (e) {
+    if (e.code !== 'MODULE_NOT_FOUND') throw e;
+    // The in-vehicle package has kit/dsp-client; source checkout tests do not.
+    Client = require('../../kit/runtime/dsp-client');
+}
 
 const FRAMES_BYTES = TOTAL_FRAMES * 4;
 const ORIGINAL = 'night-drive-original.wav';
