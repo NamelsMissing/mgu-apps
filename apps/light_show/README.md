@@ -1,4 +1,26 @@
-# Light Show 0.3.1
+# Light Show 0.3.2
+
+## 0.3.2 – OEM dark-stage preparation (no unverified lights-off override)
+
+The main menu and the effect setup screen now offer **Prepare dark stage
+(BMW light controls)**. This is an informational, read-only assisted workflow:
+park on private property, set P and zero vehicle speed, switch off the regular
+parking and low beams using the BMW lighting controls (where the car allows
+it), check **CAR → Settings → Exterior lighting → Daytime driving lights**
+if available, then visually inspect any remaining lights. Depending on the
+country configuration, DRL may not be switchable off.
+
+The workflow provides a **Check P / standstill** button using already
+available vehicle status signals, and a direct **LEDs: test and name**
+shortcut. Returning to effects is offered after the guard check. This is
+**not** an automatic vehicle-wide lights-off switch; FLM02's verified
+individual-channel START/STOP route is not evidence of authority to suppress
+OEM parking/DRL, and no broad BDC / FLM inhibition command is sent. The app
+never disables brake lights, turn signals, hazards, or rear safety lamps.
+Pressing STOP continues to release only app-controlled FLM outputs. The
+guide does not measure the actual physical headlamp state.
+
+
 
 ## 0.3.1 – Test while naming, up to 30 LEDs in shows, millisecond timing
 
@@ -426,3 +448,4 @@ MGU App Kit und TASU-Transport: cauliflowermossgrape/idrive7-apps (MIT), geprüf
 Basisstand `180537a0bdf39163046a6855e7928eb35bb47c7b`.
 Store und USB-Format: robertnisipeanu/mgu-store.
 Referenzanalyse: EdiabasX von emdzej, nicht Bestandteil der installierten App.
+
