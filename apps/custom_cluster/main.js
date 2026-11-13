@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Custom Cluster 0.6.0 - automatic session log and engine-off-safe HMI preview.
+ * Custom Cluster 0.6.1 - read-only stationary getter polls, TXT export, manual OEM release.
  * Stock is the default. Real values only can reach cluster-render; emulator
  * and demo values stay exclusively on the centre-screen preview.
  */
@@ -22,10 +22,15 @@ function ageText(age) { return age === null ? 'no sample' : age + 's old'; }
 mgu.run({
     async start(ctx) {
         const { settings, log, ui } = ctx;
-        const car = new Car(ctx, ['rpm', 'speed', 'temps', 'gear']);
+        const car = new Car(ctx, ['rpm', 'speed', 'temps', 'gear'], { pollMs: 5000 });
         const journal = QR.startJournal(ctx);
         const cluster = new ClusterLayers(log);
-        cluster.setTraceSink((line) => journal.write('PANEL ' + line));
+        cluster.setTraceSink((line) => {
+            journal.write('PANEL ' + line);
+            // Always save a separate full text snapshot when a real panel
+            // attempt ENDS, regardless of whether QR Logs was ever opened.
+            if (line.indexOf('test ended:') >= 0) saveTxt('automatic panel-test end');
+        });
         const waze = new WazeControl(log);
         const bridge = new PhoneBridge(ctx.dataDir, log, () => {
             cluster.badge(bridge.reported() === 'opened');
@@ -33,6 +38,25 @@ mgu.run({
         let qrReport = null, qrPage = 0, qrMatrix = null, qrError = '', qrNotice = '';
         let clearArmedUntil = 0;
         let staticPreviewUntil = 0, lastJournalStateAt = 0;
+        let txtPaths = [], txtError = '', txtReason = 'No manual text export yet';
+        function saveTxt(reason) {
+            try {
+                const content = QR.snapshot(ctx, cluster, waze.status, bridge.reported(),
+                    uiEvents.join('\n'));
+                const paths = QR.save(ctx, content);
+                txtPaths = paths;
+                txtError = paths.length ? '' : 'No writable app/USB directory';
+                txtReason = reason;
+                journal.write('TEXT EXPORT ' + reason + ' path=' + paths.join('; ') +
+                    (txtError ? ' ERROR=' + txtError : ''));
+                return paths;
+            } catch (e) {
+                txtError = String(e && (e.code || e.message) || e);
+                txtPaths = [];
+                journal.write('TEXT EXPORT FAILED ' + reason + ': ' + txtError);
+                return [];
+            }
+        }
         journal.write('App started; auto log path=' + (journal.path || 'unavailable'));
         // On this ID7 firmware opening a second RHMI canvas state can silently
         // fail. Keep the working MAIN HMI state and switch its content instead.
@@ -47,13 +71,15 @@ mgu.run({
         function updateButtons() {
             // Reflect the current actions in the real HMI bar and its GPU bar.
             // Settings remains the firmware-managed Settings button.
-            ui.text('BTN_TEST', currentPage === 'MAIN' ?
-                (settings.get('panelTestMode') === 'preview' ? 'Static HMI preview' : 'Parked panel test') :
-                'Back to cluster');
+            ui.text('BTN_TEST', currentPage === 'DIAGNOSTICS' ? 'Restore BMW' :
+                currentPage === 'MAIN' ?
+                    (settings.get('panelTestMode') === 'preview' ? 'Static HMI preview' : 'Parked panel test') :
+                    'Back to cluster');
             ui.text('BTN_DIAG', currentPage === 'QR_REPORT' ?
                 (clearArmedUntil > Date.now() ? 'Confirm delete' : 'Delete logs') :
                 currentPage === 'DIAGNOSTICS' ? 'Back to cluster' : 'Diagnostics');
-            ui.text('BTN_QR', currentPage === 'QR_REPORT' ? 'Next QR page' : 'QR logs');
+            ui.text('BTN_QR', currentPage === 'DIAGNOSTICS' ? 'Save TXT' :
+                currentPage === 'QR_REPORT' ? 'Next QR page' : 'QR logs');
         }
         function showPage(name) {
             if (currentPage !== name) clearArmedUntil = 0;
@@ -90,6 +116,12 @@ mgu.run({
         });
         car.onSample((d) => { if (!d.demo) cluster.sample(d); });
         ui.onClick('BTN_TEST', () => {
+            if (currentPage === 'DIAGNOSTICS') {
+                uiEvent('manual Restore BMW requested');
+                cluster.restoreOriginal();
+                saveTxt('manual release of Custom Cluster graphics');
+                return;
+            }
             if (currentPage !== 'MAIN') return showPage('MAIN');
             if (settings.get('panelTestMode') === 'preview') {
                 // Safe when the engine is off: no RAMSES panel layer is created.
@@ -102,6 +134,12 @@ mgu.run({
             journal.write('TEST REQUEST before=' + JSON.stringify(cluster.status()));
             const enabled = cluster.armPanel();
             journal.write('TEST RESULT armed=' + enabled + ' state=' + JSON.stringify(cluster.status()));
+            if (!enabled && /stale|no complete sample|release not confirmed|Renderer not connected/i.test(cluster.status().disarmReason)) {
+                // User can always repeat an HMI-only demonstration. It must
+                // not manufacture motion readings or override the KOMBI gate.
+                staticPreviewUntil = Date.now() + 30000;
+                uiEvent('KOMBI test refused; showing HMI-only preview instead');
+            }
             log.info('panel test: ' + (enabled ? 'armed for 12 s' : cluster.status().disarmReason));
         });
         ui.onClick('BTN_DIAG', () => {
@@ -152,6 +190,9 @@ mgu.run({
             uiEvents.length = 0;
             cluster.clearHistory();
             journal.reset();
+            txtPaths = [];
+            txtError = '';
+            txtReason = 'Logs were cleared';
             qrNotice = 'Deleted ' + result.deleted + ' local log file(s).' +
                 (result.errors.length ? ' Errors: ' + result.errors.join('; ').slice(0, 85) : '') +
                 ' USB copies were kept.';
@@ -160,7 +201,10 @@ mgu.run({
             updateButtons();
         }
         const openQr = () => { uiEvent('show QR in main state'); captureQr(); return showPage('QR_REPORT'); };
-        ui.onClick('BTN_QR', () => currentPage === 'QR_REPORT' ? nextQrPage() : openQr());
+        ui.onClick('BTN_QR', () => {
+            if (currentPage === 'DIAGNOSTICS') return saveTxt('manual Save TXT button');
+            return currentPage === 'QR_REPORT' ? nextQrPage() : openQr();
+        });
         function nextQrPage() {
             uiEvent('QR next page');
             if (!qrReport || !qrReport.pages.length) return captureQr();
@@ -221,7 +265,7 @@ mgu.run({
             cv.text('Photograph/scan every page in order.', 60, 215, 25, t.dim);
             cv.text('Next QR page cycles through all pages.', 60, 257, 22, t.dim);
             cv.text('Use Back to cluster at any time.', 60, 301, 22, t.dim);
-            cv.text('Auto log: ' + (journal.path || 'storage unavailable').slice(-99),
+            cv.text('Auto TXT: ' + (journal.path || 'unavailable').slice(-99),
                 60, 346, 15, t.dim);
             cv.text('To decode: tools/decode_custom_cluster_logs.py', 60, 407, 18, t.text);
             cv.text((qrNotice || 'Delete logs clears local app exports only (USB untouched).').slice(0, 100),
@@ -253,12 +297,19 @@ mgu.run({
                 ' | speed=' + (current.speedKmh === null ? '?' : current.speedKmh.toFixed(1)) +
                 ' km/h | rpm=' + (current.engineRpm === null ? '?' : Math.round(current.engineRpm)) +
                 ' | age=' + ageText(current.sampleAgeSeconds), 48, 295, 18, t.text);
-            cv.text('Auto log: ' + (journal.path || 'storage unavailable').slice(-112),
-                48, 322, 14, t.dim);
+            cv.text('Auto log: ' + (journal.path || 'NOT SAVED').slice(-117),
+                48, 324, 15, journal.path ? t.text : t.warn);
+            cv.text('Log I/O: ' + (journal.error || 'OK'), 48, 344, 15,
+                journal.error ? t.warn : t.dim);
+            cv.text('Save TXT: ' + (txtPaths.length ? txtPaths.join(' | ') : (txtError || txtReason)).slice(-115),
+                48, 363, 15, txtError ? t.warn : t.text);
+            cv.text('Restore: ' + (current.recoveryState || '-').slice(0, 107),
+                48, 384, 15, t.warn);
+            cv.text('Renderer slot reports (read-only):', 48, 405, 17, t.text);
             if (!statusLines.length)
-                cv.text('No status reply yet. The renderer may not support status reports.', 48, 345, 16, t.dim);
-            statusLines.forEach((line, i) =>
-                cv.text(line.slice(0, 205), 48, 345 + i * 15, 12, t.dim));
+                cv.text('No renderer status yet.', 48, 423, 15, t.dim);
+            statusLines.slice(0, 6).forEach((line, i) =>
+                cv.text(line.slice(0, 201), 48, 426 + i * 14, 12, t.dim));
             return ui.image(target, cv);
         }
 
@@ -316,7 +367,8 @@ mgu.run({
                 ' | Selector: ' + (st.gearPosition || '?'), 1150, 173, 19, st.parked ? '#2fd27a' : t.dim);
             cv.text('Last bus sample: ' + ageText(st.sampleAgeSeconds) +
                 ' | KOMBI safe: ' + (st.parked ? 'YES' : 'NO'), 1150, 197, 17, st.parked ? '#2fd27a' : t.dim);
-            cv.text('Panel: ' + (st.panelActive ? 'REQUESTED (' + st.secondsLeft + 's)' : 'STOCK'),
+            cv.text('Panel: ' + (st.panelActive ? 'REQUESTED (' + st.secondsLeft + 's)' :
+                st.suspended ? 'CUSTOM RELEASED' : 'STOCK'),
                 1150, 224, 20, st.panelActive ? '#2fd27a' : t.text);
             cv.text('Layer: ' + st.panelLayer.slice(0, 29) +
                 '  / Slot: ' + st.panelTargetState.slice(0, 12), 1150, 257, 16, t.dim);
