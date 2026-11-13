@@ -65,6 +65,10 @@ assert.strictEqual(cluster.status().panelTargetState, 'mapped (custom_cluster)')
 assert.ok(cluster.rendererStatus().includes('0x203'));
 assert.strictEqual(cluster.armPanel(), false, 'press again stops');
 assert.deepStrictEqual(fake.drops, [1]);
+assert.strictEqual(cluster.status().suspended, true, 'release stops recreation');
+assert.ok(cluster.status().recoveryState.includes('unverified'), 'never claim stock media restored');
+fake.emit('status', 'target panel slot 0x203 scene 0x01000400 1920x720: idle; scene published');
+assert.ok(cluster.status().recoveryState.includes('BMW media NOT verified'));
 assert.ok(cluster.history().includes('test ended: Stopped by user'));
 
 cluster.settings(settings({ panelTestMode: 'design', panelTarget: 'panel201', layout: 'sixwb' }));
@@ -78,6 +82,18 @@ assert.strictEqual(cluster.status().panelActive, false, 'leaving P drops full de
 assert.ok(cluster.status().testGuard.includes('Selector N'), 'guard identifies neutral instead of P');
 assert.deepStrictEqual(fake.drops, [1, 2]);
 fake.emit('status', 'slot 0x203 status 3: content class 2 map 1');
+
+const signalCheck = new ClusterLayers(log, null, new FakeRenderer());
+signalCheck.settings(settings());
+signalCheck.sample({ speed: 0, rpm: 790, stage: 'P', receivedAt: {
+    speed: Date.now() - 190000, rpm: Date.now() } });
+assert.strictEqual(signalCheck.armPanel(), false, 'stale speed with fresh RPM must not pass');
+signalCheck.sample({ speed: 0, rpm: 790, stage: 'P', receivedAt: {
+    speed: Date.now(), rpm: Date.now() } });
+assert.strictEqual(signalCheck.armPanel(), true, 'two fresh getter responses enable parked probe');
+signalCheck.restoreOriginal();
+assert.strictEqual(signalCheck.status().panelActive, false);
+signalCheck.close();
 
 const altRenderer = new FakeRenderer('panel:1920x720, panel201:1920x720, panel202:1920x720');
 const altCluster = new ClusterLayers(log, null, altRenderer);
