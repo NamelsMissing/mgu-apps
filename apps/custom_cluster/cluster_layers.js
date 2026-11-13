@@ -99,7 +99,7 @@ class ClusterLayers {
                 // Preserve the renderer's *during-test* state; a QR export
                 // made after 12 seconds otherwise sees only the idle slot.
                 const lines = this.rendererStatusText.split('\n')
-                    .filter((line) => /^(target panel|slot 0x203|renderer:)/i.test(line)).slice(0, 3);
+                    .filter((line) => /^(target (panel|map)|slot 0x(100|200|203)|renderer:)/i.test(line)).slice(0, 6);
                 if (lines.length) this.tracePanel('during test: ' + lines.join(' | '));
             }
         });
