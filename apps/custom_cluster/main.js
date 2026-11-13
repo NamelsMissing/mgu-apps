@@ -113,6 +113,7 @@ mgu.run({
             syncSettings();
             updateButtons();
             journal.write('Settings: layout=' + settings.get('layout') +
+                ' panelOptIn=' + !!settings.get('enablePanelTests') +
                 ' test=' + settings.get('panelTestMode') +
                 ' target=' + settings.get('panelTarget'));
         });
@@ -295,7 +296,8 @@ mgu.run({
                 '  |  Slot: ' + current.panelTargetState, 48, 188, 20, t.text);
             cv.text('Slot reason: ' + (current.panelTargetReason || '-').slice(0, 112), 48, 216, 17, t.warn);
             cv.text('Last refusal: ' + (current.lastRefusal || '-').slice(0, 115), 48, 244, 17, t.warn);
-            cv.text('Test guard: ' + current.testGuard.slice(0, 115), 48, 270, 18, t.warn);
+            cv.text('Test guard: ' + current.testGuard.slice(0, 100) +
+                ' | Opt-in: ' + (settings.get('enablePanelTests') ? 'YES' : 'NO'), 48, 270, 18, t.warn);
             cv.text('Selector=' + (current.gearPosition || '?') +
                 ' | speed=' + (current.speedKmh === null ? '?' : current.speedKmh.toFixed(1)) +
                 ' (age ' + ageText(current.speedAgeSeconds) + ')' +
@@ -369,14 +371,14 @@ mgu.run({
             cv.text('Cluster render: ' + (st.ready ? 'Connected' : 'Waiting'), 1150, 137, 24, st.ready ? '#2fd27a' : t.warn);
             cv.text('Live speed/RPM: ' + (st.live ? 'YES' : 'NO') +
                 ' | Selector: ' + (st.gearPosition || '?'), 1150, 173, 19, st.parked ? '#2fd27a' : t.dim);
-            cv.text('Last bus sample: ' + ageText(st.sampleAgeSeconds) +
+            cv.text('Last accepted pair: ' + ageText(st.sampleAgeSeconds) +
                 ' | KOMBI safe: ' + (st.parked ? 'YES' : 'NO'), 1150, 197, 17, st.parked ? '#2fd27a' : t.dim);
             cv.text('Panel: ' + (st.panelActive ? 'REQUESTED (' + st.secondsLeft + 's)' :
                 st.suspended ? 'CUSTOM RELEASED' : 'STOCK'),
                 1150, 224, 20, st.panelActive ? '#2fd27a' : t.text);
             cv.text('Layer: ' + st.panelLayer.slice(0, 29) +
                 '  / Slot: ' + st.panelTargetState.slice(0, 12), 1150, 257, 16, t.dim);
-            cv.text('Test: ' + (previewActive ? 'HMI ONLY' :
+            cv.text('Test: ' + (!settings.get('enablePanelTests') || previewActive ? 'HMI ONLY' :
                 st.activeTestMode || settings.get('panelTestMode')) +
                 ' @ ' + settings.get('panelTarget'), 1150, 286, 16, t.dim);
             cv.text('Last: ' + st.disarmReason.slice(0, 39), 1150, 314, 16, t.dim);
