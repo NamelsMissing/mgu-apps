@@ -18,13 +18,16 @@ int snd_pcm_open(snd_pcm_t **out,const char *name,int stream,int mode) {
 }
 int snd_pcm_hw_params(snd_pcm_t *pcm,snd_pcm_hw_params_t *p) {return pcm&&p?0:-1;}
 int snd_pcm_hw_params_get_format(const snd_pcm_hw_params_t *p,int *out) {
-    if (!p||!out) return -1;*out=p->format;return 0;
+    if (!p||!out) return -1;
+    *out=p->format;return 0;
 }
 int snd_pcm_hw_params_get_channels(const snd_pcm_hw_params_t *p,unsigned *out) {
-    if (!p||!out) return -1;*out=p->channels;return 0;
+    if (!p||!out) return -1;
+    *out=p->channels;return 0;
 }
 int snd_pcm_hw_params_get_rate(const snd_pcm_hw_params_t *p,unsigned *out,int *dir) {
-    if (!p||!out||!dir) return -1;*out=p->rate;*dir=0;return 0;
+    if (!p||!out||!dir) return -1;
+    *out=p->rate;*dir=0;return 0;
 }
 static long capture(snd_pcm_t *pcm,const void *buf,unsigned long frames) {
     if (!pcm||!buf) return -1;
