@@ -23,16 +23,23 @@ const LOCAL_EXPORT = /^cluster-diagnostics-\d{4}-\d{2}-\d{2}T[\d-]+Z\.txt$/;
 const SESSION_EXPORT = /^cluster-session-\d{4}-\d{2}-\d{2}T[\d-]+Z-[a-f0-9]{8}\.txt$/;
 const MAX_SESSION_BYTES = 1024 * 1024;
 function startJournal(ctx) {
-    let file = null, bytes = 0;
+    let file = null, bytes = 0, error = '';
     function openNew() {
         file = null;
+        error = '';
         bytes = 0;
         try {
-            if (!ctx || !path.isAbsolute(ctx.dataDir)) return;
+            if (!ctx || !ctx.dataDir || !path.isAbsolute(ctx.dataDir)) {
+                error = 'No absolute app dataDir supplied by MGU runtime';
+                return;
+            }
             const dir = path.join(ctx.dataDir, 'exports');
             fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
             const st = fs.lstatSync(dir);
-            if (!st.isDirectory() || st.isSymbolicLink()) return;
+            if (!st.isDirectory() || st.isSymbolicLink()) {
+                error = 'App export directory is not a regular folder';
+                return;
+            }
             const stamp = new Date().toISOString().replace(/[:.]/g, '-');
             const suffix = crypto.randomBytes(4).toString('hex');
             const name = 'cluster-session-' + stamp + '-' + suffix + '.txt';
@@ -43,19 +50,23 @@ function startJournal(ctx) {
                 'This file contains diagnostic events, not proof of visible KOMBI pixels.\n\n';
             fs.writeFileSync(file, header, { flag: 'wx', mode: 0o600 });
             bytes = Buffer.byteLength(header);
-        } catch (_) { file = null; }
+        } catch (e) { file = null; error = String(e.code || e.message || e); }
     }
     const journal = {
         get path() { return file; },
+        get error() { return error; },
         write(event) {
-            if (!file || bytes >= MAX_SESSION_BYTES) return false;
+            if (!file || bytes >= MAX_SESSION_BYTES) {
+                if (bytes >= MAX_SESSION_BYTES) error = 'Auto log reached 1 MiB limit';
+                return false;
+            }
             const line = new Date().toISOString() + ' ' +
                 String(event).replace(/[\r\n]+/g, ' ').slice(0, 1800) + '\n';
             try {
                 fs.appendFileSync(file, line, 'utf8');
                 bytes += Buffer.byteLength(line);
                 return true;
-            } catch (_) { return false; }
+            } catch (e) { error = String(e.code || e.message || e); return false; }
         },
         reset() { openNew(); },
     };
@@ -185,4 +196,4 @@ function draw(cv, qr, x, y, maxSize) {
             top + (row + quiet) * pixel, pixel, pixel, '#000000');
 }
 
-module.exports = { report, matrix, draw, snapshot, clearSaved, startJournal };
+module.exports = { report, matrix, draw, snapshot, save, clearSaved, startJournal };
