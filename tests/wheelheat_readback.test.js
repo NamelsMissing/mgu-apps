@@ -21,3 +21,18 @@ test('BDC_G05 E432/E430 seat state and level use ECU result fields', () => {
     assert.equal(B.decodeSeatReadback([1, 0xff]), null);
     assert.equal(B.decodeSeatReadback([0x7f, 0]), null);
 });
+
+test('G05 manual steering wheel OFF/ON transitions display the latest BDC state', () => {
+    const replies = [
+        [0x62, 0xD0, 0x74, 0x00, 0x00, 0x00, 0x01, 0x01],
+        [0x62, 0xD0, 0x74, 0x01, 0x00, 0x44, 0x02, 0x01],
+        [0x62, 0xD0, 0x74, 0x01, 0x00, 0x43, 0x02, 0x01],
+        [0x62, 0xD0, 0x74, 0x00, 0x00, 0x00, 0x01, 0x01],
+    ];
+    assert.deepEqual(replies.map(raw =>
+        B.readbackLabel(B.decodeWheelReadback(raw.slice(3)), false)), [
+        'OFF (BDC report)', 'ON  |  LED OFF', 'ON  |  LED OFF', 'OFF (BDC report)',
+    ]);
+    assert.equal(B.readbackLabel({ on: true, level: 3 }, true), 'ON  |  Level 3');
+    assert.equal(B.readbackLabel(null, false), null);
+});
