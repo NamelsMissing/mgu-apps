@@ -8,7 +8,7 @@ const app = require('../apps/g21_wheelheat/app.json');
 const main = fs.readFileSync(path.join(__dirname, '../apps/g21_wheelheat/main.js'), 'utf8');
 
 test('WheelHeat autostart uses a single explicit opt-in and honest diagnostic states', () => {
-    assert.equal(app.version, '0.4.17');
+    assert.equal(app.version, '0.4.18');
     assert.equal(app.mguAppStartType, 'autostart');
     assert(!app.settings.some(s => s.key === 'liveControl'));
     assert.equal(app.settings.find(s => s.key === 'autoEnabled').default, false);
@@ -21,6 +21,9 @@ test('WheelHeat autostart uses a single explicit opt-in and honest diagnostic st
     assert(!main.includes('Live writes enabled'));
     assert.match(main, /decodeWheelReadback\(entry.payload\)/);
     assert.match(main, /decodeSeatReadback\(entry.payload\)/);
+    assert.match(main, /B\.readbackLabel\(decoded, seat\)/);
+    assert.doesNotMatch(main, /FLUCTUATING ECU READBACK|statusSamples/,
+        'normal manual OFF/ON transitions must not be marked as unstable');
     assert.match(main, /ctx\.ui\.onClick\('BTN_STOP', stopAutoHeating\)/);
     assert.match(main, /ctx\.ui\.onVisible/);
     assert.match(main, /\[HEAT EVENT\]/);
