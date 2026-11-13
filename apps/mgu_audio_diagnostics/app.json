@@ -2,7 +2,7 @@
   "id": "mgu_audio_diagnostics",
   "title": "MGU Audio Diagnostics",
   "description": "Read-only SmartX, ALSA and DSP diagnostics; no music playback.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "vendor": "NamelsMissing",
   "loggingId": "OAUD",
   "iconGlyph": "AUD",

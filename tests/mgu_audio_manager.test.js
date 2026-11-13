@@ -10,7 +10,7 @@ async function main(){
             if(name==='getListMainSources')return {amError:'E_OK',listMainSources:[{sourceID:106,name:'CarPlayMain'},{sourceID:107,name:'Hidden!'},
                 {sourceID:'VIN012345678901234',name:'private'}]};
             if(name==='getListMainSinks')return {amError:0,listMainSinks:[{sinkID:200,name:'MainSink'}]};
-            if(name==='getListMainConnections')return {amError:0,listMainConnections:[
+            if(name==='getListMainConnections')return {amError:0,listConnections:[
                 {mainConnectionID:88,sourceID:106,sinkID:200,connectionState:2}]};
             throw Error('unexpected call');
         }
@@ -20,6 +20,10 @@ async function main(){
     assert.equal(a.connections[0].source,'CarPlayMain');assert.equal(a.connections[0].sink,'MainSink');
     assert.deepEqual(seen,['getListMainSources','getListMainSinks','getListMainConnections']);
     assert.equal(a.sources[1].name,'Hidden_');
+    const alias=await AM.collect({proxy:mock.proxy,call:async(p,n)=>
+        n==='getListMainConnections' ? {amError:0,listMainConnections:[{sourceID:106,sinkID:200,mainConnectionID:9}]}
+        : mock.call(p,n,{},1800)});
+    assert.equal(alias.connections.length,1,'legacy alias stays readable');
     const unavailable=await AM.collect({proxy:async()=>{throw new Error('DENIED secret-token');},call:()=>{throw Error('unreachable');}});
     assert.equal(unavailable.available,false);
     assert(!JSON.stringify(unavailable).includes('secret-token'));

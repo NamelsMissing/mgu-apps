@@ -45,7 +45,7 @@ async function collect(signals) {
     const methods=[
         ['getListMainSources','listMainSources',normalizeSources,'sources'],
         ['getListMainSinks','listMainSinks',normalizeSinks,'sinks'],
-        ['getListMainConnections','listMainConnections',normalizeConnections,'connections']
+        ['getListMainConnections','listConnections',normalizeConnections,'connections']
     ];
     for(const [name,key,normalize,target] of methods) {
         try {
@@ -53,10 +53,13 @@ async function collect(signals) {
             if(!reply||(reply.amError!==0&&reply.amError!=='E_OK')) {
                 report.errors.push(name+': unsupported or error');continue;
             }
-            if(!Array.isArray(reply[key])) {
-                report.errors.push(name+': missing '+key);continue;
+            const data = name === 'getListMainConnections'
+                ? (Array.isArray(reply.listConnections) ? reply.listConnections : reply.listMainConnections)
+                : reply[key];
+            if(!Array.isArray(data)) {
+                report.errors.push(name+': missing '+(name === 'getListMainConnections' ? 'listConnections' : key));continue;
             }
-            report[target]=normalize(reply[key]);
+            report[target]=normalize(data);
         }catch(e){report.errors.push(name+': '+errLabel(e));}
     }
     // resolve connection endpoints through the two name lists. Never infer a

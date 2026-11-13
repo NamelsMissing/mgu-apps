@@ -55,18 +55,25 @@ function draw(cv,state,acts) {
             74,423,18,C.dim);
     } else if(s.page===2) {
         const links=am.connections||[];
-        const start=s.offset*3;
-        row('AudioManager-Schnittstelle',s.amError?'Nicht verfuegbar':am.available?'Erreichbar':'Nicht gelesen',213,
+        const start=s.offset*2;
+        row('AudioManager-Schnittstelle',am.available?'Erreichbar':s.amError?'Nicht verfuegbar':'Nicht gelesen',213,
             am.available?C.green:C.amber);
         row('Registrierte Quellen / Senken',am.sources?am.sources.length+' / '+am.sinks.length:'--',253);
         row('HMI-Medienverbindungen',am.connections?links.length:'--',293);
+        const carplay=(am.sources||[]).find(x=>x.name==='CarPlayMedia');
+        const oap=(am.sources||[]).find(x=>x.name==='OAPGenericMedia');
+        if(!links.length) {
+            text('CarPlayMedia: '+(carplay?'ID '+carplay.id:'nicht registriert'),75,333,19,C.white);
+            text('OAPGenericMedia: '+(oap?'ID '+oap.id:'nicht registriert'),75,367,19,C.amber);
+        }
         if(links.length) {
             for(let i=0;i<2&&start+i<links.length;i++){
                 const link=links[start+i];
                 text(short(link.source+' -> '+link.sink,78),75,336+35*i,20,C.white);
             }
         } else {
-            text('Keine gemeldete Verbindung oder Abfrage nicht verfuegbar.',75,344,19,C.amber);
+            // No active HMI connections reported. Presence of a registered OAP
+            // source does not mean that the current app can write its PCM.
         }
         const msg=(am.errors||[]).join('; ');
         text(short(msg||'Verbindungen sind keine PCM-Kopien.',104),74,420,17,C.dim);
