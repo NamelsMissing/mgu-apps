@@ -4,7 +4,7 @@
 #include "eq_dsp.h"
 /* Offline-only test API. No system daemon, IPC or vehicle deployment. */
 typedef struct {
-    int target_open, negotiated, armed, format;
+    int target_open, negotiated, armed, format, access;
     unsigned channels, rate;
     uint64_t intercepted_writes, processed_frames, bypassed_frames;
     uint64_t mmap_writes, unsupported_calls, partial_writes;

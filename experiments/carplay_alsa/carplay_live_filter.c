@@ -22,10 +22,13 @@ typedef int (*ParamsFn)(snd_pcm_t *, snd_pcm_hw_params_t *);
 typedef int (*GetFormatFn)(const snd_pcm_hw_params_t *, int *);
 typedef int (*GetChannelsFn)(const snd_pcm_hw_params_t *, unsigned *);
 typedef int (*GetRateFn)(const snd_pcm_hw_params_t *, unsigned *, int *);
+typedef int (*GetAccessFn)(const snd_pcm_hw_params_t *, int *);
 typedef snd_pcm_sframes_t (*WriteFn)(snd_pcm_t *, const void *, snd_pcm_uframes_t);
 typedef int (*CloseFn)(snd_pcm_t *);
 
 #define SND_PCM_FORMAT_S16_LE_VALUE 2
+#define ACCESS_MMAP_INTERLEAVED 0
+#define ACCESS_RW_INTERLEAVED 3
 #define MAX_WRITE_FRAMES 4096UL
 #define TARGET "smartx:CarPlayMain_CF_48_STEREO"
 
@@ -36,10 +39,11 @@ static ParamsFn g_params;
 static GetFormatFn g_format_get;
 static GetChannelsFn g_channels_get;
 static GetRateFn g_rate_get;
+static GetAccessFn g_access_get;
 static WriteFn g_write, g_mmap_write;
 static CloseFn g_close;
 static snd_pcm_t *g_target;
-static int g_format = -1;
+static int g_format = -1, g_access = -1;
 static unsigned g_channels, g_rate;
 static int g_negotiated;
 static _Atomic(int) g_armed;
@@ -54,6 +58,7 @@ static void resolve_symbols(void) {
     *(void **)(&g_format_get) = dlsym(RTLD_NEXT, "snd_pcm_hw_params_get_format");
     *(void **)(&g_channels_get) = dlsym(RTLD_NEXT, "snd_pcm_hw_params_get_channels");
     *(void **)(&g_rate_get) = dlsym(RTLD_NEXT, "snd_pcm_hw_params_get_rate");
+    *(void **)(&g_access_get) = dlsym(RTLD_NEXT, "snd_pcm_hw_params_get_access");
     *(void **)(&g_write) = dlsym(RTLD_NEXT, "snd_pcm_writei");
     *(void **)(&g_mmap_write) = dlsym(RTLD_NEXT, "snd_pcm_mmap_writei");
     *(void **)(&g_close) = dlsym(RTLD_NEXT, "snd_pcm_close");
@@ -71,7 +76,7 @@ static void reset_stats(void) {
 }
 static void clear_stream(void) {
     atomic_store(&g_armed, 0);
-    g_negotiated = 0; g_format = -1; g_channels = 0; g_rate = 0;
+    g_negotiated = 0; g_format = -1; g_access = -1; g_channels = 0; g_rate = 0;
     memset(&g_dsp, 0, sizeof(g_dsp));
 }
 void mgu_cp_live_snapshot(MguCarplayLiveStats *out) {
@@ -81,6 +86,7 @@ void mgu_cp_live_snapshot(MguCarplayLiveStats *out) {
     out->negotiated = g_negotiated;
     out->armed = atomic_load(&g_armed);
     out->format = g_format;
+    out->access = g_access;
     out->channels = g_channels;
     out->rate = g_rate;
     out->intercepted_writes = atomic_load(&g_write_calls);
@@ -95,7 +101,7 @@ int mgu_cp_live_arm(const MguEqConfig *config) {
     if (!config || !config->enabled) return -EINVAL;
     pthread_mutex_lock(&g_lock);
     int ok = g_target && g_negotiated && g_format == SND_PCM_FORMAT_S16_LE_VALUE &&
-        g_rate == 48000 && g_channels == 2 && mgu_eq_valid(config, g_rate);
+        g_rate == 48000 && g_channels == 2 && (g_access==ACCESS_MMAP_INTERLEAVED || g_access==ACCESS_RW_INTERLEAVED) && mgu_eq_valid(config, g_rate);
     if (ok) {
         ok = mgu_eq_init(&g_dsp, g_rate, g_channels, config) == 0;
         if (ok) atomic_store(&g_armed, 1);
@@ -129,42 +135,55 @@ int snd_pcm_hw_params(snd_pcm_t *pcm, snd_pcm_hw_params_t *params) {
     pthread_once(&g_once, resolve_symbols);
     if (!g_params) return -ENOSYS;
     int rc = g_params(pcm, params);
-    if (rc || !params || !g_format_get || !g_channels_get || !g_rate_get) return rc;
+    if (rc || !params || !g_format_get || !g_channels_get || !g_rate_get || !g_access_get) return rc;
     pthread_mutex_lock(&g_lock);
     if (is_target(pcm)) {
         clear_stream();
-        int format = -1, direction = 0; unsigned channels = 0, rate = 0;
+        int format = -1, access = -1, direction = 0; unsigned channels = 0, rate = 0;
         if (!g_format_get(params, &format) && !g_channels_get(params, &channels) &&
-            !g_rate_get(params, &rate, &direction)) {
-            g_format = format; g_channels = channels; g_rate = rate;
-            g_negotiated = format == SND_PCM_FORMAT_S16_LE_VALUE && channels == 2 && rate == 48000;
+            !g_rate_get(params, &rate, &direction) && !g_access_get(params, &access)) {
+            g_format = format; g_channels = channels; g_rate = rate; g_access = access;
+            g_negotiated = format == SND_PCM_FORMAT_S16_LE_VALUE && channels == 2 && rate == 48000 &&
+                (access == ACCESS_RW_INTERLEAVED || access == ACCESS_MMAP_INTERLEAVED);
         } else atomic_fetch_add(&g_unsupported, 1);
     }
     pthread_mutex_unlock(&g_lock);
     return rc;
 }
-snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames) {
-    pthread_once(&g_once, resolve_symbols);
-    if (!g_write) return -ENOSYS;
-    if (!pcm || !buf || frames == 0) return g_write(pcm, buf, frames);
-    if (pthread_mutex_trylock(&g_lock) != 0) return g_write(pcm, buf, frames);
-    if (!is_target(pcm)) { pthread_mutex_unlock(&g_lock); return g_write(pcm, buf, frames); }
-    atomic_fetch_add(&g_write_calls, 1);
+static snd_pcm_sframes_t filter_write(snd_pcm_t *pcm, const void *buf,
+                                       snd_pcm_uframes_t frames, WriteFn original,
+                                       int required_access, int is_mmap) {
+    if (!original) return -ENOSYS;
+    if (!pcm || !buf || !frames) return original(pcm, buf, frames);
+    if (pthread_mutex_trylock(&g_lock) != 0) return original(pcm, buf, frames);
+    if (!is_target(pcm)) { pthread_mutex_unlock(&g_lock); return original(pcm, buf, frames); }
+    if (is_mmap) atomic_fetch_add(&g_mmap_calls, 1);
+    else atomic_fetch_add(&g_write_calls, 1);
+    if (g_access != required_access) {
+        /* Do not mix filtered and unfiltered writes if a stream unexpectedly
+         * switches between RW/MMAP access modes. */
+        atomic_store(&g_armed, 0);
+        g_negotiated = 0;
+        atomic_fetch_add(&g_unsupported, 1);
+        atomic_fetch_add(&g_bypassed_frames, frames);
+        pthread_mutex_unlock(&g_lock);
+        return original(pcm, buf, frames);
+    }
     if (!atomic_load(&g_armed) || !g_negotiated || frames > MAX_WRITE_FRAMES) {
         if (frames > MAX_WRITE_FRAMES) atomic_fetch_add(&g_unsupported, 1);
         atomic_fetch_add(&g_bypassed_frames, frames);
-        pthread_mutex_unlock(&g_lock); return g_write(pcm, buf, frames);
+        pthread_mutex_unlock(&g_lock);
+        return original(pcm, buf, frames);
     }
-    MguEqDsp previous = g_dsp; /* snapshot supports partial ALSA writes */
+    MguEqDsp previous = g_dsp; /* rollback snapshot for short/error writes */
     if (mgu_eq_process_s16le(&g_dsp, (const int16_t *)buf, g_scratch, frames) != 0) {
         g_dsp = previous;
         atomic_fetch_add(&g_unsupported, 1);
         atomic_fetch_add(&g_bypassed_frames, frames);
-        pthread_mutex_unlock(&g_lock); return g_write(pcm, buf, frames);
+        pthread_mutex_unlock(&g_lock);
+        return original(pcm, buf, frames);
     }
-    /* Hold the lock through the ALSA return so a short write can restore
-     * DSP state precisely. Other audio callbacks trylock and pass through. */
-    snd_pcm_sframes_t result = g_write(pcm, g_scratch, frames);
+    snd_pcm_sframes_t result = original(pcm, g_scratch, frames);
     if (result < (snd_pcm_sframes_t)frames) {
         atomic_fetch_add(&g_partials, 1);
         g_dsp = previous;
@@ -175,21 +194,13 @@ snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *pcm, const void *buf, snd_pcm_uframe
     pthread_mutex_unlock(&g_lock);
     return result;
 }
+snd_pcm_sframes_t snd_pcm_writei(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames) {
+    pthread_once(&g_once, resolve_symbols);
+    return filter_write(pcm, buf, frames, g_write, ACCESS_RW_INTERLEAVED, 0);
+}
 snd_pcm_sframes_t snd_pcm_mmap_writei(snd_pcm_t *pcm, const void *buf, snd_pcm_uframes_t frames) {
     pthread_once(&g_once, resolve_symbols);
-    if (!g_mmap_write) return -ENOSYS;
-    if (pthread_mutex_trylock(&g_lock) == 0) {
-        if (is_target(pcm)) {
-            atomic_fetch_add(&g_mmap_calls, 1);
-            atomic_fetch_add(&g_bypassed_frames, frames);
-            /* MMAP not supported by this prototype. Disable filtering
-             * for this stream rather than mixing modified/unmodified blocks. */
-            atomic_store(&g_armed, 0);
-            g_negotiated = 0;
-        }
-        pthread_mutex_unlock(&g_lock);
-    }
-    return g_mmap_write(pcm, buf, frames);
+    return filter_write(pcm, buf, frames, g_mmap_write, ACCESS_MMAP_INTERLEAVED, 1);
 }
 int snd_pcm_close(snd_pcm_t *pcm) {
     pthread_once(&g_once, resolve_symbols);

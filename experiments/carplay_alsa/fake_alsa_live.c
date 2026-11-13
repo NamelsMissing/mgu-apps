@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 typedef struct _snd_pcm { int stream; char name[96]; } snd_pcm_t;
-typedef struct _snd_pcm_hw_params { int format; unsigned channels, rate; } snd_pcm_hw_params_t;
+typedef struct _snd_pcm_hw_params { int format; unsigned channels, rate; int access; } snd_pcm_hw_params_t;
 static double g_rms;
 static unsigned long g_frames;
 static int g_short;
@@ -28,6 +28,10 @@ int snd_pcm_hw_params_get_channels(const snd_pcm_hw_params_t *p,unsigned *out) {
 int snd_pcm_hw_params_get_rate(const snd_pcm_hw_params_t *p,unsigned *out,int *dir) {
     if (!p||!out||!dir) return -1;
     *out=p->rate;*dir=0;return 0;
+}
+int snd_pcm_hw_params_get_access(const snd_pcm_hw_params_t *p,int *out) {
+    if (!p||!out) return -1;
+    *out=p->access;return 0;
 }
 static long capture(snd_pcm_t *pcm,const void *buf,unsigned long frames) {
     if (!pcm||!buf) return -1;
