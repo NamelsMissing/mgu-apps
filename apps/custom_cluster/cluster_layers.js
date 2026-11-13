@@ -237,7 +237,7 @@ class ClusterLayers {
         return PANEL_TARGETS[target] ? target : 'panel';
     }
     armPanel() {
-        if (this.armedUntil) { this.restoreOriginal(); return false; }
+        if (this.armedUntil) { this.tracePanel('test ended: Stopped by user'); this.restoreOriginal(); return false; }
         if (this.options.layout !== 'g80' && this.options.layout !== 'oem' && this.options.layout !== 'sixwb') {
             this.disarmReason = 'Choose a full-panel design first';
             this.tracePanel('test refused: ' + this.disarmReason);
