@@ -1,4 +1,17 @@
-# Custom Cluster 0.5.9 — BMW G21 / MGU iDrive 7
+# Custom Cluster 0.6.0 — BMW G21 / MGU iDrive 7
+
+
+## 0.6.0: Persistent logs, static engine-off preview, explicit KOMBI safety boundary
+
+- A `cluster-session-<timestamp>-<random>.txt` diagnostic file is created in the app's private `dataDir/exports/` **as soon as the app opens**, without pressing QR Logs. UI actions, panel requests, renderer responses and a vehicle/slot summary every 15 seconds are appended. The maximum size is 1 MiB per session.
+- **QR Logs** still creates a separate `cluster-diagnostics-*.txt` snapshot and tries to copy it to writable USB mounts. Both formats can be deleted via Delete logs / Confirm delete; USB copies remain untouched. The QR screen displays the actual auto-log path when storage is available.
+- New safe default **Test content → Static iDrive preview** shows a 30-second G80/6WB example with 0 km/h and 0 rpm. It needs no engine, RPM notifications or selector P because it **never touches the KOMBI slot**.
+- Existing installs may retain the earlier saved `probe` setting. For engine-off testing select **Static iDrive preview** explicitly.
+- The real **KOMBI marker** and **Full KOMBI design** modes still require recent real speed/RPM, selector P, and 0 km/h. Old samples (e.g. 180 s) cannot prove the vehicle is stopped; an engine-off indication by itself cannot replace an independent current stationary check.
+- When target `panel` (slot 0x203) is mapped with `content` and `contend: true`, it may displace original right-hand media widgets. A working layered music-preserving full cluster has **not** been established. The real panel and Waze overlay are still experimental; no driving use of custom full gauges.
+
+### Reading the automatic file
+The physical path varies by MGU installer and app sandbox. The **QR Logs** screen shows the actual path as `Auto log: ...` when writable. Retrieve that file with your Phone Terminal SSH/SFTP workflow, or use QR Logs to obtain a numbered offline QR snapshot. No private log files are committed to GitHub.
 
 ## 0.5.9: Single native page and trace of the parked panel test
 
