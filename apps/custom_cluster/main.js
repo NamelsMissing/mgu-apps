@@ -29,7 +29,8 @@ mgu.run({
             journal.write('PANEL ' + line);
             // Always save a separate full text snapshot when a real panel
             // attempt ENDS, regardless of whether QR Logs was ever opened.
-            if (line.indexOf('test ended:') >= 0) saveTxt('automatic panel-test end');
+            if (line.indexOf('restore requested:') >= 0)
+                saveTxt('automatic after KOMBI release');
         });
         const waze = new WazeControl(log);
         const bridge = new PhoneBridge(ctx.dataDir, log, () => {
@@ -118,8 +119,7 @@ mgu.run({
         ui.onClick('BTN_TEST', () => {
             if (currentPage === 'DIAGNOSTICS') {
                 uiEvent('manual Restore BMW requested');
-                cluster.restoreOriginal();
-                saveTxt('manual release of Custom Cluster graphics');
+                cluster.restoreOriginal(); // trace sink saves a TXT report automatically
                 return;
             }
             if (currentPage !== 'MAIN') return showPage('MAIN');
@@ -134,7 +134,7 @@ mgu.run({
             journal.write('TEST REQUEST before=' + JSON.stringify(cluster.status()));
             const enabled = cluster.armPanel();
             journal.write('TEST RESULT armed=' + enabled + ' state=' + JSON.stringify(cluster.status()));
-            if (!enabled && /stale|no complete sample|release not confirmed|Renderer not connected/i.test(cluster.status().disarmReason)) {
+            if (!enabled && /stale|no complete sample|release not confirmed|Renderer not connected|not ready|Prior panel/i.test(cluster.status().disarmReason)) {
                 // User can always repeat an HMI-only demonstration. It must
                 // not manufacture motion readings or override the KOMBI gate.
                 staticPreviewUntil = Date.now() + 30000;
@@ -236,7 +236,8 @@ mgu.run({
                 const st = cluster.status();
                 journal.write('STATE layout=' + st.layout + ' selector=' + st.gearPosition +
                     ' speed=' + st.speedKmh + ' rpm=' + st.engineRpm +
-                    ' sampleAge=' + st.sampleAgeSeconds + 's guard=' + st.testGuard +
+                    ' sampleAge=' + st.sampleAgeSeconds + 's speedAge=' + st.speedAgeSeconds +
+                    's rpmAge=' + st.rpmAgeSeconds + 's guard=' + st.testGuard +
                     ' panel=' + st.panelActive + ' layer=' + st.panelLayer +
                     ' slot=' + st.panelTargetState + ' renderer=' + st.rendererBackend);
             }
@@ -293,10 +294,11 @@ mgu.run({
             cv.text('Slot reason: ' + (current.panelTargetReason || '-').slice(0, 112), 48, 216, 17, t.warn);
             cv.text('Last refusal: ' + (current.lastRefusal || '-').slice(0, 115), 48, 244, 17, t.warn);
             cv.text('Test guard: ' + current.testGuard.slice(0, 115), 48, 270, 18, t.warn);
-            cv.text('Last vehicle signals: selector=' + (current.gearPosition || 'unknown') +
+            cv.text('Selector=' + (current.gearPosition || '?') +
                 ' | speed=' + (current.speedKmh === null ? '?' : current.speedKmh.toFixed(1)) +
-                ' km/h | rpm=' + (current.engineRpm === null ? '?' : Math.round(current.engineRpm)) +
-                ' | age=' + ageText(current.sampleAgeSeconds), 48, 295, 18, t.text);
+                ' (age ' + ageText(current.speedAgeSeconds) + ')' +
+                ' | rpm=' + (current.engineRpm === null ? '?' : Math.round(current.engineRpm)) +
+                ' (age ' + ageText(current.rpmAgeSeconds) + ')', 48, 295, 17, t.text);
             cv.text('Auto log: ' + (journal.path || 'NOT SAVED').slice(-117),
                 48, 324, 15, journal.path ? t.text : t.warn);
             cv.text('Log I/O: ' + (journal.error || 'OK'), 48, 344, 15,
