@@ -1,0 +1,29 @@
+name: MGU Audio Diagnostics
+on:
+  push:
+    paths:
+      - 'apps/mgu_audio_diagnostics/**'
+      - 'tests/mgu_audio_diagnostics.test.js'
+      - '.github/workflows/mgu_audio_diagnostics.yml'
+  pull_request:
+    paths:
+      - 'apps/mgu_audio_diagnostics/**'
+      - 'tests/mgu_audio_diagnostics.test.js'
+      - '.github/workflows/mgu_audio_diagnostics.yml'
+permissions:
+  contents: read
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [8.17.0, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --check apps/mgu_audio_diagnostics/main.js
+      - run: node --check apps/mgu_audio_diagnostics/inventory.js
+      - if: matrix.node == 22
+        run: node tests/mgu_audio_diagnostics.test.js

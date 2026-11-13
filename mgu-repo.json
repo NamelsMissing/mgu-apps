@@ -278,6 +278,29 @@
         "ID7"
       ],
       "uninstallable": true
+    },
+    {
+      "id": "mgu_audio_diagnostics",
+      "kind": "app",
+      "title": "MGU Audio Diagnostics (read-only)",
+      "version": "0.1.0",
+      "path": "apps/mgu_audio_diagnostics",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
+        "idrive7-renderd": "2.1.6",
+        "mgu-inputgate": "1.0.0",
+        "mgu-equalizer-dsp": "0.2.0"
+      },
+      "build": {
+        "python": "tools/build_store_app.py",
+        "args": [
+          "{id}"
+        ],
+        "sdk": "oap-sdk",
+        "output": "dist/{id}@{version}.tgz"
+      }
     }
   ]
 }

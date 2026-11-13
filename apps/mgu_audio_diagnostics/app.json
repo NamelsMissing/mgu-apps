@@ -1,0 +1,34 @@
+{
+  "id": "mgu_audio_diagnostics",
+  "title": "MGU Audio Diagnostics",
+  "description": "Read-only SmartX, ALSA and DSP diagnostics; no music playback.",
+  "version": "0.1.0",
+  "vendor": "NamelsMissing",
+  "loggingId": "OAUD",
+  "iconGlyph": "AUD",
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Audio Diagnostics",
+      "buttons": [
+        [
+          "BTN_PAGE",
+          "Ansicht wechseln"
+        ],
+        [
+          "BTN_NEXT",
+          "Weitere Einträge"
+        ],
+        [
+          "BTN_REFRESH",
+          "Neu einlesen"
+        ],
+        [
+          "BTN_EXPORT",
+          "Diagnose exportieren"
+        ]
+      ]
+    }
+  ]
+}
