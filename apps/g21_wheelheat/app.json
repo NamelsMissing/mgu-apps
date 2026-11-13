@@ -2,7 +2,7 @@
   "id": "g21_wheelheat",
   "title": "G21 Heating Comfort",
   "description": "Automatic seat and steering-wheel heating with adjustable settings, manual controls, and diagnostic logs.",
-  "version": "0.4.17",
+  "version": "0.4.18",
   "mguAppStartType": "autostart",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB2",
