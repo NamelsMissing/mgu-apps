@@ -48,6 +48,10 @@ class ClusterLayers {
         this.data = {};
         this.panelEvents = [];
         this.traceSink = null;
+        this.suspended = false;
+        this.recoveryState = 'not requested';
+        this.recoveryRequestedAt = 0;
+        this.recoveryStatusAt = 0;
         this.options = { layout: 'stock', accent: 'm', phoneBadge: false, wazeMap: 'auto',
             sixwbTheme: 'comfort', sixwbColorSource: 'original',
             colorMode: 'palette', colorBrightness: 100,
@@ -94,6 +98,17 @@ class ClusterLayers {
         });
         this.cr.on('status', (value) => {
             this.rendererStatusText = String(value || '').slice(0, 24000);
+            if (this.recoveryRequestedAt && !this.panelRef) {
+                const panel = this.rendererStatusText.split('\n')
+                    .find((line) => /^target panel slot 0x203 /i.test(line));
+                if (panel) {
+                    this.recoveryStatusAt = Date.now();
+                    this.recoveryState = /;\s*idle[;\s]/i.test(panel) ?
+                        'panel idle (BMW media NOT verified)' :
+                        'panel not idle (recovery NOT verified)';
+                    this.tracePanel('post-release: ' + panel.slice(0, 300));
+                }
+            }
             this.rendererStatusAt = Date.now();
             if (this.armedUntil) {
                 // Preserve the renderer's *during-test* state; a QR export
@@ -125,11 +140,40 @@ class ClusterLayers {
         if (this.traceSink) this.tracePanel('automatic session logging enabled');
     }
     history() { return this.panelEvents.join('\n') || '(no panel events yet)'; }
+    // This only releases OUR client layers; it cannot command the BMW HMI to
+    // re-open its music widget. Never claim OEM graphics have been restored.
+    restoreOriginal() {
+        this.armedUntil = 0;
+        this.activeTestMode = '';
+        this.suspended = true;
+        if (this.panelRef) { this.cr.drop(this.panelRef); this.panelRef = 0; }
+        if (this.effectRef) { this.cr.drop(this.effectRef); this.effectRef = 0; }
+        if (this.badgeRef) { this.cr.drop(this.badgeRef); this.badgeRef = 0; }
+        this.recoveryRequestedAt = Date.now();
+        this.recoveryStatusAt = 0;
+        this.recoveryState = 'release requested; BMW music unverified';
+        this.disarmReason = 'All Custom Cluster graphics released (BMW media unverified)';
+        this.tracePanel('restore requested: drop own layers, disconnect renderer client');
+        this.ready = false;
+        // A socket disconnect also releases the renderer-side ownership if a
+        // previous drop got lost. Never restart the shared renderer/Waze tool.
+        try {
+            this.cr.close();
+            this.cr.connect();
+        } catch (e) {
+            this.recoveryState = 'renderer reconnect failed: ' + String(e.message || e);
+            this.tracePanel(this.recoveryState);
+        }
+        return this.recoveryState;
+    }
     clearHistory() { this.panelEvents.length = 0; }
 
     settings(options) {
         const previous = this.options;
         this.options = options;
+        if (previous.layout !== options.layout && options.layout === 'stock') {
+            this.suspended = true; // stock never requests a custom display
+        }
         if (previous.layout !== options.layout || previous.panelTarget !== options.panelTarget ||
             previous.panelTestMode !== options.panelTestMode) this.disarm('Panel settings changed');
         this.apply();
@@ -176,13 +220,21 @@ class ClusterLayers {
         return PANEL_TARGETS[target] ? target : 'panel';
     }
     armPanel() {
-        if (this.armedUntil) { this.disarm('Stopped by user'); this.apply(); return false; }
+        if (this.armedUntil) { this.restoreOriginal(); return false; }
         if (this.options.layout !== 'g80' && this.options.layout !== 'oem' && this.options.layout !== 'sixwb') {
             this.disarmReason = 'Choose a full-panel design first';
             this.tracePanel('test refused: ' + this.disarmReason);
             return false;
         }
         if (!this.parked()) { this.disarmReason = this.testGuard(); this.tracePanel('test refused: ' + this.disarmReason); return false; }
+        // Do not stack requests on top of a release with unconfirmed slot state.
+        if (this.recoveryRequestedAt &&
+            (!this.recoveryStatusAt ||
+             this.recoveryState.indexOf('panel idle') !== 0)) {
+            this.disarmReason = 'Prior panel release not confirmed; use Restore BMW and check OEM media';
+            this.tracePanel('test refused: ' + this.disarmReason);
+            return false;
+        }
         if (!this.ready) { this.disarmReason = 'Renderer not connected'; this.tracePanel('test refused: ' + this.disarmReason); return false; }
         const target = this.panelTarget();
         if (target !== 'panel' && !String(this.cr.targets || '').split(',').some((t) => t.trim().indexOf(target + ':') === 0)) {
@@ -190,6 +242,7 @@ class ClusterLayers {
             this.tracePanel('test refused: ' + this.disarmReason);
             return false;
         }
+        this.suspended = false;
         this.activePanelTarget = target;
         this.activeTestMode = this.options.panelTestMode === 'design' ? 'design' : 'probe';
         this.panelTargetState = 'requesting';
@@ -207,13 +260,15 @@ class ClusterLayers {
         return true;
     }
     disarm(reason) {
-        if (this.armedUntil || this.panelRef) this.tracePanel('test ended: ' + (reason || 'unknown'));
+        const hadPanel = !!this.panelRef;
+        if (this.armedUntil || hadPanel) this.tracePanel('test ended: ' + (reason || 'unknown'));
         this.armedUntil = 0;
         if (reason) this.disarmReason = reason;
-        if (this.panelRef) { this.cr.drop(this.panelRef); this.panelRef = 0; }
-        this.activeTestMode = '';
+        if (hadPanel) this.restoreOriginal();
+        else this.activeTestMode = '';
     }
     apply() {
+        if (this.suspended) return; // never recreate a layer during OEM recovery
         const mode = MODES[this.options.layout] || 0;
         const valid = this.live();
         if (this.armedUntil && (!this.parked() || Date.now() >= this.armedUntil)) {
@@ -293,12 +348,17 @@ class ClusterLayers {
             rendererBackend: this.cr.backend || 'unknown', rendererTargets: this.cr.targets || '',
             rendererStatusAt: this.rendererStatusAt,
             lastRefusal: this.lastRefusal, disarmReason: this.disarmReason,
+            recoveryState: this.recoveryState, recoveryRequestedAt: this.recoveryRequestedAt,
+            suspended: this.suspended,
             testGuard: this.testGuard(),
             secondsLeft: this.panelRef ? Math.max(0, Math.ceil((this.armedUntil - Date.now()) / 1000)) : 0,
             color: colorHex(this.options.layout === 'sixwb' ? resolve6WBColor(this.options, Date.now())
                 : resolveColor(this.options, Date.now())) };
     }
     rendererStatus() { return this.rendererStatusText; }
-    close() { this.disarm('App closed'); this.cr.close(); }
+    close() {
+        this.restoreOriginal();
+        this.cr.close();
+    }
 }
 module.exports = { ClusterLayers, MODES, COLORS, PANEL_TEST_MS };
