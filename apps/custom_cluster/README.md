@@ -1,5 +1,22 @@
-# Custom Cluster 0.6.0 — BMW G21 / MGU iDrive 7
+# Custom Cluster 0.6.1 — BMW G21 / MGU iDrive 7
 
+
+## 0.6.1: Fix stationary samples, add Restore BMW and Save TXT
+
+- **Vehicle data:** Custom Cluster now requests read-only `getValue` refreshes every 5 seconds for speed and engine RPM through the existing SOME/IP signal interface. A stationary BMW may send change notifications only, so a 180-second "last sample" does not by itself mean a failed connection. The refresh works only if the vehicle provider and getter are available. Both fields have independent receive timestamps: a fresh RPM paired with a stale speed must never pass the parked test.
+- **Diagnosis screen:** `Restore BMW` (first bottom action) drops only Custom Cluster's rendering layers and reconnects its client to the shared renderer without restarting Waze or modifying the CarPlay patch. It does **not** guarantee the BMW right-hand music widget will return; the UI reports when the panel slot is idle but explicitly treats OEM music as unverified. If stock displays do not recover, stop testing until the HU has returned to normal after a safe restart.
+- **Diagnosis screen:** `Save TXT` (third bottom action) immediately creates a readable diagnostic text file in the app's private `exports` directory, and attempts a copy to a writable mounted USB directory. Its destination or error is shown on Diagnostics. **QR Logs remains optional.**
+- **Automatic files:** A text snapshot is also written after a panel-layer release. The existing `cluster-session-*.txt` file starts at app launch, records UI, renderer and state events, and exposes storage errors in Diagnostics. No debug log or file is published to GitHub.
+- **Repeatability:** If a panel test cannot start because read-only updates are missing, the iDrive-only 30-second preview is used instead. It can be repeated and never takes over the real gauges. The full-panel test remains restricted to a verified selector P, stopped speed, and actual fresh speed+RPM samples; there is no synthetic bypass.
+- **Render limitation:** Slot `panel` (0x203) can obscure BMW's right-side music widget. A `drop` or client disconnect only releases our layers; it does not prove the BMW HMI reopens the widget. G80, G21 and 6WB full panels are still experimental and **must not be used while driving**.
+
+### Suggested test on the parked vehicle
+
+1. Update Custom Cluster, open **Diagnostics**, and press **Save TXT**. Check for a path or a precise I/O error. A USB stick is optional; when present it can receive a copy.
+2. Watch speed age and RPM age separately for at least 15 seconds. With getter support both should refresh every few seconds despite 0 km/h.
+3. Press **Restore BMW**. Look for the original music pane and check the logged `recoveryState`; `panel idle` only confirms our slot is idle, not restored OEM media.
+4. If music is still absent, do not initiate another real `panel` test. Return the head unit to normal while safely parked before any new attempt.
+5. After a short parked test, use **Save TXT** again and export both the session and snapshot files; the test also saves an automatic snapshot on release.
 
 ## 0.6.0: Persistent logs, static engine-off preview, explicit KOMBI safety boundary
 
