@@ -81,7 +81,7 @@ class Car {
             opts.pollMs >= 3000 && opts.pollMs <= 60000 ? opts.pollMs : 0;
         const over = (ctx.spec.config && ctx.spec.config.scaling) || {};
         this.S = Object.assign({}, SCALE, over);
-        this.live = {}; this.lastCar = 0; this.listeners = [];
+        this.live = {}; this.updatedAt = {}; this.lastCar = 0; this.listeners = [];
         this.sim = new Sim(); this.simData = this.sim.sample();
         this.demoActive = false; this.guess = new GearGuess();
         const sc = (k, raw) => {
@@ -91,7 +91,7 @@ class Car {
         };
         const put = (k, v, tick) => {
             if (v === null || v === undefined || (typeof v === 'number' && !isFinite(v))) return;
-            this.live[k] = v; this.lastCar = Date.now();
+            this.live[k] = v; this.lastCar = Date.now(); this.updatedAt[k] = this.lastCar;
             // learned gear while driving; nothing at a standstill - the guess can't tell P, N or D
             // there, and "N" shown in park or in D was wrong
             if (k === 'rpm' || k === 'speed') { const g = this.guess.feed(this.live.rpm, this.live.speed); if (g !== null || this.live.speed < 3) this.guessed = this.live.speed < 3 ? undefined : g; }
@@ -171,6 +171,7 @@ class Car {
     data() {
         const src = this.demoActive ? this.simData : this.live;
         const d = Object.assign({}, src, { demo: this.demoActive });
+        if (!this.demoActive) d.receivedAt = Object.assign({}, this.updatedAt);
         if (d.gear === undefined && !this.demoActive) { d.gear = this.guessed; d.gearGuessed = true; }
         return d;
     }
@@ -180,6 +181,7 @@ class Car {
 
     _emit(d, t) {
         const data = Object.assign({}, d, { demo: this.demoActive });
+        if (!this.demoActive) data.receivedAt = Object.assign({}, this.updatedAt);
         this.listeners.forEach((l) => { try { l.fn(data, t); } catch (e) { this.log.warn('sample: ' + e); } });
     }
 }
