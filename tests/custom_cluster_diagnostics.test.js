@@ -119,7 +119,7 @@ assert.strictEqual(staleCluster.armPanel(), false, 'stale telemetry never enable
 staleCluster.close();
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-qr-test-'));
-const ctx = { dataDir: tempDir, spec: { version: '0.6.0' } };
+const ctx = { dataDir: tempDir, spec: { version: '0.6.1' } };
 const journal = QR.startJournal(ctx);
 assert.ok(journal.path && fs.existsSync(journal.path), 'open app creates a text log without QR');
 assert.ok(/cluster-session-.*\.txt$/.test(journal.path));
