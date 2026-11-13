@@ -1,8 +1,8 @@
 {
   "id": "custom_cluster",
   "title": "Custom Cluster",
-  "description": "Experimental custom instrument-cluster layouts and Waze integration tests.",
-  "version": "0.5.9",
+  "description": "G80/6WB previews, automatic session logs and guarded stationary KOMBI tests.",
+  "version": "0.6.0",
   "vendor": "custom",
   "loggingId": "OAQ7",
   "iconGlyph": "CC",
@@ -24,7 +24,7 @@
       "name": "MAIN",
       "kind": "canvas",
       "title": "Custom Cluster",
-      "buttons": [["BTN_TEST", "Parked panel test"], ["BTN_DIAG", "Diagnostics"],
+      "buttons": [["BTN_TEST", "Preview / parked test"], ["BTN_DIAG", "Diagnostics"],
                   ["BTN_QR", "QR logs"], ["BTN_SETTINGS", "Settings"]]
     }
   ],
@@ -38,9 +38,10 @@
     {"key": "wazeMap", "label": "Waze map in cluster", "type": "choice", "default": "auto",
      "options": [["auto", "Keep Waze's own setting"], ["on", "Show Waze map"],
                  ["off", "Hide Waze map"]]},
-    {"key": "panelTestMode", "label": "Parked test content", "type": "choice", "default": "probe",
-     "options": [["probe", "Small diagnostic marker (recommended)"],
-                 ["design", "Selected full cluster design (experimental)"]]},
+    {"key": "panelTestMode", "label": "Test content", "type": "choice", "default": "preview",
+     "options": [["preview", "Static iDrive preview (engine-off safe; no KOMBI takeover)"],
+                 ["probe", "KOMBI marker (may hide OEM music; P + live values)"],
+                 ["design", "Full KOMBI design (experimental; P + live values)"]]},
     {"key": "panelTarget", "label": "Panel target / slot", "type": "choice", "default": "panel",
      "options": [["panel", "Standard panel (0x203)"],
                  ["panel201", "Experimental 0x201 (requires renderer support)"],
