@@ -28,7 +28,7 @@ mgu.run({
         let poolSide='left',lastLabelTestStatus='No test performed yet';
         let lastStatus='',lastShowStatus='',lastDiagnostic='',hiddenTimer=null,lastResult='';
         let confirmationReturn='DIAGNOSTICS',labelReturn='DIAGNOSTICS',flmReturn='MAIN';
-        let darkReturn='MAIN', darkChecked=false;
+        
         const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÜ0123456789 -_';
         const flmConfig=()=>F.settings(Number(settings.get('flmPwm')),Number(settings.get('flmSeconds')));
         const openConfirmation=(dest)=>{confirmationReturn=dest;return ui.open('CONFIRM_LIGHTS');};
@@ -165,7 +165,7 @@ mgu.run({
         function diagnostics() {
             const s=engine.status(),g=guard.snapshot();
             const lines=[
-                'Light Show 0.3.2 - FLM02 playlist with OEM dark-stage preparation',
+                'Light Show 0.3.3 - FLM02 animations and diagnostics',
                 'State: '+s.state+' | '+s.note,
                 'TASU: '+(link.available?'available':'unavailable')+
                     ' | BDC index: '+(link.index||'not read'),
@@ -198,7 +198,7 @@ mgu.run({
             try {
                 let preview=null,previewError=null;
                 try {preview=show.plan(names,observations);}catch(e){previewError=e.message;}
-                const report={app:'light_show',version:'0.3.2',at:new Date().toISOString(),
+                const report={app:'light_show',version:'0.3.3',at:new Date().toISOString(),
                     physicalEffectVerified:false, status:engine.status(),
                     guard:guard.snapshot(),flmSettings:flmConfig(),
                     showSettings:show.state,showPlan:preview,showPlanError:previewError,
@@ -237,38 +237,6 @@ mgu.run({
         const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(onFailure));
         handler('BTN_SHOW_SETUP',openShow);
         handler('BTN_SHOW_BACK',()=>ui.open('MAIN'));
-        const openDarkGuide=(previous)=>{
-            darkReturn=previous;
-            darkChecked=false;
-            ui.text('DARK_PREP_STATUS',
-                'No lamp OFF command has been sent. Use the BMW light controls while parked.');
-            return ui.open('DARK_PREP');
-        };
-        handler('BTN_DARK_MAIN',()=>openDarkGuide('MAIN'));
-        handler('BTN_DARK_SHOW',()=>openDarkGuide('SHOW_SETUP'));
-        handler('BTN_DARK_VERIFY_P',()=>{
-            if(engine.run)throw new Error('Stop the FLM test or show before checking darkness');
-            const why=guard.reason();
-            darkChecked=!why;
-            ui.text('DARK_PREP_STATUS',why
-                ? 'Vehicle NOT READY: '+why+'. No lights have been switched off.'
-                : 'Vehicle reports P and standstill. You must still switch off OEM lights manually and visually check them. This check DOES NOT measure lamp state.');
-        });
-        handler('BTN_DARK_CONTINUE',()=>{
-            if(engine.run)throw new Error('Stop active lighting tests first');
-            if(!darkChecked||guard.reason()){
-                ui.text('DARK_PREP_STATUS','Select Check P / standstill first. Lights are not switched off automatically.');
-                return;
-            }
-            return openShow();
-        });
-        handler('BTN_DARK_IDENTIFY',()=>{
-            if(engine.run)throw new Error('Stop current light test first');
-            labelReturn='DARK_PREP';
-            return ui.open('LABEL_INDEX');
-        });
-        handler('BTN_DARK_BACK',()=>ui.open(darkReturn));
-
         handler('BTN_SHOW_PATTERN',()=>{ensureIdle();show.cycle('pattern',PATTERNS);updateShow();});
         [['BTN_SHOW_PWM','pwm',PWM],['BTN_SHOW_PULSE','pulseMs',PULSE],
          ['BTN_SHOW_GAP','gapMs',GAP],['BTN_SHOW_CYCLES','cycles',CYCLES]]
@@ -433,7 +401,7 @@ mgu.run({
         ui.onVisible(()=>{
             clearTimeout(hiddenTimer);
             hiddenTimer=setTimeout(()=>{
-                const pages=['MAIN','SHOW_SETUP','SHOW_PREVIEW','DARK_PREP','PLAYLIST','POOL_CHANNELS',
+                const pages=['MAIN','SHOW_SETUP','SHOW_PREVIEW','PLAYLIST','POOL_CHANNELS',
                     'DIAGNOSTICS','CHANNEL_OVERVIEW','LABEL_INDEX','LABEL_CHANNELS',
                     'LABEL_EDITOR','FLM_INDEX','FLM_CHANNELS','OUTPUT_OBSERVE','CONFIRM_LIGHTS'];
                 if(!pages.some(name=>ui.isVisible(name))&&engine.run)engine.stop('App closed');

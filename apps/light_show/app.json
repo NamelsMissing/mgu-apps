@@ -1,8 +1,8 @@
 {
   "id": "light_show",
   "title": "Light Show",
-  "description": "FLM02-only BMW ID7 light-show app with a parked-vehicle OEM lighting preparation guide, guarded LED tests, user channel names and selectable patterns. No unverified vehicle-wide lights-off command.",
-  "version": "0.3.2",
+  "description": "FLM02-only light show and LED naming with selectable animated effects and guarded tests. Removed redundant manual lights-off guide; no vehicle-wide light-off commands.",
+  "version": "0.3.3",
   "vendor": "custom",
   "loggingId": "OAL9",
   "iconGlyph": "LS",
@@ -40,11 +40,6 @@
           "button",
           "BTN_SHOW_SETUP",
           "1. Light Show - effects & timing"
-        ],
-        [
-          "button",
-          "BTN_DARK_MAIN",
-          "Prepare dark stage (BMW light controls)"
         ],
         [
           "button",
@@ -125,11 +120,6 @@
         ],
         [
           "button",
-          "BTN_DARK_SHOW",
-          "Prepare dark stage before show"
-        ],
-        [
-          "button",
           "BTN_SHOW_START",
           "START light show (Park only)"
         ],
@@ -142,48 +132,6 @@
           "button",
           "BTN_SHOW_BACK",
           "Back to main"
-        ]
-      ]
-    },
-    {
-      "name": "DARK_PREP",
-      "kind": "menu",
-      "title": "Before show | OEM lights off",
-      "items": [
-        [
-          "text3",
-          "DARK_PREP_INTRO",
-          "This guide does NOT electronically switch off the vehicle lighting. Do not override brake lights, indicators, hazards, rear lamps or safety functions."
-        ],
-        [
-          "scroll",
-          "DARK_PREP_GUIDE",
-          "1. Stop safely on private property, select P. 2. Use the BMW light switch to turn parking or low beams OFF if available. 3. If needed, check CAR > Settings > Exterior lighting > Daytime driving lights. Some country versions cannot switch DRL off. 4. Visually verify which OEM lights remain on. Do not force always-on lights off through FLM02 diagnostic commands."
-        ],
-        [
-          "text",
-          "DARK_PREP_STATUS",
-          "Not checked; normal vehicle lighting is unchanged by this app."
-        ],
-        [
-          "button",
-          "BTN_DARK_VERIFY_P",
-          "Check P / standstill (read only)"
-        ],
-        [
-          "button",
-          "BTN_DARK_CONTINUE",
-          "Continue to light effects (manual lights-off check)"
-        ],
-        [
-          "button",
-          "BTN_DARK_IDENTIFY",
-          "LEDs: test and name with current OEM lights"
-        ],
-        [
-          "button",
-          "BTN_DARK_BACK",
-          "Back"
         ]
       ]
     },
@@ -935,5 +883,6 @@
         ]
       ]
     }
-  ]
+  ],
+  "showRepoCredits": false
 }

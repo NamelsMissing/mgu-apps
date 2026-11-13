@@ -458,7 +458,7 @@ test('Real TASU transport serializes third-brake-light control via BDC, not a gu
 
 test('FLM02 OEM routine uses only the bounded channel START candidate and captured StopRoutine', () => {
     const spec = require(path.join(app, 'app.json'));
-    assert.strictEqual(spec.version, '0.3.2');
+    assert.strictEqual(spec.version, '0.3.3');
     assert.deepStrictEqual(F.start(7), [0x01, 0xA5, 0x4B, 0x07, 60, 2]);
     assert.deepStrictEqual(F.start(7, 100, 5), [0x01, 0xA5, 0x4B, 0x07, 100, 5]);
     assert.strictEqual(F.isPermittedRoutine(F.start(7, 100, 5)), true);
@@ -637,16 +637,16 @@ test('Interrupted FLM02 two-sided sequence recovers both ECUs in the saved journ
 });
 
 
-test('OEM dark-stage is a user-guided read-only lighting preparation flow',()=>{
+test('Legacy dark-stage guide and old repository footer are disabled in Light Show',()=>{
     const spec=require(path.join(app,'app.json'));
-    const screen=spec.screens.find(s=>s.name==='DARK_PREP');
-    assert(screen,'DARK_PREP missing');
-    const ids=spec.screens.flatMap(s=>(s.items||[]).map(i=>i[1]));
-    assert.strictEqual(ids.length,new Set(ids).size,'duplicate RHMI identifiers');
-    assert(ids.includes('BTN_DARK_MAIN')&&ids.includes('BTN_DARK_SHOW'));
-    assert(ids.includes('BTN_DARK_VERIFY_P')&&ids.includes('BTN_DARK_CONTINUE'));
-    assert(ids.includes('BTN_DARK_IDENTIFY')&&ids.includes('BTN_DARK_BACK'));
-    assert(!screen.items.some(i=>/turn all lights off automatically|force lights off/i.test(String(i[2]))));
+    const ids=spec.screens.flatMap(s=>(s.items||[]).map(item=>item[1]));
+    assert.strictEqual(ids.length,new Set(ids).size);
+    assert.strictEqual(spec.version,'0.3.3');
+    assert.strictEqual(spec.showRepoCredits,false);
+    assert(!spec.screens.some(s=>s.name==='DARK_PREP'));
+    assert(!ids.some(x=>/^BTN_DARK_/.test(x)||/^DARK_PREP/.test(x)));
+    for(const id of ['BTN_SHOW_SETUP','BTN_SHOW_START','BTN_LABEL_HOME','BTN_LABEL_TEST','BTN_STOP'])
+        assert(ids.includes(id),'Expected retained feature: '+id);
 });
 
 (async () => {

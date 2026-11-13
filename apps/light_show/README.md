@@ -1,4 +1,20 @@
-# Light Show 0.3.2
+# Light Show 0.3.3
+
+## 0.3.3 – Remove redundant dark-stage menu and repository footer
+
+The **Prepare dark stage** guide from 0.3.2 has been removed from the home
+menu, effects setup and navigation. It never sent lights-off commands and
+did not actually switch off the vehicle's parking or daytime running lamps.
+The standard FLM02 animations and channel test/name functions remain
+unchanged, with their existing P/stationary safeguards and STOP recovery.
+
+The app now sets `showRepoCredits: false` so the shared MGU builder omits
+its bottom-of-menu "iDrive 7 custom apps / cauliflowermossgrape" footer **for
+Light Show only**. Other MGU apps continue to use their default footer.
+The app is still installable from the existing repository. No ECU coding,
+serial lamp control or global lighting-inhibition command has been added.
+
+
 
 ## 0.3.2 – OEM dark-stage preparation (no unverified lights-off override)
 
