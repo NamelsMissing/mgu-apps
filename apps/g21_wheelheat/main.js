@@ -55,7 +55,6 @@ mgu.run({
         let firstUiAt = 0, uiOpenCount = 0, cancelGeneration = 0;
         let lastVehicleRaw = '', lastVehicleLogAt = 0;
         let tab = 0, busy = false, statusBusy = false, statusAt = 0;
-        const statusSamples = Object.create(null);
         let lastAction = 'No heating command has been sent.';
         const eventFile = path.join(ctx.dataDir, 'heating_events.json');
         // Start a fresh log even when the MGU has retained yesterday's app data.
@@ -457,14 +456,6 @@ mgu.run({
                             (reply.ok ? reply.raw : reply.error));
                         record('READ 0x' + did.toString(16).toUpperCase(),
                             reply.ok ? reply.raw : reply.error);
-                        const decoded = reply.ok ? (did === B.DID_HEAT ?
-                            B.decodeWheelReadback(reply.payload) :
-                            B.decodeSeatReadback(reply.payload)) : null;
-                        if (decoded) {
-                            const history = statusSamples[did] || [];
-                            history.push(decoded.on);
-                            statusSamples[did] = history.slice(-3);
-                        }
                     }
                 }
                 statusAt = Date.now();
@@ -647,13 +638,11 @@ mgu.run({
                     const decoded = !stale && entry.ok ? (seat ?
                         B.decodeSeatReadback(entry.payload) :
                         B.decodeWheelReadback(entry.payload)) : null;
-                    const sample = statusSamples[did] || [];
-                    const inconsistent = new Set(sample).size > 1;
-                    const detail = !decoded ? stale ? 'NOT AVAILABLE' :
-                        entry.ok ? 'Unsupported reply format' : 'ECU read rejected' :
-                        inconsistent ? 'FLUCTUATING ECU READBACK' :
-                        seat ? decoded.on ? 'ON  |  Level ' + decoded.level : 'OFF (BDC report)' :
-                            decoded.on ? 'ON  |  LED ' + (decoded.led ? 'ON' : 'OFF') : 'OFF (BDC report)';
+                    // Show the latest valid ECU state. A normal manual OFF/ON
+                    // transition is not evidence of an unstable readback.
+                    const detail = !decoded ? (stale ? 'NOT AVAILABLE' :
+                        entry.ok ? 'Unsupported reply format' : 'ECU read rejected') :
+                        B.readbackLabel(decoded, seat);
                     text(cv, label, 54, y, 25, t.text);
                     text(cv, detail, 665, y, 23, decoded ?
                         decoded.on ? t.accent : t.text : t.warn);
@@ -662,7 +651,7 @@ mgu.run({
                 readRow('Driver seat', B.DID_SEAT_DRIVER, 267, true);
                 readRow('Passenger seat', B.DID_SEAT_PASSENGER, 327, true);
                 cv.fillRect(54, 354, 1450, 1, '#2e4052');
-                text(cv, 'A single readback can be unstable. Compare raw 62 replies in Log.',
+                text(cv, 'Latest ECU state shown; raw 0x62 replies are saved in Log.',
                     54, 400, 22, t.warn);
                 text(cv, statusBusy ? 'Reading BDC ...' : 'Last ECU read: ' + (statusAt ?
                     Math.round((now - statusAt) / 1000) + 's ago' : 'not yet'), 54, 448, 22, t.dim);
