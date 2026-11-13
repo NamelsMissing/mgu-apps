@@ -1,4 +1,38 @@
-# Light Show 0.2.4
+# Light Show 0.2.5
+
+## 0.2.5: FLM02-only interface
+
+This release exposes only the FLM02 LED-channel diagnostic route:
+
+- Home: **FLM02 LED channel tests**, **STOP**, **Diagnostics / export logs**.
+- Choose left/right headlamp and then one channel at a time.
+- Settings: 20/40/60/80/100% PWM; 1/2/3/5-second finite pulse.
+- Diagnostics: read-only FLM02 mapping, export JSON log, and a legacy recovery
+  lock acknowledgement (after physically checking normal lighting).
+- BDC individual-output tests, BDC timed-pattern controls and the old screen
+  preview are removed from the visible UI. Their source code is retained for
+  reference and for safe recovery of older persisted stop markers. There is no
+  live UI route to start a BDC light test in this version.
+
+**Observed G21 vehicle tests (13 November 2026):** 100% PWM and 3 seconds
+produced visible output, without unusual noise reported, for FLM02 channels
+**1, 5, 7 and 8 on each side**. Other tested channels were recorded as having
+no visible effect, except **right channel 13**, which had one unusual-noise
+observation followed by a no-effect/no-noise observation. Channel 9 left and
+channel 10 right have no saved observation in that report. No claim is made
+about which named vehicle light (high beam, low beam, DRL) any channel drives.
+The 80 most recent UDS records in the exported trace show positive FLM Start,
+Stop and default-session responses; the saved state shows `recoveryPending=false`.
+The historic BDC output route showed no visible low-beam effect and OEM return
+`NRC 22`; it stays hidden.
+
+**Safety:** Use only in P at a standstill on private property, no bystanders in
+the light beam. Avoid further tests of right FLM channel 13 until the cause of
+the unusual noise is resolved. Positive UDS acknowledgements are not proof of
+thermal suitability, LED type or physical return. Check normal vehicle lighting
+before driving. The downloaded diagnostic JSON is personal vehicle data and is
+not committed to this public repository.
+
 
 ## 0.2.4: FLM02 settings and BDC release diagnostics
 

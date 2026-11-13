@@ -257,7 +257,7 @@ test('Timed settings use their own patterns and reject inherited object keys', (
         const v = Object.assign({}, values, change); assert.throws(() => P.settings((k) => v[k]));
     }
     const spec = require(path.join(app, 'app.json'));
-    assert.strictEqual(spec.settings.find((s) => s.key === 'route').default, 'timed');
+    assert.deepStrictEqual(spec.settings.map((s) => s.key), ['flmPwm', 'flmSeconds']);
 });
 test('Two-second function test sends one finite ON and its own stop without legacy IO commands', async () => {
     const r = rig(); const began = r.now(); await r.engine.testFunction('high');
@@ -395,15 +395,12 @@ test('All 32 exterior BDC outputs are listed once, excluding unrestricted and ca
     }
     for (const [id] of all) assert.deepStrictEqual(P.control(id, 1), [0xE3, 0xB5, 3, id, 1, 0xC0]);
 });
-test('Every single-light UI control maps to one and only one whitelisted BDC output', () => {
+test('Hidden legacy diagnostic-output mapping remains in protocol for older recovery records', () => {
     const spec = require(path.join(app, 'app.json'));
     const buttons = spec.screens.flatMap((s) => s.items || []).map((x) => x[1]);
-    const singles = buttons.filter((x) => x && x.startsWith('BTN_LAMP_'));
-    assert.strictEqual(singles.length, 32);
-    assert.strictEqual(new Set(singles).size, 32);
-    for (const row of DiagnosticOutputs.GROUPS.flatMap((g) => g.lights)) {
-        assert(singles.includes(DiagnosticOutputs.buttonId(row[0])));
-    }
+    assert(!spec.screens.some((s) => s.name.startsWith('OUTPUT_') && s.name !== 'OUTPUT_OBSERVE'));
+    assert.strictEqual(buttons.filter((x) => x && x.startsWith('BTN_LAMP_')).length, 0);
+    assert.strictEqual(DiagnosticOutputs.GROUPS.flatMap((g) => g.lights).length, 32);
 });
 test('Single-light test has one 750-ms ON, individual OFF, OEM release, then default session', async () => {
     for (const id of [0x07, 0x0D, 0x18, 0x19, 0x23, 0x20, 0x22]) {
@@ -461,7 +458,7 @@ test('Real TASU transport serializes third-brake-light control via BDC, not a gu
 
 test('FLM02 OEM routine uses only the bounded channel START candidate and captured StopRoutine', () => {
     const spec = require(path.join(app, 'app.json'));
-    assert.strictEqual(spec.version, '0.2.4');
+    assert.strictEqual(spec.version, '0.2.5');
     assert.deepStrictEqual(F.start(7), [0x01, 0xA5, 0x4B, 0x07, 60, 2]);
     assert.deepStrictEqual(F.start(7, 100, 5), [0x01, 0xA5, 0x4B, 0x07, 100, 5]);
     assert.strictEqual(F.isPermittedRoutine(F.start(7, 100, 5)), true);
@@ -544,6 +541,19 @@ test('Real TASU FLM transport requires verified module and refuses unbounded act
     assert.deepStrictEqual(Array.from(r.requests[3].udsData), F.stop());
     await assert.rejects(r.link.request(0x31, [1, 0xA5, 0x4B, 7, 20, 255], false, 0x43), /Unsupported FLM diagnostic/);
 });
+
+
+test('FLM-only navigation exposes no BDC, timed show or preview start controls', () => {
+    const spec = require(path.join(app, 'app.json'));
+    const main = spec.screens.find((s) => s.name === 'MAIN');
+    const diagnostics = spec.screens.find((s) => s.name === 'DIAGNOSTICS');
+    const keys = [main, diagnostics].flatMap((s) => s.items.map((i) => i[1]));
+    for (const forbidden of ['BTN_START','BTN_FUNCTION_TEST','BTN_PREVIEW','BTN_OUTPUTS','BTN_IDENTIFY'])
+        assert(!keys.includes(forbidden));
+    assert(keys.includes('BTN_FLM_INDEX') && keys.includes('BTN_EXPORT'));
+    assert(spec.settings.every((s) => ['flmPwm', 'flmSeconds'].includes(s.key)));
+});
+
 
 (async () => {
     let failed = 0;

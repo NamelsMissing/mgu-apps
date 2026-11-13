@@ -29,7 +29,7 @@ These apps are **Experimental**. They are still being developed or tested, and s
 | [**GameSnacks**](apps/mgu_gamesnacks/README.md) (`mgu_gamesnacks`) | **Experimental** | Prototype for playing offline HTML5 games on the iDrive display. Game availability and compatibility are still under review. |
 | [**Video Hub**](apps/mgu_video_hub/README.md) (`mgu_video_hub`) | **Experimental** | Play local videos and work with YouTube links. Playback requires additional software; online videos also need an internet connection. |
 | [**Equalizer DSP**](apps/equalizer/README.md) (`equalizer`) | **Experimental** | Adjust audio with seven parametric EQ bands, gain, frequency, Q and saved presets. Stock CarPlay, radio and Bluetooth audio are not yet routed through the DSP. |
-| [**Light Show**](apps/light_show/README.md) (`light_show`) | **Experimental · 0.2.4** | Adjustable FLM02 LED pulses (20–100% / 1–5 s), legacy BDC light tests and guided manual release checking. Physical effects and OEM release still need vehicle verification. |
+| [**Light Show**](apps/light_show/README.md) (`light_show`) | **Experimental · 0.2.5** | FLM02-only headlamp LED channel tests, adjustable 20–100% PWM / 1–5 s, stop and diagnostic logging. Legacy BDC and timed methods hidden; vehicle effects still require verification. |
 
 ## Installation
 
