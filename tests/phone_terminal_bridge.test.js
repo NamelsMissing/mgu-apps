@@ -42,7 +42,8 @@ function fileRequest(port, endpoint, extra) {
 
 async function test() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-bridge-test-'));
-    const bridge = makeBridge({ dataDir: dir, localPort: 0, publicPort: 0, publicHost: '127.0.0.1', firewall: false });
+    let testClock = Date.now();
+    const bridge = makeBridge({ dataDir: dir, localPort: 0, publicPort: 0, publicHost: '127.0.0.1', firewall: false, now: () => testClock });
     const ports = await bridge.start();
     const controlKey = fs.readFileSync(path.join(dir, 'phone-bridge.key'), 'utf8').trim();
     const local = (method, endpoint, key) => httpRequest(ports.localPort, method, endpoint, null, { 'X-Bridge-Key': key === undefined ? controlKey : key });
@@ -65,8 +66,14 @@ async function test() {
         assert.strictEqual(paired.status, 200);
         const cookie = paired.headers['set-cookie'][0].split(';')[0];
         assert.ok(cookie.startsWith('mgu_session='));
+        assert.ok(paired.headers['set-cookie'][0].includes('Max-Age=31536000'), 'browser cookie must outlast 15 minutes');
+        assert.strictEqual(paired.body.expiresAt, 0, 'no session deadline');
         assert.strictEqual((await pub('POST', '/api/pair', { token: opened.body.token })).status, 403, 'pair token must be one-use');
         assert.strictEqual((await pub('GET', '/api/status', null, { Cookie: cookie })).status, 200);
+        testClock += 2 * 24 * 60 * 60 * 1000;
+        const stillConnected = await pub('GET', '/api/status', null, { Cookie: cookie });
+        assert.strictEqual(stillConnected.status, 200, 'session must survive well beyond 15 minutes');
+        assert.strictEqual(stillConnected.body.expiresAt, 0);
 
         const executed = await pub('POST', '/api/exec', { command: 'printf terminal-test' }, { Cookie: cookie });
         assert.strictEqual(executed.status, 200);
@@ -128,6 +135,32 @@ async function test() {
     }
 }
 
+
+async function testSessionStopsOnRestart() {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-bridge-restart-'));
+    let bridge = makeBridge({ dataDir: dir, localPort: 0, publicPort: 0, publicHost: '127.0.0.1', firewall: false });
+    try {
+        let ports = await bridge.start();
+        const key = fs.readFileSync(path.join(dir, 'phone-bridge.key'), 'utf8').trim();
+        const started = await httpRequest(ports.localPort, 'POST', '/local/start', null, { 'X-Bridge-Key': key });
+        const paired = await httpRequest(ports.publicPort, 'POST', '/api/pair', { token: started.body.token }, {
+            Origin: 'http://127.0.0.1:' + ports.publicPort, 'X-Terminal-Request': '1'
+        });
+        assert.strictEqual(paired.status, 200);
+        const cookie = paired.headers['set-cookie'][0].split(';')[0];
+        await bridge.stop();
+        bridge = makeBridge({ dataDir: dir, localPort: 0, publicPort: 0, publicHost: '127.0.0.1', firewall: false });
+        ports = await bridge.start();
+        const status = await httpRequest(ports.publicPort, 'GET', '/api/status', null, { Cookie: cookie });
+        assert.strictEqual(status.status, 401, 'restarting bridge invalidates all browser cookies');
+        console.log('Bridge restart test passed: session not persisted across service restart');
+    } finally {
+        await bridge.stop();
+        fs.unlinkSync(path.join(dir, 'phone-bridge.key'));
+        fs.rmdirSync(dir);
+    }
+}
+
 async function testLateInstall() {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-bridge-late-'));
     const dataDir = path.join(parent, 'newly-installed-app');
@@ -179,4 +212,4 @@ function testLegacyOwnerPolicy() {
 }
 
 testLegacyOwnerPolicy();
-test().then(testLateInstall).then(testAppOwnedKey).catch((e) => { console.error(e.stack || e); process.exitCode = 1; });
+test().then(testSessionStopsOnRestart).then(testLateInstall).then(testAppOwnedKey).catch((e) => { console.error(e.stack || e); process.exitCode = 1; });

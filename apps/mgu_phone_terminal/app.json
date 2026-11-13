@@ -2,7 +2,7 @@
   "id": "mgu_phone_terminal",
   "title": "Phone Terminal",
   "description": "Temporary phone-browser terminal with QR pairing, command output, and file downloads.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "vendor": "Jürgen",
   "loggingId": "OTRM",
   "iconGlyph": ">_",

@@ -13,7 +13,6 @@ const APP_ID = 'mgu_phone_terminal';
 const DEFAULT_LOCAL_PORT = 18891;
 const DEFAULT_PUBLIC_PORT = 18890;
 const PAIR_MS = 3 * 60 * 1000;
-const SESSION_MS = 15 * 60 * 1000;
 const LIMIT_MS = 15000;
 const MAX_OUT = 60000;
 const MAX_DOWNLOAD = 256 * 1024 * 1024;
@@ -118,7 +117,7 @@ function makeBridge(options) {
     const firewall = options.firewall === false ? null : options.firewall || makeFirewall({ port: publicPort });
     const now = options.now || Date.now;
     let controlKey = null, pairToken = null, pairUntil = 0;
-    let sessionToken = null, sessionUntil = 0, running = false, runningProc = null, failureCount = 0, blockUntil = 0;
+    let sessionToken = null, running = false, runningProc = null, failureCount = 0, blockUntil = 0;
     let downloadTicket = null;
     const downloads = new Set();
     let localServer, publicServer, keyPoll, firewallPoll, provisionError = 'waiting for app registration';
@@ -181,7 +180,7 @@ function makeBridge(options) {
         }
         fs.closeSync(opened.fd);
         const id = crypto.randomBytes(24).toString('hex');
-        downloadTicket = { id, file, until: Math.min(sessionUntil, now() + DOWNLOAD_TICKET_MS) };
+        downloadTicket = { id, file, until: now() + DOWNLOAD_TICKET_MS };
         return send(res, 200, {
             url: '/api/file/' + id, filename: opened.name, size: opened.stat.size,
             validSeconds: Math.max(0, Math.floor((downloadTicket.until - now()) / 1000))
@@ -227,14 +226,13 @@ function makeBridge(options) {
     }
     function closed() {
         if (pairToken && now() >= pairUntil) pairToken = null;
-        if (sessionToken && now() >= sessionUntil) { sessionToken = null; terminateCommand(); cancelDownloads(); }
         return !pairToken && !sessionToken;
     }
-    function revoke() { terminateCommand(); cancelDownloads(); pairToken = null; pairUntil = 0; sessionToken = null; sessionUntil = 0; }
+    function revoke() { terminateCommand(); cancelDownloads(); pairToken = null; pairUntil = 0; sessionToken = null; }
     function status() {
         closed();
-        return { state: sessionToken ? 'active' : pairToken ? 'pairing' : 'closed', expiresAt: sessionToken ? sessionUntil : pairToken ? pairUntil : 0,
-            addresses: addresses(), port: publicPort, version: '0.1.5',
+        return { state: sessionToken ? 'active' : pairToken ? 'pairing' : 'closed', expiresAt: pairToken ? pairUntil : 0,
+            addresses: addresses(), port: publicPort, version: '0.1.6',
             firewall: { ready: firewallReady && !!(sessionToken || pairToken), error: firewallError, interface: 'wlan_bridge' } };
     }
 
@@ -308,7 +306,7 @@ function makeBridge(options) {
         }
         if (req.method === 'GET' && route === '/api/status') {
             if (!hasSession(req)) return send(res, 401, { error: 'Not paired' });
-            return send(res, 200, { authenticated: true, expiresAt: sessionUntil, running: running });
+            return send(res, 200, { authenticated: true, expiresAt: 0, running: running });
         }
         if (req.method === 'GET' && /^\/api\/file\/[a-f0-9]{48}$/.test(route)) {
             return serveDownload(req, res, route.slice('/api/file/'.length));
@@ -326,9 +324,9 @@ function makeBridge(options) {
                     return send(res, 403, { error: 'Pairing code expired or incorrect' });
                 }
                 failureCount = 0; pairToken = null; pairUntil = 0;
-                sessionToken = token(); sessionUntil = now() + SESSION_MS;
-                send(res, 200, { authenticated: true, expiresAt: sessionUntil }, {
-                    'Set-Cookie': 'mgu_session=' + sessionToken + '; HttpOnly; SameSite=Strict; Path=/; Max-Age=900'
+                sessionToken = token();
+                send(res, 200, { authenticated: true, expiresAt: 0 }, {
+                    'Set-Cookie': 'mgu_session=' + sessionToken + '; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000'
                 });
             });
         }

@@ -1,7 +1,7 @@
 {
   "id": "mgu-phone-bridge",
   "kind": "tool",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "title": "Phone Terminal Bridge",
   "description": "Authenticated mobile root terminal for the MGU",
   "mguHmi": ["ID7"],

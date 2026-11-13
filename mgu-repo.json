@@ -196,14 +196,14 @@
       "id": "mgu_phone_terminal",
       "kind": "app",
       "title": "Phone Terminal",
-      "version": "0.1.6",
+      "version": "0.1.7",
       "path": "apps/mgu_phone_terminal",
       "icon": "icon.png",
       "mguHmi": [
         "ID7"
       ],
       "requires": {
-        "mgu-phone-bridge": "0.1.5"
+        "mgu-phone-bridge": "0.1.6"
       },
       "build": {
         "python": "tools/build_store_app.py",
@@ -218,7 +218,7 @@
       "id": "mgu-phone-bridge",
       "kind": "tool",
       "title": "Phone Terminal Bridge",
-      "version": "0.1.5",
+      "version": "0.1.6",
       "path": "native/phone-bridge",
       "mguHmi": [
         "ID7"

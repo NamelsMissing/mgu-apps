@@ -9,6 +9,8 @@ const root = path.resolve(__dirname, '..');
 const markup = fs.readFileSync(path.join(root, 'native/phone-bridge/public/index.html'), 'utf8');
 const script = fs.readFileSync(path.join(root, 'native/phone-bridge/public/client.js'), 'utf8');
 
+assert.ok(markup.includes('The session stays active until'), 'UI must describe the persistent session');
+assert.ok(script.includes('Access revoked or MGU restarted'), 'UI must detect revocation/restart');
 for (const id of ['clear-command', 'copy-output', 'copy-status']) {
     assert.ok(markup.includes('id="' + id + '"'), 'missing button/status id ' + id);
 }

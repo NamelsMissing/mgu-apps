@@ -3,13 +3,14 @@
 (function () {
     const $ = (id) => document.getElementById(id);
     const state = $('state'), pairPanel = $('pair-panel'), terminal = $('terminal-panel');
-    let expires = 0, busy = false, preparingFile = false;
+    let busy = false, preparingFile = false;
 
     function showAuth(active) {
         pairPanel.classList.toggle('hidden', active);
         terminal.classList.toggle('hidden', !active);
         state.textContent = active ? 'Connected' : 'Not connected';
         state.classList.toggle('ok', active);
+        $('expiry').textContent = active ? 'Active until Disconnect, Revoke Access or MGU restart.' : '';
         if (!active) $('save-file').classList.add('hidden');
     }
     async function api(endpoint, body) {
@@ -30,7 +31,6 @@
             history.replaceState(null, '', location.pathname);
             try {
                 const result = await api('pair', { token: match[1] });
-                expires = result.expiresAt;
                 showAuth(true);
                 return;
             } catch (e) { $('pair-message').textContent = e.message + '. Start a new session on the car.'; }
@@ -39,7 +39,6 @@
             const res = await fetch('/api/status', { cache: 'no-store' });
             if (!res.ok) throw new Error('Not connected');
             const data = await res.json();
-            expires = data.expiresAt;
             showAuth(true);
         } catch (e) { showAuth(false); }
     }
@@ -157,15 +156,25 @@
         $('save-file').classList.add('hidden');
     });
     $('disconnect').addEventListener('click', async () => {
-        try { await api('logout'); } catch (e) { /* still remove the local UI */ }
-        showAuth(false);
-        $('pair-message').textContent = 'Disconnected. Start a new session on the car.';
+        try {
+            await api('logout');
+            showAuth(false);
+            $('pair-message').textContent = 'Disconnected. Start a new session on the car.';
+        } catch (e) {
+            $('copy-status').textContent = 'Could not revoke access: ' + e.message + '. Use Revoke Access on iDrive.';
+        }
     });
-    setInterval(() => {
-        if (!expires || terminal.classList.contains('hidden')) return;
-        const secs = Math.max(0, Math.floor((expires - Date.now()) / 1000));
-        $('expiry').textContent = 'Time remaining: ' + Math.floor(secs / 60) + ':' + String(secs % 60).padStart(2, '0');
-        if (!secs) { showAuth(false); $('pair-message').textContent = 'Session expired. Pair again on the car.'; }
-    }, 1000);
+    // Detect server restart or iDrive revocation without imposing a timeout.
+    // Ignore transient Wi-Fi dropouts instead of falsely claiming revocation.
+    setInterval(async () => {
+        if (terminal.classList.contains('hidden')) return;
+        try {
+            const res = await fetch('/api/status', { cache: 'no-store', credentials: 'same-origin' });
+            if (res.status === 401) {
+                showAuth(false);
+                $('pair-message').textContent = 'Access revoked or MGU restarted. Start a new session in the car.';
+            }
+        } catch (e) { /* network temporarily unavailable; revoke on iDrive if needed */ }
+    }, 10000);
     startup();
 })();

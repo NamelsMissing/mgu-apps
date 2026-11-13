@@ -104,7 +104,7 @@ mgu.run({
             } else if (info) {
                 cv.text('Address: ' + (selected ? selected.ip + ':18890  (' + selected.interface + ')' : 'No reachable IPv4 interface'), 70, 255, 26, C.white);
                 cv.text('Firewall: ' + (bridgeReady ? 'OPEN on wlan_bridge' : network ? 'opening / awaiting Wi-Fi' : 'update Bridge tool'), 70, 295, 23, C.muted);
-                cv.text('Pairing: 3 min  |  Session: 15 min  |  One phone', 70, 332, 22, C.muted);
+                cv.text('QR: 3 min  |  Session: until revoked / restart', 70, 332, 22, C.muted);
                 if (info.state === 'active') cv.text('Paired. Revoke access after use.', 70, 373, 24, C.green);
                 else if (alive) cv.text('Scan QR with your phone camera.', 70, 373, 24, C.green);
                 else if (pairing) cv.text('Connect via DIRECT-BMW Wi-Fi; QR unlocks when ready.', 70, 373, 20, C.amber);
