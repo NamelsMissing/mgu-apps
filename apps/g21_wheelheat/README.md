@@ -29,6 +29,7 @@ The app package includes the MGU **autostart** setting. This allows the process 
 - Automatic heating needs valid vehicle signals and a response from the body control unit (BDC).
 - An accepted command or a timer in the app does not by itself prove that the seat or steering wheel physically heated.
 - Automatic heating can attempt activation while driving when its checks pass. The vehicle ECU can still reject a request. Manual diagnostic writes retain the standstill restriction.
+- The Diagnostics tab displays the latest valid ECU response. Switching heating ON/OFF manually is not treated as unstable readback; raw replies are retained in the session log.
 - Available functions and ECU data may differ across BMW models and firmware.
 - Settings are intended to persist across app restarts and updates. Use the Log view to troubleshoot any saving or autostart problems.
 - QR logs are generated locally; they do not need an internet connection.
