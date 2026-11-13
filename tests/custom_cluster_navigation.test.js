@@ -30,7 +30,9 @@ const ui = {
     text: (name, value) => { labels.set(name, value); return Promise.resolve(); },
     image: (name) => { drawn.push('image:' + name); return Promise.resolve(); },
 };
-const values = { layout: 'g80', panelTestMode: 'probe', panelTarget: 'panel',
+assert.strictEqual(spec.settings.find(s => s.key === 'enablePanelTests').default, false,
+    'panel takeover must default to disabled after upgrade');
+const values = { layout: 'g80', enablePanelTests: true, panelTestMode: 'probe', panelTarget: 'panel',
     accent: 'm', colorMode: 'palette', colorBrightness: 100, cycleSeconds: 20,
     sixwbTheme: 'comfort', sixwbColorSource: 'original',
     phoneBridge: false, wazeMap: 'auto', phoneBadge: false };
