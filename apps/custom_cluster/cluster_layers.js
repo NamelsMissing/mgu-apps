@@ -106,7 +106,7 @@ class ClusterLayers {
                     .find((line) => /^target panel slot 0x203 /i.test(line));
                 if (panel) {
                     this.recoveryStatusAt = Date.now();
-                    this.recoveryState = /;\s*idle[;\s]/i.test(panel) ?
+                    this.recoveryState = /[:;]\s*idle(?:[;\s]|$)/i.test(panel) ?
                         'panel idle (BMW media NOT verified)' :
                         'panel not idle (recovery NOT verified)';
                     this.tracePanel('post-release: ' + panel.slice(0, 300));
