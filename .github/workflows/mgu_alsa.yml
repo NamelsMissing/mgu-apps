@@ -1,0 +1,25 @@
+name: MGU ALSA Diagnostic
+on:
+  push:
+    paths:
+      - 'experiments/mgu_alsa/**'
+      - '.github/workflows/mgu_alsa.yml'
+  pull_request:
+    paths:
+      - 'experiments/mgu_alsa/**'
+      - '.github/workflows/mgu_alsa.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native probe
+        run: make -C experiments/mgu_alsa
+      - name: No vehicle PCM is selectable
+        run: |
+          ! experiments/mgu_alsa/mgu-audio-probe --device smartx:CarPlayMain_CF_48_STEREO
+          experiments/mgu_alsa/mgu-audio-probe --help
+      - name: Read-only diagnosis and virtual NULL test
+        run: make -C experiments/mgu_alsa check
