@@ -22,7 +22,7 @@ for (const screen of spec.screens) {
 
 const clicks = new Map(), pages = [], loops = [], events = [];
 const labels = new Map(), renders = new Map(), drawn = [];
-let reportCount = 0, cleared = 0, clearedMemory = 0;
+let reportCount = 0, cleared = 0, clearedMemory = 0, savedTxt = 0, restored = 0, pollRequested = null;
 const ui = {
     onClick: (name, fn) => clicks.set(name, fn),
     onVisible: (fn) => events.push(fn),
@@ -45,6 +45,7 @@ const ctx = {
 const cluster = {
     settings() {}, sample() {}, observeVehicle() {}, apply() {}, pollStatus() {}, badge() {}, close() {},
     clearHistory() { clearedMemory++; },
+    restoreOriginal() { restored++; return 'release requested'; },
     setTraceSink() {},
     armPanel() { return false; },
     rendererStatus() { return ''; },
@@ -54,7 +55,11 @@ const cluster = {
         panelTargetReason: '', lastRefusal: '', gearPosition: 'N', speedKmh: 0, engineRpm: 780,
         sampleAgeSeconds: 65 }; },
 };
-class FakeCar { onSample() {} data() { return { stage: 'N' }; } }
+class FakeCar {
+    constructor(ctx, groups, opts) { pollRequested = opts && opts.pollMs; }
+    onSample() {}
+    data() { return { stage: 'N' }; }
+}
 class FakeCluster { constructor() { return cluster; } }
 class FakePhone { setEnabled() {} reported() { return 'none'; } stop() {} }
 class FakeWaze { constructor() { this.status = 'auto'; } setChoice() {} }
@@ -71,6 +76,7 @@ const deps = {
     './cluster_colors.js': { resolveColor() { return []; }, resolve6WBColor() { return []; }, colorHex() { return ''; } },
     './kit/canvas': { withAlpha() { return ''; } },
     './cluster_diagnostics.js': { report, matrix: (data) => data, draw() {},
+        snapshot() { return 'test text'; }, save() { savedTxt++; return ['/tmp/saved.txt']; },
         startJournal() { return { path: '/tmp/mock-cluster-session.txt', write() { return true; },
             reset() {} }; },
         clearSaved() { cleared++; return { deleted: 2, errors: [], usbPreserved: true }; } },
@@ -81,12 +87,19 @@ vm.runInNewContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), {
     Date, Math, console,
 }, { filename: 'custom_cluster/main.js' });
 assert.deepStrictEqual(loops, ['MAIN']);
+assert.strictEqual(pollRequested, 5000, 'read-only polling must be enabled in Custom Cluster');
 for (const screen of spec.screens) for (const [id] of screen.buttons)
     if (id !== 'BTN_SETTINGS') assert.ok(clicks.has(id), 'button handler missing: ' + id);
 
 async function test() {
     await clicks.get('BTN_DIAG')();
     assert.strictEqual(labels.get('BTN_DIAG'), 'Back to cluster');
+    assert.strictEqual(labels.get('BTN_TEST'), 'Restore BMW');
+    assert.strictEqual(labels.get('BTN_QR'), 'Save TXT');
+    clicks.get('BTN_QR')();
+    assert.strictEqual(savedTxt, 1, 'manual TXT logs should be saved');
+    clicks.get('BTN_TEST')();
+    assert.strictEqual(restored, 1, 'user can request release of own layers');
     await renders.get('MAIN')();
     assert.ok(drawn.some((x) => x.includes('Test guard: Selector N')), 'diagnostics drawn on MAIN');
     assert.ok(drawn.includes('image:MAIN_GFX'), 'must present on real MAIN image component');
