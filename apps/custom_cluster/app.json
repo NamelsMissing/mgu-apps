@@ -102,6 +102,12 @@
       ]
     },
     {
+      "key": "enablePanelTests",
+      "label": "Allow experimental KOMBI tests",
+      "type": "bool",
+      "default": false
+    },
+    {
       "key": "panelTestMode",
       "label": "Test content",
       "type": "choice",
