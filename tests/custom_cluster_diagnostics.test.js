@@ -103,7 +103,13 @@ assert.strictEqual(staleCluster.armPanel(), false, 'stale telemetry never enable
 staleCluster.close();
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-qr-test-'));
-const ctx = { dataDir: tempDir, spec: { version: '0.5.9' } };
+const ctx = { dataDir: tempDir, spec: { version: '0.6.0' } };
+const journal = QR.startJournal(ctx);
+assert.ok(journal.path && fs.existsSync(journal.path), 'open app creates a text log without QR');
+assert.ok(/cluster-session-.*\.txt$/.test(journal.path));
+assert.ok(journal.write('test panel event'), 'session appends a renderer event');
+assert.ok(fs.readFileSync(journal.path, 'utf8').includes('test panel event'));
+const oldJournal = journal.path;
 const testReport = QR.report(ctx, cluster, 'auto', 'none');
 assert.ok(testReport.pages.length > 0);
 const payloads = testReport.pages.map((page, idx) => {
@@ -130,13 +136,16 @@ fs.writeFileSync(targetOutside, 'outside');
 const symlink = path.join(exportDir, 'cluster-diagnostics-2026-11-10T10-20-30-000Z.txt');
 fs.symlinkSync(targetOutside, symlink);
 const erased = QR.clearSaved(ctx);
-assert.strictEqual(erased.deleted, 1, 'only this app\'s dated local export is deleted');
+assert.strictEqual(erased.deleted, 2, 'only this app\'s QR export and session log are deleted');
 assert.strictEqual(erased.errors.length, 0);
+assert.ok(!fs.existsSync(oldJournal), 'session log deleted');
 assert.ok(fs.existsSync(unrelated), 'other apps\' files remain');
 assert.ok(fs.existsSync(lookalike), 'a similar but non-app filename remains');
 assert.ok(fs.existsSync(targetOutside), 'external targets remain');
 assert.ok(fs.lstatSync(symlink).isSymbolicLink(), 'do not follow or delete symlinks');
 assert.strictEqual(QR.clearSaved(ctx).deleted, 0, 'repeated delete is safe');
+journal.reset();
+assert.ok(journal.path && fs.existsSync(journal.path), 'journal resets after clearing logs');
 cluster.clearHistory();
 assert.strictEqual(cluster.history(), '(no panel events yet)', 'clear removes in-memory history only');
 cluster.close();
