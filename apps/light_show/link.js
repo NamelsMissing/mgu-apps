@@ -65,7 +65,9 @@ class Link {
         return index;
     }
     async flmSession(side) { return this.request(0x10, [0x03], false, F.moduleFor(side).address); }
-    async flmStart(side, channel) { return this.request(0x31, F.start(channel), false, F.moduleFor(side).address); }
+    async flmStart(side, channel, pwm = F.DEFAULT_PWM, seconds = F.DEFAULT_SECONDS) {
+        return this.request(0x31, F.start(channel, pwm, seconds), false, F.moduleFor(side).address);
+    }
     async flmStop(side) { return this.request(0x31, F.stop(), true, F.moduleFor(side).address); }
     async flmDefaultSession(side) { return this.request(0x10, [0x01], true, F.moduleFor(side).address); }
     async readOutputs() { return this.request(0x22, [0xE3, 0xB9]); }

@@ -1,4 +1,32 @@
-# Light Show 0.2.3
+# Light Show 0.2.4
+
+## 0.2.4: FLM02 settings and BDC release diagnostics
+
+**FLM02:** In Settings choose a test PWM of **20/40/60/80/100%** and a finite
+duration of **1/2/3/5 seconds**. Default: 60% for 2 seconds. Only one LED
+channel is requested at a time; an original FLM StopRoutine and default-session
+request follow. No channel 0, infinite time or automatic sequencing is allowed.
+100% / 5 seconds is experimental: keep the vehicle securely parked in P on
+private property, with no people or traffic in the beam. The original START
+framing, effective output, and thermal or motor effects remain unverified.
+
+**Individual BDC tests:** The previous car log showed the individual OFF
+acknowledgement (`6F E3 B5 03`) and default-session response (`50 01`), but
+general OEM release was refused (`7F 2F 22`). That rejection is not fixed by
+simply ignoring it. Version 0.2.4 records each cleanup result separately and
+attempts an after-OFF readback. When Repeat finds a saved lock, it opens the
+normal-light check directly. The observation screen also includes **Check
+normal lights / clear BDC lock**. Only after checking all regular lights can
+the operator manually clear the app's saved marker. **This does not establish
+that the OEM ECU release actually succeeded.** An unverified alternate release
+telegram is intentionally not attempted.
+
+**Logs:** **Diagnostics → Save diagnostic log** writes
+`light-show-diagnostics.json` under the app data directory, displaying the
+actual path. Download it with the MGU Phone Terminal file-download function
+or copy via SSH. It contains raw ECU requests/responses, PWM/time settings,
+observations and cleanup acknowledgements.
+
 
 Experimentelle Stroboskop-App für BMW MGU iDrive 7, angelehnt an
 [das Reel von bmwneva](https://www.instagram.com/reel/DfR0l0HxKNS/).

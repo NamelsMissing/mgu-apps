@@ -17,6 +17,9 @@ mgu.run({
         const journal = new Journal(ctx.dataDir);
         let engine, link, guard, preview = null, lastStatus = '', hiddenTimer = null, lastRoute = null;
         let selectedOutput = null, selectedFlmSide = 'left', lastObservation = '';
+        let confirmReturnScreen = 'DIAGNOSTICS';
+        const flmConfig = () => F.settings(Number(settings.get('flmPwm')), Number(settings.get('flmSeconds')));
+        const openLightCheck = (target) => { confirmReturnScreen = target; return ui.open('CONFIRM_LIGHTS'); };
         const observationsPath = path.join(ctx.dataDir, 'light-show-observations.json');
         let observations = [];
         try {
@@ -40,7 +43,8 @@ mgu.run({
             if (selectedOutput && ui.isVisible('OUTPUT_OBSERVE')) {
                 ui.text('OBSERVE_STATUS', line + '\n' +
                     (selectedOutput.route === 'flm' ? 'FLM replies' : 'BDC replies') +
-                    ' are NOT physical lamp measurements.');
+                    ' are NOT physical lamp measurements.' +
+                    (journal.pending() ? '\nSaved BDC/FLM lock pending - check normal lamps before repeat.' : ''));
                 ui.text('OBSERVE_RECORDED', lastObservation || 'Record the observed light and sound after the test.');
             }
         };
@@ -58,7 +62,7 @@ mgu.run({
         function diagnostics() {
             const s = engine.status(), g = guard.snapshot();
             return [
-                'Light Show 0.2.3 - EXPERIMENTAL / direct FLM02 LED test unverified',
+                'Light Show 0.2.4 - EXPERIMENTAL / direct FLM02 LED test unverified',
                 'State: ' + s.state + ' - ' + s.note,
                 'TASU: ' + (link.available ? 'available' : 'unavailable'),
                 'BDC address: 40 | SGBD: ' + (link.index || 'not read') + ' | required: ' + P.INDEX,
@@ -66,9 +70,12 @@ mgu.run({
                 'Selector: ' + (g.stage || 'unknown') + ' | ' + (g.blockedBy || 'P and stationary'),
                 'Acknowledged commands (not proof of light): ' + s.sent + ' | measured step: ' + s.stepMs + ' ms',
                 'Legacy IO return response: ' + (s.releaseConfirmed ? 'confirmed' : 'not confirmed this run'),
+                'Cleanup acknowledgements (not physical lamp proof): ' + JSON.stringify(s.cleanup),
+                'FLM settings: ' + settings.get('flmPwm') + '% PWM / ' + settings.get('flmSeconds') + ' s',
                 'Stop command: ' + (s.stopConfirmed ? 'acknowledged' : 'not acknowledged') + ' | route: ' + s.control.route
                     + (s.control.outputId == null ? '' : ' | single output 0x' + s.control.outputId.toString(16).toUpperCase())
-                    + (s.control.route === 'flm' ? ' | ' + s.control.side + ' channel ' + s.control.channel : ''),
+                    + (s.control.route === 'flm' ? ' | ' + s.control.side + ' channel ' + s.control.channel
+                        + ' | ' + s.control.pwm + '% / ' + s.control.seconds + 's' : ''),
                 'Recovery marker: ' + (journal.pending() ? 'PENDING - STOP or checked-light recovery' : 'clear'),
                 'A positive diagnostic response is not a measured lamp state.',
                 'Original start/show error: ' + (engine.originalFault || 'none recorded'),
@@ -86,9 +93,10 @@ mgu.run({
         }
         function saveLog() {
             try {
-            const report = { app: 'light_show', version: '0.2.3', at: new Date().toISOString(),
+            const report = { app: 'light_show', version: '0.2.4', at: new Date().toISOString(),
                     physicalEffectVerified: false, headlamps: engine.headlamps, status: engine.status(), guard: guard.snapshot(),
-                    settings: config(), bdcIndex: link.index, recoveryPending: journal.pending(), originalFault: engine.originalFault,
+                    settings: config(), flmSettings: flmConfig(), bdcIndex: link.index,
+                    recoveryPending: journal.pending(), originalFault: engine.originalFault,
                     individualObservations: observations, outputSamples: engine.outputSamples, trace: link.trace };
                 const file = path.join(ctx.dataDir, 'light-show-diagnostics.json');
                 fs.writeFileSync(file + '.tmp', JSON.stringify(report, null, 2)); fs.renameSync(file + '.tmp', file);
@@ -112,7 +120,8 @@ mgu.run({
         for (const side of Object.keys(F.MODULES)) {
             ui.onClick('BTN_FLM_' + side.toUpperCase(), () => {
                 selectedFlmSide = side;
-                ui.text('FLM_SIDE', F.MODULES[side].name + ' / channels 1-15 / 20% / 1s. Channel mapping and physical effects unverified.');
+                const opts = flmConfig();
+                ui.text('FLM_SIDE', F.MODULES[side].name + ' / channels 1-15 / ' + opts.pwm + '% / ' + opts.seconds + ' s. Channel mapping and physical effects unverified.');
                 return ui.open('FLM_CHANNELS');
             });
         }
@@ -121,14 +130,17 @@ mgu.run({
             const button = 'BTN_FLM_CH_' + ('0' + channel.toString(16).toUpperCase()).slice(-2);
             ui.onClick(button, async () => {
                 if (engine.run) return;
+                let opts;
+                try { opts = flmConfig(); } catch (e) { engine.update('ERROR', e.message); return; }
                 selectedOutput = { route: 'flm', side: selectedFlmSide, channel,
+                    pwm: opts.pwm, seconds: opts.seconds,
                     prg: F.MODULES[selectedFlmSide].name + '_KANAL_' + channel,
                     label: 'Experimental ' + F.MODULES[selectedFlmSide].name + ' LED channel ' + channel,
                     group: 'FLM_CHANNELS' };
                 lastObservation = '';
-                ui.text('OBSERVE_NAME', selectedOutput.label + '\n20% PWM for 1 second; physical channel unknown.');
+                ui.text('OBSERVE_NAME', selectedOutput.label + '\n' + opts.pwm + '% PWM / ' + opts.seconds + ' s; physical channel unknown.');
                 await ui.open('OUTPUT_OBSERVE');
-                await engine.testFlm(selectedFlmSide, channel);
+                await engine.testFlm(selectedFlmSide, channel, opts.pwm, opts.seconds);
                 refresh();
             });
         }
@@ -151,8 +163,14 @@ mgu.run({
             }
         });
         ui.onClick('BTN_OUTPUT_STOP', () => engine.stop('Stopped individual light test'));
-        ui.onClick('BTN_OUTPUT_REPEAT', () => selectedOutput && (selectedOutput.route === 'flm'
-            ? engine.testFlm(selectedOutput.side, selectedOutput.channel) : engine.testOutput(selectedOutput.id)));
+        ui.onClick('BTN_OUTPUT_REPEAT', () => {
+            if (!selectedOutput) return;
+            if (journal.pending()) return openLightCheck('OUTPUT_OBSERVE');
+            return selectedOutput.route === 'flm'
+                ? engine.testFlm(selectedOutput.side, selectedOutput.channel, selectedOutput.pwm, selectedOutput.seconds)
+                : engine.testOutput(selectedOutput.id);
+        });
+        ui.onClick('BTN_OUTPUT_CHECK_LIGHTS', () => openLightCheck('OUTPUT_OBSERVE'));
         ui.onClick('BTN_OUTPUT_BACK', async () => {
             await engine.stop('Leaving individual light test');
             return ui.open(selectedOutput ? selectedOutput.group : 'OUTPUT_INDEX');
@@ -165,6 +183,7 @@ mgu.run({
                 prg: selectedOutput.prg, label: selectedOutput.label, result,
                 route: selectedOutput.route === 'flm' ? 'flm' : 'single',
                 side: selectedOutput.side || null, channel: selectedOutput.channel || null,
+                pwm: selectedOutput.pwm || null, seconds: selectedOutput.seconds || null,
                 ecuState: status.state, ecuNote: status.note, cleanupConfirmed: status.stopConfirmed };
             observations.push(record); observations = observations.slice(-100);
             try {
@@ -179,10 +198,10 @@ mgu.run({
             ['BTN_OUTPUT_NO_EFFECT', 'no visible effect, no noise'],
             ['BTN_OUTPUT_NOISE', 'unusual noise without visible light']]
             .forEach(([button, result]) => ui.onClick(button, () => observe(result)));
-        ui.onClick('BTN_CLEAR_LOCK', () => ui.open('CONFIRM_LIGHTS'));
-        ui.onClick('BTN_CANCEL_CLEAR', () => ui.open('DIAGNOSTICS'));
+        ui.onClick('BTN_CLEAR_LOCK', () => openLightCheck('DIAGNOSTICS'));
+        ui.onClick('BTN_CANCEL_CLEAR', () => ui.open(confirmReturnScreen));
         ui.onClick('BTN_CONFIRM_CLEAR', async () => {
-            await engine.acknowledgeNormalLights(); await ui.open('DIAGNOSTICS');
+            await engine.acknowledgeNormalLights(); await ui.open(confirmReturnScreen);
         });
         ui.onClick('BTN_PREVIEW', async () => {
             // Stop an existing live show before entering the separate preview.

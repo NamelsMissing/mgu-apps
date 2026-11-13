@@ -16,12 +16,12 @@ class Engine {
         this.sent = 0; this.stepMs = 0; this.run = null; this.cancel = false;
         this.releaseConfirmed = false; this.stopRequested = false; this.outputSamples = []; this.originalFault = null;
         this.control = { route: 'digital', lights: null, outputId: null, side: null, channel: null };
-        this.stopConfirmed = false; this.headlamps = [];
+        this.stopConfirmed = false; this.headlamps = []; this.cleanup = {};
     }
     status() {
         return { state: this.state, note: this.note, mask: this.mask.slice(), sent: this.sent,
             stepMs: this.stepMs, releaseConfirmed: this.releaseConfirmed, stopConfirmed: this.stopConfirmed,
-            control: Object.assign({}, this.control),
+            control: Object.assign({}, this.control), cleanup: Object.assign({}, this.cleanup),
             remainingSeconds: this.deadline ? Math.max(0, Math.ceil((this.deadline - this.now()) / 1000)) : 0 };
     }
     update(state, note) { this.state = state; this.note = note; this.changed(); }
@@ -95,11 +95,10 @@ class Engine {
         // One short pulse. There is no continuous ON or adjustable duration.
         return this._start({ route: 'single', outputId: id, seconds: 1, tempo: 750 });
     }
-    testFlm(side, channel) {
-        try { F.moduleFor(side); F.channelNumber(channel); }
+    testFlm(side, channel, pwm = F.DEFAULT_PWM, seconds = F.DEFAULT_SECONDS) {
+        try { F.moduleFor(side); F.start(channel, pwm, seconds); }
         catch (e) { this.update('ERROR', e.message); return Promise.resolve(); }
-        // One 20%-PWM, one-second routine only. No adjustable/indefinite control.
-        return this._start({ route: 'flm', side, channel, seconds: F.SECONDS, tempo: F.SECONDS * 1000 });
+        return this._start({ route: 'flm', side, channel, pwm, seconds, tempo: seconds * 1000 });
     }
     _start(config) {
         const reason = this.guard.reason();
@@ -110,8 +109,10 @@ class Engine {
         this.stopConfirmed = false; this.control = { route: config.route || 'digital',
             lights: config.lights || null, outputId: config.route === 'single' ? config.outputId : null,
             side: config.route === 'flm' ? config.side : null,
-            channel: config.route === 'flm' ? config.channel : null };
-        this.sent = 0; this.stepMs = 0; this.mask = [0, 0]; this.outputSamples = []; this.originalFault = null;
+            channel: config.route === 'flm' ? config.channel : null,
+            pwm: config.route === 'flm' ? config.pwm : null,
+            seconds: config.route === 'flm' ? config.seconds : null };
+        this.sent = 0; this.stepMs = 0; this.mask = [0, 0]; this.outputSamples = []; this.originalFault = null; this.cleanup = {};
         this.update('STARTING', config.route === 'flm' ? 'Checking BDC and FLM02 identity' : 'Checking BDC_G05');
         let resolve;
         this.run = new Promise((r) => { resolve = r; });
@@ -196,14 +197,13 @@ class Engine {
     }
     async _flmPulse(c) {
         if (!this.allowed()) return;
-        this.deadline = this.now() + F.SECONDS * 1000;
+        this.deadline = this.now() + c.seconds * 1000;
         this.update('RUNNING', 'Experimental ' + c.side + ' FLM02 channel ' + c.channel +
-            ' / ' + F.PWM + '% / ' + F.SECONDS + 's (not verified)');
-        await this.link.flmStart(c.side, c.channel); this.sent++;
-        // ECU routine includes a finite one-second time; no reads or keepalives
-        // are inserted before the dedicated OEM StopRoutine in finally.
-        for (let elapsed = 0; elapsed < F.SECONDS * 1000 && this.allowed(); elapsed += 25)
-            await this.sleep(Math.min(25, F.SECONDS * 1000 - elapsed));
+            ' / ' + c.pwm + '% / ' + c.seconds + 's (not verified)');
+        await this.link.flmStart(c.side, c.channel, c.pwm, c.seconds); this.sent++;
+        // ECU time remains bounded; OEM StopRoutine is requested in finally.
+        for (let elapsed = 0; elapsed < c.seconds * 1000 && this.allowed(); elapsed += 25)
+            await this.sleep(Math.min(25, c.seconds * 1000 - elapsed));
     }
     async _timedLoop(c) {
         const pat = P.pattern(c), fn = P.FUNCTIONS[c.lights];
@@ -259,19 +259,22 @@ class Engine {
                 this.control = { route: saved.route || 'digital', lights: saved.lights || null,
                     outputId: saved.route === 'single' ? saved.outputId : null,
                     side: saved.route === 'flm' ? saved.side : null,
-                    channel: saved.route === 'flm' ? saved.channel : null };
+                    channel: saved.route === 'flm' ? saved.channel : null,
+                    pwm: saved.route === 'flm' ? saved.pwm || null : null,
+                    seconds: saved.route === 'flm' ? saved.seconds || null : null };
             }
             if (await this._release()) this.update('IDLE', this.control.route === 'timed' ? 'Timed stop acknowledged' : 'OEM IO return acknowledged');
         } catch (e) { this.update('ERROR', 'Saved stop lock pending: ' + String(e.message || e)); }
     }
     async _release() {
         this.update('STOPPING', 'Sending stop and default-session requests');
-        let error = null, released = false;
+        let error = null, released = false, offConfirmed = false, defaultConfirmed = false;
         // Always attempt the session return even if the stop request times out. A positive
         // session reply alone is not presented as proof of physical lamp state.
         if (this.control.route === 'single') {
-            try { await this.link.set(this.control.outputId, 0); }
-            catch (e) { error = 'Individual OFF: ' + (e.message || String(e)); }
+            try { await this.link.set(this.control.outputId, 0); offConfirmed = true;
+                await this.sampleOutputs('After individual OFF (not physical restoration)');
+            } catch (e) { error = 'Individual OFF: ' + (e.message || String(e)); }
         }
         try {
             if (this.control.route === 'flm') await this.link.flmStop(this.control.side);
@@ -282,15 +285,19 @@ class Engine {
         try {
             if (this.control.route === 'flm') await this.link.flmDefaultSession(this.control.side);
             else await this.link.defaultSession();
+            defaultConfirmed = true;
         } catch (e) { error = error || e.message || String(e); }
+        this.cleanup = { individualOffAcknowledged: this.control.route === 'single' ? offConfirmed : null,
+            oemReleaseAcknowledged: released, defaultSessionAcknowledged: defaultConfirmed,
+            releaseError: error ? String(error) : null };
         this.mask = [0, 0]; this.stopConfirmed = released && !error;
-        this.releaseConfirmed = this.control.route !== 'timed' && this.control.route !== 'flm' && released;
+        this.releaseConfirmed = this.control.route !== 'timed' && this.control.route !== 'flm' && released && !error;
         if (!error && released) {
             try { this.journal.clear(); } catch (e) { error = 'Could not clear recovery marker: ' + e.message; }
         }
         if (error) { this.update('ERROR', (this.originalFault ? 'Start/show: ' + this.originalFault + ' | ' : '')
             + (this.control.route === 'timed' ? 'Timed stop pending: '
-                : this.control.route === 'flm' ? 'FLM StopRoutine pending: ' : 'OEM release pending: ') + error); return false; }
+                : this.control.route === 'flm' ? 'FLM StopRoutine pending: ' : 'OEM release pending (NRC22 needs manual normal-lights check): ') + error); return false; }
         return true;
     }
 }

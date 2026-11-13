@@ -18,12 +18,14 @@ class Journal {
             && !Object.prototype.hasOwnProperty.call(P.FUNCTIONS, control.lights))
             || (route === 'single' && !Number.isInteger(control.outputId))) throw new Error('Invalid recovery context');
         if (route === 'single') P.control(control.outputId, 0);
-        if (route === 'flm') { F.moduleFor(control.side); F.channelNumber(control.channel); }
+        if (route === 'flm') { F.moduleFor(control.side); F.start(control.channel, control.pwm, control.seconds); }
         const value = { index, address: P.ADDRESS, at: new Date().toISOString(), route,
             lights: control && control.lights || null,
             outputId: route === 'single' ? control.outputId : null,
             side: route === 'flm' ? control.side : null,
-            channel: route === 'flm' ? control.channel : null };
+            channel: route === 'flm' ? control.channel : null,
+            pwm: route === 'flm' ? control.pwm : null,
+            seconds: route === 'flm' ? control.seconds : null };
         fs.writeFileSync(this.file + '.tmp', JSON.stringify(value));
         fs.renameSync(this.file + '.tmp', this.file); this.value = value;
     }

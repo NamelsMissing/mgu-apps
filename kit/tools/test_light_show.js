@@ -45,8 +45,8 @@ function rig(o) {
         defaultSession: async () => { calls.push('default'); if (o.defaultFail) throw Error('default timed out'); },
         identifyFlm: async (side) => { calls.push(['flmIdentify', side]); if (o.badFlmIdentity) throw Error('Unsupported FLM'); },
         flmSession: async (side) => { calls.push(['flmSession', side]); if (o.flmSessionFail) throw Error('FLM session refused'); },
-        flmStart: async (side, channel) => {
-            calls.push(['flmStart', side, channel]); if (o.onFlmStart) await o.onFlmStart(side, channel, r);
+        flmStart: async (side, channel, pwm, seconds) => {
+            calls.push(['flmStart', side, channel, pwm, seconds]); if (o.onFlmStart) await o.onFlmStart(side, channel, r);
             if (o.flmStartFail) throw Error('FLM start refused');
         },
         flmStop: async (side) => { calls.push(['flmStop', side]); if (o.flmStopFail) throw Error('FLM stop refused'); },
@@ -461,13 +461,15 @@ test('Real TASU transport serializes third-brake-light control via BDC, not a gu
 
 test('FLM02 OEM routine uses only the bounded channel START candidate and captured StopRoutine', () => {
     const spec = require(path.join(app, 'app.json'));
-    assert.strictEqual(spec.version, '0.2.3');
-    assert.deepStrictEqual(F.start(7), [0x01, 0xA5, 0x4B, 0x07, 20, 1]);
+    assert.strictEqual(spec.version, '0.2.4');
+    assert.deepStrictEqual(F.start(7), [0x01, 0xA5, 0x4B, 0x07, 60, 2]);
+    assert.deepStrictEqual(F.start(7, 100, 5), [0x01, 0xA5, 0x4B, 0x07, 100, 5]);
+    assert.strictEqual(F.isPermittedRoutine(F.start(7, 100, 5)), true);
     assert.deepStrictEqual(F.stop(), [0x02, 0xA5, 0x4B]);
     assert(F.isPermittedRoutine(F.start(15)) && F.isPermittedRoutine(F.stop()));
     for (const ch of [0, -1, 16, 255, '7', 0.5]) assert.throws(() => F.start(ch));
     for (const bytes of [[1, 0xA5, 0x4B, 7, 20, 255], [1, 0xA5, 0x4B, 0, 20, 1],
-        [1, 0xA5, 0x4B, 7, 100, 1], [2, 0xA5, 0x4B, 7], [1, 0xD9, 0xFD]])
+        [1, 0xA5, 0x4B, 7, 101, 1], [2, 0xA5, 0x4B, 7], [1, 0xD9, 0xFD]])
         assert.strictEqual(F.isPermittedRoutine(bytes), false);
 });
 test('FLM channel menu exposes exactly 15 individually selectable channels and both sides', () => {
@@ -486,12 +488,12 @@ test('FLM test validates BDC and headlamp identity before saving recovery or sen
     const badChannel = rig(); await badChannel.engine.testFlm('left', 0);
     assert.deepStrictEqual(badChannel.calls, []);
 });
-test('One-second FLM LED pulse stops with OEM StopRoutine, returns default and clears saved lock', async () => {
+test('Two-second FLM LED pulse stops with OEM StopRoutine, returns default and clears saved lock', async () => {
     for (const side of ['left', 'right']) {
         const r = rig(); const began = r.now(); await r.engine.testFlm(side, 7);
-        assert.strictEqual(r.now() - began, 1000);
+        assert.strictEqual(r.now() - began, 2000);
         assert.deepStrictEqual(r.calls, ['identify', ['flmIdentify', side], 'mark',
-            ['flmSession', side], ['flmStart', side, 7], ['flmStop', side], ['flmDefault', side], 'clear']);
+            ['flmSession', side], ['flmStart', side, 7, 60, 2], ['flmStop', side], ['flmDefault', side], 'clear']);
         assert.strictEqual(r.journal.pending(), false);
         assert.strictEqual(r.engine.stopConfirmed, true); assert.strictEqual(r.engine.releaseConfirmed, false);
         assert(!r.calls.includes('release') && !r.calls.includes('session'));

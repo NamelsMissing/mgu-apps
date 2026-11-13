@@ -1,8 +1,8 @@
 {
   "id": "light_show",
   "title": "Light Show",
-  "description": "Experimental exterior light patterns and controlled light-output tests for compatible vehicles.",
-  "version": "0.2.3",
+  "description": "Experimental BMW ID7 light control: timed light functions, BDC individual-output diagnostics with guided recovery, FLM02 LED channel tests with selectable 20-100% PWM and 1-5 s duration.",
+  "version": "0.2.4",
   "vendor": "custom",
   "loggingId": "OAL9",
   "iconGlyph": "LS",
@@ -140,10 +140,26 @@
       "kind": "menu",
       "title": "FLM02 - direct LED diagnostics",
       "items": [
-        ["text3", "FLM_WARNING", "EXPERIMENTAL / first vehicle test. The OEM FLM_KANAL routine has an independently captured StopRoutine, but START encoding, physical LED channel mapping and possible automatic motor motion are not vehicle verified. Only in P, stationary, on private property, clear of people. Each pulse requests 20% PWM for 1 second; no channel 0/all, no permanent command."],
-        ["button", "BTN_FLM_LEFT", "FLM02_L - select channel"],
-        ["button", "BTN_FLM_RIGHT", "FLM02_R - select channel"],
-        ["button", "BTN_FLM_BACK", "Back to Diagnostics"]
+        [
+          "text3",
+          "FLM_WARNING",
+          "EXPERIMENTAL: physical channel mapping and possible automatic motor movement unverified. In Settings choose 20/40/60/80/100% PWM and 1/2/3/5 seconds (default 60% / 2 s). One channel per test. Only in P, stationary, on private property with no people or traffic exposed. All lighting must be normal before driving."
+        ],
+        [
+          "button",
+          "BTN_FLM_LEFT",
+          "FLM02_L - select channel"
+        ],
+        [
+          "button",
+          "BTN_FLM_RIGHT",
+          "FLM02_R - select channel"
+        ],
+        [
+          "button",
+          "BTN_FLM_BACK",
+          "Back to Diagnostics"
+        ]
       ]
     },
     {
@@ -151,23 +167,91 @@
       "kind": "menu",
       "title": "FLM02 - individual LED channels",
       "items": [
-        ["text3", "FLM_SIDE", "Select left or right first. No high-beam channel identified yet."],
-        ["button", "BTN_FLM_CH_01", "LED channel 1 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_02", "LED channel 2 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_03", "LED channel 3 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_04", "LED channel 4 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_05", "LED channel 5 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_06", "LED channel 6 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_07", "LED channel 7 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_08", "LED channel 8 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_09", "LED channel 9 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_0A", "LED channel 10 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_0B", "LED channel 11 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_0C", "LED channel 12 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_0D", "LED channel 13 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_0E", "LED channel 14 / 20% / 1s"],
-        ["button", "BTN_FLM_CH_0F", "LED channel 15 / 20% / 1s"],
-        ["button", "BTN_FLM_CHANNEL_BACK", "Back to FLM selection"]
+        [
+          "text3",
+          "FLM_SIDE",
+          "One channel only; PWM and duration are selected under Settings. Physical mapping is not confirmed."
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_01",
+          "LED channel 1 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_02",
+          "LED channel 2 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_03",
+          "LED channel 3 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_04",
+          "LED channel 4 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_05",
+          "LED channel 5 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_06",
+          "LED channel 6 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_07",
+          "LED channel 7 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_08",
+          "LED channel 8 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_09",
+          "LED channel 9 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_0A",
+          "LED channel 10 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_0B",
+          "LED channel 11 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_0C",
+          "LED channel 12 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_0D",
+          "LED channel 13 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_0E",
+          "LED channel 14 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CH_0F",
+          "LED channel 15 / selected PWM/time"
+        ],
+        [
+          "button",
+          "BTN_FLM_CHANNEL_BACK",
+          "Back to FLM selection"
+        ]
       ]
     },
     {
@@ -175,12 +259,36 @@
       "kind": "menu",
       "title": "Diagnostics - individual lamps",
       "items": [
-        ["text3", "OUTPUT_WARNING", "LEGACY BDC path: commands acknowledged but no physical low-beam effect on this G21. Each output is requested for 750 ms, then OFF and OEM release. OEM release failed with NRC22 in the last test. Prefer the separate FLM02 tests for front LEDs; a failed release locks BDC tests until normal lights are checked."],
-        ["button", "BTN_OUTPUT_FRONT", "Front lights / high beam / turn signals"],
-        ["button", "BTN_OUTPUT_SIDE", "Side marker / side indicators"],
-        ["button", "BTN_OUTPUT_REAR", "Tail / brake / 3rd brake lights"],
-        ["button", "BTN_OUTPUT_REAR_EXTRA", "Rear turn / fog / reverse / plate"],
-        ["button", "BTN_OUTPUT_INDEX_BACK", "Back to Diagnostics"]
+        [
+          "text3",
+          "OUTPUT_WARNING",
+          "LEGACY BDC path: commands acknowledged but no physical low-beam effect on this G21. Each output is requested for 750 ms, then OFF and OEM release. OEM release failed with NRC22 in the last test. Prefer the separate FLM02 tests for front LEDs; a failed release locks BDC tests until normal lights are checked."
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_FRONT",
+          "Front lights / high beam / turn signals"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_SIDE",
+          "Side marker / side indicators"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_REAR",
+          "Tail / brake / 3rd brake lights"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_REAR_EXTRA",
+          "Rear turn / fog / reverse / plate"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_INDEX_BACK",
+          "Back to Diagnostics"
+        ]
       ]
     },
     {
@@ -188,20 +296,76 @@
       "kind": "menu",
       "title": "Single light - front",
       "items": [
-        ["text", "OUTPUT_FRONT_NOTE", "Tap one output for a 750-ms test"],
-        ["button", "BTN_LAMP_01", "Low beam left / AL_L"],
-        ["button", "BTN_LAMP_02", "Low beam right / AL_R"],
-        ["button", "BTN_LAMP_03", "Daytime light left / TFL_L"],
-        ["button", "BTN_LAMP_04", "Daytime light right / TFL_R"],
-        ["button", "BTN_LAMP_07", "High beam left / FL_L"],
-        ["button", "BTN_LAMP_08", "High beam right / FL_R"],
-        ["button", "BTN_LAMP_09", "Position light left / POL_L"],
-        ["button", "BTN_LAMP_0A", "Position light right / POL_R"],
-        ["button", "BTN_LAMP_0B", "Front fog left / NSW_L"],
-        ["button", "BTN_LAMP_0C", "Front fog right / NSW_R"],
-        ["button", "BTN_LAMP_0D", "Front indicator left / FRA_V_L"],
-        ["button", "BTN_LAMP_0E", "Front indicator right / FRA_V_R"],
-        ["button", "BTN_OUTPUT_GROUP_BACK_1", "Back to light groups"]
+        [
+          "text",
+          "OUTPUT_FRONT_NOTE",
+          "Tap one output for a 750-ms test"
+        ],
+        [
+          "button",
+          "BTN_LAMP_01",
+          "Low beam left / AL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_02",
+          "Low beam right / AL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_03",
+          "Daytime light left / TFL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_04",
+          "Daytime light right / TFL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_07",
+          "High beam left / FL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_08",
+          "High beam right / FL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_09",
+          "Position light left / POL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_0A",
+          "Position light right / POL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_0B",
+          "Front fog left / NSW_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_0C",
+          "Front fog right / NSW_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_0D",
+          "Front indicator left / FRA_V_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_0E",
+          "Front indicator right / FRA_V_R"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_GROUP_BACK_1",
+          "Back to light groups"
+        ]
       ]
     },
     {
@@ -209,12 +373,36 @@
       "kind": "menu",
       "title": "Single light - side",
       "items": [
-        ["text", "OUTPUT_SIDE_NOTE", "If not fitted, no visible effect is expected"],
-        ["button", "BTN_LAMP_05", "Side marker left / SML_L"],
-        ["button", "BTN_LAMP_06", "Side marker right / SML_R"],
-        ["button", "BTN_LAMP_10", "Side indicator left / FRA_Z_L"],
-        ["button", "BTN_LAMP_11", "Side indicator right / FRA_Z_R"],
-        ["button", "BTN_OUTPUT_GROUP_BACK_2", "Back to light groups"]
+        [
+          "text",
+          "OUTPUT_SIDE_NOTE",
+          "If not fitted, no visible effect is expected"
+        ],
+        [
+          "button",
+          "BTN_LAMP_05",
+          "Side marker left / SML_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_06",
+          "Side marker right / SML_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_10",
+          "Side indicator left / FRA_Z_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_11",
+          "Side indicator right / FRA_Z_R"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_GROUP_BACK_2",
+          "Back to light groups"
+        ]
       ]
     },
     {
@@ -222,17 +410,61 @@
       "kind": "menu",
       "title": "Single light - tail / brake",
       "items": [
-        ["text", "OUTPUT_REAR_NOTE", "Third brake light is BL_M; BFD is a separate output"],
-        ["button", "BTN_LAMP_14", "Tail light left / SL_L"],
-        ["button", "BTN_LAMP_15", "Tail light right / SL_R"],
-        ["button", "BTN_LAMP_16", "Tail light 2 left / SL_2_L"],
-        ["button", "BTN_LAMP_17", "Tail light 2 right / SL_2_R"],
-        ["button", "BTN_LAMP_18", "Brake light left / BL_L"],
-        ["button", "BTN_LAMP_19", "Brake light right / BL_R"],
-        ["button", "BTN_LAMP_23", "Third brake light / BL_M"],
-        ["button", "BTN_LAMP_1A", "Brake force left / BFD_L"],
-        ["button", "BTN_LAMP_1B", "Brake force right / BFD_R"],
-        ["button", "BTN_OUTPUT_GROUP_BACK_3", "Back to light groups"]
+        [
+          "text",
+          "OUTPUT_REAR_NOTE",
+          "Third brake light is BL_M; BFD is a separate output"
+        ],
+        [
+          "button",
+          "BTN_LAMP_14",
+          "Tail light left / SL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_15",
+          "Tail light right / SL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_16",
+          "Tail light 2 left / SL_2_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_17",
+          "Tail light 2 right / SL_2_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_18",
+          "Brake light left / BL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_19",
+          "Brake light right / BL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_23",
+          "Third brake light / BL_M"
+        ],
+        [
+          "button",
+          "BTN_LAMP_1A",
+          "Brake force left / BFD_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_1B",
+          "Brake force right / BFD_R"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_GROUP_BACK_3",
+          "Back to light groups"
+        ]
       ]
     },
     {
@@ -240,15 +472,51 @@
       "kind": "menu",
       "title": "Single light - rear auxiliary",
       "items": [
-        ["text", "OUTPUT_REAR_EXTRA_NOTE", "Unavailable equipment may not respond"],
-        ["button", "BTN_LAMP_1C", "Rear fog left / NSL_L"],
-        ["button", "BTN_LAMP_1D", "Rear fog right / NSL_R"],
-        ["button", "BTN_LAMP_1E", "Reverse left / RFS_L"],
-        ["button", "BTN_LAMP_1F", "Reverse right / RFS_R"],
-        ["button", "BTN_LAMP_20", "Rear indicator left / FRA_H_L"],
-        ["button", "BTN_LAMP_21", "Rear indicator right / FRA_H_R"],
-        ["button", "BTN_LAMP_22", "Number plate / KZL"],
-        ["button", "BTN_OUTPUT_GROUP_BACK_4", "Back to light groups"]
+        [
+          "text",
+          "OUTPUT_REAR_EXTRA_NOTE",
+          "Unavailable equipment may not respond"
+        ],
+        [
+          "button",
+          "BTN_LAMP_1C",
+          "Rear fog left / NSL_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_1D",
+          "Rear fog right / NSL_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_1E",
+          "Reverse left / RFS_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_1F",
+          "Reverse right / RFS_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_20",
+          "Rear indicator left / FRA_H_L"
+        ],
+        [
+          "button",
+          "BTN_LAMP_21",
+          "Rear indicator right / FRA_H_R"
+        ],
+        [
+          "button",
+          "BTN_LAMP_22",
+          "Number plate / KZL"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_GROUP_BACK_4",
+          "Back to light groups"
+        ]
       ]
     },
     {
@@ -256,16 +524,61 @@
       "kind": "menu",
       "title": "Single light - observe result",
       "items": [
-        ["text3", "OBSERVE_NAME", "Individual output / LED channel test"],
-        ["text3", "OBSERVE_STATUS", "Test result pending"],
-        ["button", "BTN_OUTPUT_STOP", "STOP / return lights to vehicle"],
-        ["button", "BTN_OUTPUT_REPEAT", "Repeat selected channel test"],
-        ["button", "BTN_OUTPUT_VISIBLE", "Record: visible, no unusual noise"],
-        ["button", "BTN_OUTPUT_VISIBLE_NOISE", "Record: visible + unusual noise"],
-        ["button", "BTN_OUTPUT_NO_EFFECT", "Record: no visible effect, no noise"],
-        ["button", "BTN_OUTPUT_NOISE", "Record: noise, no visible light"],
-        ["text", "OBSERVE_RECORDED", "Record your observation after the test finishes"],
-        ["button", "BTN_OUTPUT_BACK", "Back to selected light group"]
+        [
+          "text3",
+          "OBSERVE_NAME",
+          "Individual output / LED channel test"
+        ],
+        [
+          "text3",
+          "OBSERVE_STATUS",
+          "Test result pending"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_STOP",
+          "STOP / return lights to vehicle"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_CHECK_LIGHTS",
+          "Check normal lights / clear BDC lock"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_REPEAT",
+          "Repeat selected channel test"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_VISIBLE",
+          "Record: visible, no unusual noise"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_VISIBLE_NOISE",
+          "Record: visible + unusual noise"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_NO_EFFECT",
+          "Record: no visible effect, no noise"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_NOISE",
+          "Record: noise, no visible light"
+        ],
+        [
+          "text",
+          "OBSERVE_RECORDED",
+          "Record your observation after the test finishes"
+        ],
+        [
+          "button",
+          "BTN_OUTPUT_BACK",
+          "Back to selected light group"
+        ]
       ]
     },
     {
@@ -276,7 +589,7 @@
         [
           "text3",
           "RESET_NOTICE",
-          "First check normal headlights and indicators with the vehicle switches. Continue only if normal operation is restored. This clears saved app state; it does not verify physical lamp control or a successful stop."
+          "The BDC may accept individual OFF and default session but reject generalized OEM release (NRC22). This does not prove automatic light control was restored. First check headlights, indicators, brake and rear lights with the car's normal switches. If abnormal, cancel and do not drive. Clearing the saved app lock does not repair ECU release."
         ],
         [
           "button",
@@ -305,6 +618,58 @@
         [
           "digital",
           "Legacy left/right - no effect on tested G21"
+        ]
+      ]
+    },
+    {
+      "key": "flmPwm",
+      "label": "FLM02 LED brightness (PWM)",
+      "type": "choice",
+      "default": "60",
+      "options": [
+        [
+          "20",
+          "20%"
+        ],
+        [
+          "40",
+          "40%"
+        ],
+        [
+          "60",
+          "60%"
+        ],
+        [
+          "80",
+          "80%"
+        ],
+        [
+          "100",
+          "100% (experimental)"
+        ]
+      ]
+    },
+    {
+      "key": "flmSeconds",
+      "label": "FLM02 LED test duration",
+      "type": "choice",
+      "default": "2",
+      "options": [
+        [
+          "1",
+          "1 second"
+        ],
+        [
+          "2",
+          "2 seconds"
+        ],
+        [
+          "3",
+          "3 seconds"
+        ],
+        [
+          "5",
+          "5 seconds (experimental)"
         ]
       ]
     },
