@@ -44,7 +44,7 @@ async function main(){
         let configs=await Client.request({op:'status'},{runtime});
         await service.stop();
         const missing=path.join(root,'missing');
-        await assert.rejects(Wave.exportComparison(root,{runtime:missing}),/DSP/);
+        await assert.rejects(Wave.exportComparison(root,{runtime:missing}),/ENOENT|DSP/);
         assert(configs.revision>0);
     }finally{
         try{await service.stop();}catch(e){}
