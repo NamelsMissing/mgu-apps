@@ -23,3 +23,20 @@ jobs:
           experiments/mgu_alsa/mgu-audio-probe --help
       - name: Read-only diagnosis and virtual NULL test
         run: make -C experiments/mgu_alsa check
+  legacy_x86_64:
+    runs-on: ubuntu-latest
+    container:
+      image: gcc:8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for older x86-64 glibc
+        run: |
+          make -C experiments/mgu_alsa
+          file experiments/mgu_alsa/mgu-audio-probe
+          readelf --version-info experiments/mgu_alsa/mgu-audio-probe | grep GLIBC_ || true
+      - name: Attach experimental diagnostic binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mgu-audio-probe-x86_64-experimental
+          path: experiments/mgu_alsa/mgu-audio-probe
+          retention-days: 30

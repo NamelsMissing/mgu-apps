@@ -36,3 +36,7 @@ The first on-MGU run should be `--status`, without root when possible. If the ex
 An **AudioManager-registered, permitted dedicated entertainment media source** must be found or created, and its connection through SmartX/AVB to the car speakers verified. Merely opening the MediaSink or CarPlay PCM from a second process is unsafe, and neither the current app nor this tool does it. Once a safe route is identified, the existing test-music PCM generator can be piped through `mgu-equalizer-dsp` and a separately enabled output player. Neither system audio nor CarPlay is touched until then.
 
 ALSA name hint API: https://alsa-project.org/alsa-doc/alsa-lib/group___hint.html
+
+### Downloadable experimental x86-64 binary
+
+The separate `legacy_x86_64` GitHub Actions job compiles with an older GCC container and attaches `mgu-audio-probe-x86_64-experimental` as a downloadable artifact. This is **not** installed through MGU Store and its compatibility with the car's glibc is not verified. Only execute after inspecting `ldd --version` (if available) and matching the required glibc versions shown in the workflow build log. Downloading a CI artifact requires opening the workflow run on GitHub. The safest initial test is `./mgu-audio-probe --status`; it performs no audio playback.
