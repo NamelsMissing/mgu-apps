@@ -47,6 +47,7 @@ class ClusterLayers {
         this.lastSample = 0;
         this.data = {};
         this.panelEvents = [];
+        this.traceSink = null;
         this.options = { layout: 'stock', accent: 'm', phoneBadge: false, wazeMap: 'auto',
             sixwbTheme: 'comfort', sixwbColorSource: 'original',
             colorMode: 'palette', colorBrightness: 100,
@@ -111,8 +112,17 @@ class ClusterLayers {
     }
 
     tracePanel(event) {
-        this.panelEvents.push(new Date().toISOString() + ' ' + String(event).replace(/\s+/g, ' ').slice(0, 600));
+        const line = new Date().toISOString() + ' ' + String(event).replace(/\s+/g, ' ').slice(0, 600);
+        this.panelEvents.push(line);
         if (this.panelEvents.length > 80) this.panelEvents.shift();
+        // Preserve transitions immediately on disk, not only when QR is opened.
+        if (this.traceSink) {
+            try { this.traceSink(line); } catch (_) { /* logging must not stop rendering */ }
+        }
+    }
+    setTraceSink(fn) {
+        this.traceSink = typeof fn === 'function' ? fn : null;
+        if (this.traceSink) this.tracePanel('automatic session logging enabled');
     }
     history() { return this.panelEvents.join('\n') || '(no panel events yet)'; }
     clearHistory() { this.panelEvents.length = 0; }
