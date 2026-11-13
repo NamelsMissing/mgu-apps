@@ -74,7 +74,8 @@ mgu.run({
             // Settings remains the firmware-managed Settings button.
             ui.text('BTN_TEST', currentPage === 'DIAGNOSTICS' ? 'Restore BMW' :
                 currentPage === 'MAIN' ?
-                    (settings.get('panelTestMode') === 'preview' ? 'Static HMI preview' : 'Parked panel test') :
+                    (!settings.get('enablePanelTests') || settings.get('panelTestMode') === 'preview' ?
+                        'Static HMI preview' : 'Parked panel test') :
                     'Back to cluster');
             ui.text('BTN_DIAG', currentPage === 'QR_REPORT' ?
                 (clearArmedUntil > Date.now() ? 'Confirm delete' : 'Delete logs') :
@@ -123,11 +124,12 @@ mgu.run({
                 return;
             }
             if (currentPage !== 'MAIN') return showPage('MAIN');
-            if (settings.get('panelTestMode') === 'preview') {
+            if (!settings.get('enablePanelTests') || settings.get('panelTestMode') === 'preview') {
                 // Safe when the engine is off: no RAMSES panel layer is created.
                 staticPreviewUntil = Date.now() + 30000;
                 uiEvent('static 30 s HMI-only preview requested');
-                journal.write('STATIC PREVIEW started (does not take over KOMBI)');
+                journal.write('STATIC PREVIEW started (does not take over KOMBI); panel opt-in=' +
+                    !!settings.get('enablePanelTests'));
                 return;
             }
             uiEvent('parked test clicked');
