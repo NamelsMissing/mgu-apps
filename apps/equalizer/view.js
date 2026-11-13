@@ -63,6 +63,8 @@ function draw(r, t, s, a) {
         const play = s.testMusic && s.testMusic.playing;
         button('test-music', 1184, 382, 168, play ? 'Stop' : 'Testmusik', a.testMusic, play);
         button('dsp-headroom', 1363, 382, 169, config.autoHeadroom ? 'Headroom auto' : 'Headroom aus', a.headroom);
+        button('music-wav-export', 44, 454, 398, 'Night Drive WAV Export', a.exportWave);
+        text('Vergleich: 2 WAV-Dateien fuer USB / kein Live-CarPlay-EQ', 465, 488, 18, DIM);
         text('HR ' + db(effective) + ' · ' + (s.testMusic ? s.testMusic.status : 'idle') + ' · ' + (s.dspConfig.enabled ? 'DSP aktiv' : 'Bypass aktiv'), 1184, 466, 17, DIM);
     } else if (s.page === 1) {
         text('BASS, HÖHEN UND VERTEILUNG', 44, 90, 23, DIM, { spacing: 2 });
@@ -123,7 +125,7 @@ function draw(r, t, s, a) {
         text('VERBINDUNG & WERTE', 73, 136, 23, DIM, { spacing: 1 });
         [['DSP-Dienst', s.dspOnline ? 'Verbunden · ' + (s.dspStatus.streams || []).length + ' PCM-Quellen' : 'Nicht verbunden'],
          ['PCM-Frames gesamt', s.dspStatus ? s.dspStatus.frames : '--'], ['BMW-Klangwerte', shot.points.length],
-         ['CarPlay / Radio', 'Noch nicht an DSP angebunden'], ['Version', '0.2.3 · Testmusik experimentell']].forEach((v, i) => {
+         ['CarPlay / Radio', 'Noch nicht an DSP angebunden'], ['Version', '0.2.4 · WAV-Vergleich experimentell']].forEach((v, i) => {
             text(v[0], 73, 187 + i * 42, 23, DIM); text(v[1], 774, 187 + i * 42, 22, WHITE, { align: 'right' });
         });
         text('LETZTE MELDUNGEN', 856, 136, 23, DIM, { spacing: 1 });

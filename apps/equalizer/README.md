@@ -1,4 +1,4 @@
-# Equalizer DSP 0.2.3 — MGU / iDrive 7
+# Equalizer DSP 0.2.4 — MGU / iDrive 7
 
 Sieben echte parametrische Software-DSP-Bänder ergänzen die bisherige BMW-Klangsteuerung. Die Filter bearbeiten PCM-Audiosamples; sie sind unabhängig davon, ob das Fahrzeug ab Werk einen Siebenband-Equalizer anbietet.
 
@@ -10,13 +10,31 @@ Quelle **NamelsMissing/mgu-apps**, Kanal **main** aktualisieren und **Equalizer 
 
 Der Store baut das App-Paket auf der MGU mit deren eigenem SDK. Das Repository enthält keine BMW-SDK-Dateien oder Diagnose-PRGs.
 
-## Originale Testmusik (0.2.3)
+## Originale Testmusik (0.2.4)
+
+**NEU: WAV-Export fuer einen echten DSP-Klangvergleich ohne direkten SmartX-Zugriff.**
+
+Die 32 Sekunden lange Originalkomposition *Night Drive* laesst sich im **DSP-Tab** jetzt mit der neuen Schaltflaeche **Night Drive WAV Export** in zwei Dateien umwandeln:
+
+- `night-drive-original.wav`: unveraenderte 44,1-kHz-Stereo-PCM-Originaldatei.
+- `night-drive-dsp.wav`: dieselbe Komposition, aber mit dem **tatsaechlich laufenden, nativen PCM-DSP-Dienst** verarbeitet.
+
+So funktioniert der erste Test:
+1. **DSP EIN** aktivieren, ein Filterband sichtbar veraendern (z.B. 100 Hz +6 dB) und die Aenderungen mit **DSP uebernehmen** speichern. Eine unveraenderte, neutrale oder Bypass-Konfiguration wird nicht exportiert.
+2. Bei stehendem Fahrzeug **Night Drive WAV Export** antippen. Die App erzeugt beide Dateien im App-Datenverzeichnis und prueft DSP-Revisionsnummer, verarbeitete PCM-Frames und Dateiunterschiede. Bei DSP-Ausfall wird der Export verworfen; er faellt niemals unbemerkt auf einen ungefilterten "DSP"-Track zurueck.
+3. Dateien ueber das vorhandene Phone Terminal/SFTP auf einen USB-Stick mit kompatiblem Dateisystem kopieren und im BMW-USB-Medienplayer abspielen. Die BMW-USB-Unterstuetzung fuer WAV ist modell-/softwareabhaengig; falls die Dateien nicht lesbar sind, koennen sie auf dem PC in ein anderes unterstuetztes Format umgewandelt werden.
+
+Beide WAVs sind 32 s lang, jeweils ~5,65 MB gross und werden bei erneutem Export ersetzt (kein unbegrenztes Dateiwachstum). Sie enthalten nur die eigens synthetisierte Musik, keine fremden Tonaufnahmen oder Song-Samples. **Die Dateien beweisen DSP-Verarbeitung und erlauben einen hoerbaren A/B-Vergleich; die USB-Wiedergabe durchlaeuft NICHT live unseren DSP. CarPlay/Radio bleiben weiterhin unverbunden.**
+
+**Wichtig zur bisherigen Taste "Testmusik":** Der direkte ALSA-Weg bleibt in dieser Version experimentell; auf deiner MGU fehlen `aplay` und `ffmpeg`. Benutze deshalb fuer den ersten hoerbaren Test den WAV-Export und BMW-USB-Mediaplayer.
+
+
 
 Auf der Seite **DSP** startet die Taste **Testmusik** das etwa 32 Sekunden lange, eigens für dieses Projekt komponierte Instrumentalstück *Night Drive*. Die Melodie, Akkorde, Basslinie und Percussion werden lokal synthetisiert; es wird weder ein fremdes Musikstück noch eine fremde Tonaufnahme verwendet. Die Originalkomposition kann frei im Projekt verwendet werden, ohne Musik-Lizenzabgaben. Die Wiedergabe benötigt kein Internet.
 
-Die Audiokette ist `Testmusik (S16LE Stereo/44,1 kHz) → bestehender PCM DSP → aplay oder ffmpeg (ALSA-Standardausgang)`; CarPlay- oder BMW-Audioprozesse werden nicht verändert. **Stop** beendet die Wiedergabe sofort. Beim Verlassen der App oder des DSP-Tabs wird die Wiedergabe ebenfalls gestoppt. Die Testmusik läuft nie automatisch an. Die DSP-Einstellungen dürfen während der Wiedergabe geändert werden; für einen A/B-Vergleich **Bypass / DSP ein** und **DSP übernehmen** nutzen.
+Die bisherige direkte Wiedergabekette ist `Testmusik (S16LE Stereo/44,1 kHz) → bestehender PCM DSP → aplay oder ffmpeg (ALSA-Standardausgang)`; CarPlay- oder BMW-Audioprozesse werden nicht verändert. **Stop** beendet die Wiedergabe sofort. Beim Verlassen der App oder des DSP-Tabs wird die Wiedergabe ebenfalls gestoppt. Die Testmusik läuft nie automatisch an. Die DSP-Einstellungen dürfen während der Wiedergabe geändert werden; für einen A/B-Vergleich **Bypass / DSP ein** und **DSP übernehmen** nutzen.
 
-**Wichtig:** Der tatsächliche ALSA-Ausgang zum BMW-Audiosystem ist noch nicht nachgewiesen. Wenn `aplay` fehlt, versucht 0.2.3 stattdessen ein vorhandenes `ffmpeg` mit ALSA-Ausgabe (`-f alsa default`). Falls auch `ffmpeg` fehlt, dessen ALSA-Ausgabe nicht unterstützt wird oder der Standard-ALSA-Ausgang keine Fahrzeuglautsprecher erreicht, bleibt die Testmusik stumm und zeigt eine Fehlermeldung. Es werden **keine** anderen BMW-/SmartX-Geräte automatisch geöffnet oder ALSA-Konfigurationen geändert. Ein `DSP LIVE`-Framezähler bestätigt nur verarbeitete PCM-Daten, nicht die Lautsprecherausgabe. Zunächst bei stehendem Fahrzeug und niedriger Lautstärke testen. Die Testmusik wird absichtlich nicht als Fahrzeugaudio-Funktion ausgegeben und kann normalen Ton überlagern.
+**Wichtig:** Der tatsächliche ALSA-Ausgang zum BMW-Audiosystem ist noch nicht nachgewiesen. Wenn `aplay` fehlt, versucht 0.2.4 stattdessen ein vorhandenes `ffmpeg` mit ALSA-Ausgabe (`-f alsa default`). Falls auch `ffmpeg` fehlt, dessen ALSA-Ausgabe nicht unterstützt wird oder der Standard-ALSA-Ausgang keine Fahrzeuglautsprecher erreicht, bleibt die Testmusik stumm und zeigt eine Fehlermeldung. Es werden **keine** anderen BMW-/SmartX-Geräte automatisch geöffnet oder ALSA-Konfigurationen geändert. Ein `DSP LIVE`-Framezähler bestätigt nur verarbeitete PCM-Daten, nicht die Lautsprecherausgabe. Zunächst bei stehendem Fahrzeug und niedriger Lautstärke testen. Die Testmusik wird absichtlich nicht als Fahrzeugaudio-Funktion ausgegeben und kann normalen Ton überlagern.
 
 ## DSP bedienen
 
@@ -39,7 +57,7 @@ Im Tab **DSP** sind alle sieben eigenen Filter ohne BMW-Regler-Zuordnung einstel
 
 Orange Werte sind vorbereitete Änderungen. Headroom lässt sich über die zugehörige Zeile umschalten. Im Auto-Headroom wird die Summe positiver Band-Anhebungen als Pegelreserve abgezogen; das kann die Wiedergabe deutlich leiser machen. Es wird keine Lautstärke am BMW-Verstärker nachgeregelt.
 
-**DSP EIN** und **BYPASS EIN** sind ab 0.2.3 getrennte Tasten. Sie übernehmen den Zustand sofort und enthalten bei Bedarf bereits vorbereitete Bandänderungen; **DSP übernehmen** bleibt für weitere Gain-/Frequenz-/Q-Änderungen zuständig. Damit wird das explizite Einschalten nicht von einem zweiten Bestätigen abhängig gemacht.
+**DSP EIN** und **BYPASS EIN** sind ab 0.2.4 getrennte Tasten. Sie übernehmen den Zustand sofort und enthalten bei Bedarf bereits vorbereitete Bandänderungen; **DSP übernehmen** bleibt für weitere Gain-/Frequenz-/Q-Änderungen zuständig. Damit wird das explizite Einschalten nicht von einem zweiten Bestätigen abhängig gemacht.
 
 **DSP LIVE** erscheint nur bei eingeschaltetem DSP und kürzlich empfangenen PCM-Frames einer angebundenen Quelle. **DSP BEREIT** bedeutet, dass die Konfiguration aktiv ist, aber gerade keine laufende PCM-Quelle nachgewiesen wird. **BYPASS** gibt angeschlossene PCM-Daten unverändert weiter. Der Quellenhinweis nennt die fehlende Stock-CarPlay-/Radio-Anbindung.
 

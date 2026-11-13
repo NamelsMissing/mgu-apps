@@ -248,7 +248,7 @@
       "id": "equalizer",
       "kind": "app",
       "title": "Equalizer DSP (experimental)",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "path": "apps/equalizer",
       "icon": "icon.png",
       "mguHmi": [

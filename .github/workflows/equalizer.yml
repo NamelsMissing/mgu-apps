@@ -30,6 +30,7 @@ jobs:
           node-version: '22'
       - run: node tests/equalizer_dsp.test.js
       - run: node tests/equalizer_music.test.js
+      - run: node tests/equalizer_music_export.test.js
       - run: node kit/tools/test_equalizer.js
       - run: node tests/equalizer_video_pipe.test.js
       - run: python3 tests/equalizer_store.test.py

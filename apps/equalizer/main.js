@@ -7,6 +7,7 @@ const { Storage } = require('./storage');
 const { draw } = require('./view');
 const DSP = require('./kit/dsp-client');
 const { MusicPlayer } = require('./test_music');
+const { exportComparison } = require('./music_export');
 
 const TABS = ['DSP', 'BMW-Klang', 'Profile', 'Einrichten', 'Diagnose'];
 const PROFILES = [ ['neutral', 'Neutral'], ['bass', 'Bass'], ['voice', 'Stimme'], ['1', 'Eigenes Profil 1'], ['2', 'Eigenes Profil 2'], ['3', 'Eigenes Profil 3'] ];
@@ -244,6 +245,19 @@ mgu.run({
             dspOn() { return run(async () => setBypass(true)); },
             dspBypass() { return run(async () => setBypass(false)); },
             testMusic() { if (!s.busy && s.page === 0) testPlayer.toggle(); },
+            exportWave() {
+                return run(async () => {
+                    if (s.page !== 0) return;
+                    testPlayer.stop();
+                    message('WAV-Export wird vorbereitet ...');
+                    const result = await exportComparison(ctx.dataDir, {
+                        runtime: dspOpts.runtime, request: dspRequest,
+                        onProgress: (msg) => message(msg)
+                    });
+                    await readDsp();
+                    message('WAV Export fertig: ' + result.frames + ' PCM-Frames, 2 Dateien fuer USB.');
+                });
+            },
             headroom() { editDsp((v) => { v.autoHeadroom = !v.autoHeadroom; }); },
             profile(i) { if (!s.busy) s.selected.profile = i; },
             apply: () => run(apply), next, adjust,
@@ -256,6 +270,7 @@ mgu.run({
         };
         ui.onClick('BTN_NEXT', next);
         ui.onClick('BTN_MUSIC', () => actions.testMusic());
+        ui.onClick('BTN_MUSIC_EXPORT', () => actions.exportWave());
         ui.onClick('BTN_DSP_ON', () => actions.dspOn());
         ui.onClick('BTN_BYPASS', () => actions.dspBypass());
         ui.onClick('BTN_PARAM', () => { if (s.page === 0 && !s.busy) actions.parameter(); });
