@@ -16,12 +16,15 @@ class FakeRenderer extends EventEmitter {
         this.effects = [];
         this.drops = [];
         this.uniforms = [];
+        this.sets = [];
+        this.operations = [];
         this.statusRequests = 0;
     }
     connect() { this.emit('ready'); }
     close() {}
-    effect(options) { this.effects.push(options); return this.effects.length; }
-    uniform(ref, name, value) { this.uniforms.push({ ref, name, value }); }
+    effect(options) { this.effects.push(options); this.operations.push(['effect',this.effects.length]); return this.effects.length; }
+    uniform(ref, name, value) { this.uniforms.push({ ref, name, value }); this.operations.push(['uniform',ref]); }
+    set(ref, opts) { this.sets.push({ref,opts}); this.operations.push(['set',ref]); }
     drop(ref) { this.drops.push(ref); }
     status() { this.statusRequests++; }
 }
@@ -49,12 +52,14 @@ assert.strictEqual(cluster.armPanel(), true);
 assert.strictEqual(cluster.status().panelActive, true);
 assert.strictEqual(cluster.status().panelLayer, 'requesting', 'created does not mean shown');
 assert.strictEqual(fake.effects[0].target, 'panel');
-assert.strictEqual(fake.effects[0].klass, 'content');
+assert.strictEqual(fake.effects[0].klass, 'overlay');
 assert.strictEqual(fake.effects[0].x, 86);
 assert.strictEqual(fake.effects[0].w, 260, 'small marker, not whole panel');
 assert.ok(fake.effects[0].x + fake.effects[0].w < 416,
     'the diagnostic effect never overlaps the native map aperture');
-assert.strictEqual(fake.effects[0].contend, true);
+assert.strictEqual(fake.effects[0].contend, false);
+assert.strictEqual(fake.effects[0].visible, false);
+assert.strictEqual(fake.sets[0].opts.visible,true);
 fake.emit('layer', 1, 'shown', '');
 fake.emit('target', 'panel', 'mapped', 'custom_cluster', '');
 fake.emit('status', 'slot 0x203 status 3: content class 2 map 1');
@@ -76,11 +81,14 @@ assert.strictEqual(cluster.armPanel(), false, 'unsupported slot must not be requ
 assert.ok(/not advertised/.test(cluster.status().disarmReason));
 cluster.settings(settings({ panelTestMode: 'design', layout: 'sixwb' }));
 assert.strictEqual(cluster.armPanel(), true);
-assert.strictEqual(fake.effects[1].w, 1920, 'opt-in full design covers panel');
+assert.strictEqual(fake.effects.length,4,'three separate small layers');
+assert.ok(fake.effects.slice(1).every(p=>p.x+p.w<416 && p.contend===false && p.visible===false),'small hidden non-contending effects outside map');
+const testOps=fake.operations.slice(fake.operations.findIndex(o=>o[0]==='effect'&&o[1]===2));
+assert.ok(testOps.slice(testOps.findIndex(o=>o[0]==='set')).every(o=>o[0]==='set'),'initialize all pieces before showing');
 cluster.observeVehicle({ stage: 'N' });
 assert.strictEqual(cluster.status().panelActive, false, 'leaving P drops full design');
 assert.ok(cluster.status().testGuard.includes('Selector N'), 'guard identifies neutral instead of P');
-assert.deepStrictEqual(fake.drops, [1, 2]);
+assert.deepStrictEqual(fake.drops, [1, 2, 3, 4]);
 fake.emit('status', 'slot 0x203 status 3: content class 2 map 1');
 
 const signalCheck = new ClusterLayers(log, null, new FakeRenderer());
@@ -119,13 +127,17 @@ assert.strictEqual(staleCluster.armPanel(), false, 'stale telemetry never enable
 staleCluster.close();
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-qr-test-'));
-const ctx = { dataDir: tempDir, spec: { version: '0.6.1' } };
+const ctx = { dataDir: tempDir, spec: { version: '0.6.2' } };
 const journal = QR.startJournal(ctx);
 assert.ok(journal.path && fs.existsSync(journal.path), 'open app creates a text log without QR');
 assert.ok(/cluster-session-.*\.txt$/.test(journal.path));
 assert.ok(journal.write('test panel event'), 'session appends a renderer event');
 assert.ok(fs.readFileSync(journal.path, 'utf8').includes('test panel event'));
-const oldJournal = journal.path;
+const previousJournal = journal.path;
+const nextJournal = QR.startJournal(ctx);
+assert.ok(!fs.existsSync(previousJournal),'old automatic session removed on start');
+assert.ok(fs.existsSync(nextJournal.path),'new session exists');
+const oldJournal = nextJournal.path;
 const testReport = QR.report(ctx, cluster, 'auto', 'none');
 assert.ok(testReport.pages.length > 0);
 const payloads = testReport.pages.map((page, idx) => {
