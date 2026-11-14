@@ -34,7 +34,9 @@ function startJournal(ctx) {
                 return;
             }
             const dir = path.join(ctx.dataDir, 'exports');
-            fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+            // Node 8 on ID7 does not support recursive mkdir options.
+            try { fs.mkdirSync(dir, 0o700); }
+            catch (e) { if (e.code !== 'EEXIST') throw e; }
             const st = fs.lstatSync(dir);
             if (!st.isDirectory() || st.isSymbolicLink()) {
                 error = 'App export directory is not a regular folder';
@@ -50,6 +52,16 @@ function startJournal(ctx) {
                 'This file contains diagnostic events, not proof of visible KOMBI pixels.\n\n';
             fs.writeFileSync(file, header, { flag: 'wx', mode: 0o600 });
             bytes = Buffer.byteLength(header);
+            // Only automatic session files are rotated. Deliberately retain
+            // explicit TXT/QR snapshots and never touch USB/system logs.
+            const failures = [];
+            fs.readdirSync(dir).forEach(oldName => {
+                if (oldName === name || !SESSION_EXPORT.test(oldName)) return;
+                const old = path.join(dir, oldName);
+                try { if (fs.lstatSync(old).isFile()) fs.unlinkSync(old); }
+                catch (e) { failures.push(String(e.code || e.message || e)); }
+            });
+            if (failures.length) error = 'Old session cleanup: ' + failures.join(', ').slice(0, 180);
         } catch (e) { file = null; error = String(e.code || e.message || e); }
     }
     const journal = {
