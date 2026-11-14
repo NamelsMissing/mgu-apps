@@ -1,5 +1,14 @@
-# Custom Cluster 0.6.1 — BMW G21 / MGU iDrive 7
+# Custom Cluster 0.6.2 — BMW G21 / MGU iDrive 7
 
+
+## 0.6.2: Live Logs and staged small-layer renderer investigation
+
+- **Live Logs** is available directly from the main app page. Older / Newer move 12 lines; Latest resumes following the newest events. Touch scrolling is also supported by the existing kit touch hook. The page retains its position when new messages arrive, so it can be recorded with a phone. It uses the same native MAIN screen as the diagnostics to avoid earlier RHMI navigation problems.
+- The last 1200 wrapped text lines of the current process are retained in memory, including HMI, vehicle, renderer and error events. The console is independent of disk I/O. A new process starts a fresh log. Opening another app page does not erase the active test history.
+- Automatic `cluster-session-*.txt` files are rotated on a successful new session; only regular files belonging to this session naming scheme are removed. Existing explicit TXT/QR snapshots and USB copies remain available. `Save TXT` and `Delete logs` are retained. Directory creation now also works with the older Node mkdir API.
+- The rendering architecture was compared with [Cluster Layouts](https://github.com/eroobeeroo/idrive7-cluster-info/blob/main/apps/cluster_layouts/engine.js), [Cluster Centre](https://github.com/eroobeeroo/idrive7-cluster-info/tree/main/apps/cluster_centre), and [bimmer-lab Cluster Themes](https://github.com/bimmer-lab/apps/tree/main/apps/cluster_themes). Those projects divide gauges, text and graphics into separate shader/image layers. No upstream source code has been copied.
+- The old full-screen shader is **not sent to the KOMBI** in this release. The existing saved `design` test choice becomes **Three-layer KOMBI probe**, featuring two small coloured shapes and a bar, outside the central map region. The layers start hidden, their uniforms are initialized before visibility, and each is traced by reference ID. The one-layer probe is also staged. Both use non-contending overlay requests. All owned probe layers are dropped on release; other applications' layers are not dropped.
+- This is a diagnostic step, **not a working G80/6WB full-cluster replacement**. The stock media widget and real combined map display have not been verified. Non-contending requests may remain waiting instead of drawing. Do not assume a small overlay preserves every OEM display. Leave experimental tests disabled unless the original BMW display is intact, and perform any further probe only while safely parked. The iDrive previews and existing Waze controls are unchanged.
 
 ## 0.6.1: Fix stationary samples, add Restore BMW and Save TXT
 
