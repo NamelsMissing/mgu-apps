@@ -1,8 +1,8 @@
 {
   "id": "custom_cluster",
   "title": "Custom Cluster",
-  "description": "G80/6WB prototypes: getter-polled parked tests, real TXT export and safe restore.",
-  "version": "0.6.1",
+  "description": "G80/6WB previews, current-session scrollable logs and guarded small-layer KOMBI probes.",
+  "version": "0.6.2",
   "vendor": "custom",
   "loggingId": "OAQ7",
   "iconGlyph": "CC",
@@ -36,6 +36,10 @@
         [
           "BTN_QR",
           "QR logs"
+        ],
+        [
+          "BTN_LOG",
+          "Live Logs"
         ],
         [
           "BTN_SETTINGS",
@@ -119,11 +123,11 @@
         ],
         [
           "probe",
-          "KOMBI marker (may hide music)"
+          "One-layer KOMBI probe"
         ],
         [
           "design",
-          "Full KOMBI (experimental)"
+          "Three-layer KOMBI probe"
         ]
       ]
     },
