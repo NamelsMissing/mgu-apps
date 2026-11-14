@@ -68,6 +68,7 @@ class FakeWaze { constructor() { this.status = 'auto'; } setChoice() {} }
 const report = () => { reportCount++; return { id: 'test', pages: ['page1', 'page2'], storedAt: [] }; };
 const deps = {
     './kit/mgu': { run: ({ start }) => start(ctx) },
+    './live_log.js': require('../apps/custom_cluster/live_log.js'),
     './kit/car': FakeCar,
     './kit/gauges': { frame() {} },
     './cluster_layers.js': { ClusterLayers: FakeCluster },
@@ -94,6 +95,22 @@ for (const screen of spec.screens) for (const [id] of screen.buttons)
     if (id !== 'BTN_SETTINGS') assert.ok(clicks.has(id), 'button handler missing: ' + id);
 
 async function test() {
+    const {LiveLog}=deps['./live_log.js'];
+    const log=new LiveLog(50,96,5);
+    for(let i=0;i<30;i++)log.append('event '+i);
+    log.move(-5);const old=log.view().lines.slice();log.append('new');
+    assert.deepStrictEqual(log.view().lines,old,'earlier page remains stationary');
+    log.latest();assert.ok(log.view().lines.join(' ').includes('new'));
+    log.clear();assert.strictEqual(log.view().total,0);
+    clicks.get('BTN_LOG')();
+    assert.strictEqual(labels.get('BTN_DIAG'),'Older');
+    assert.strictEqual(labels.get('BTN_QR'),'Newer');
+    assert.strictEqual(labels.get('BTN_LOG'),'Latest');
+    await renders.get('MAIN')();
+    assert.ok(drawn.some(x=>x.includes('Current session')));
+    clicks.get('BTN_DIAG')();clicks.get('BTN_QR')();clicks.get('BTN_LOG')();
+    clicks.get('BTN_TEST')();
+    assert.strictEqual(labels.get('BTN_LOG'),'Live Logs');
     await clicks.get('BTN_DIAG')();
     assert.strictEqual(labels.get('BTN_DIAG'), 'Back to cluster');
     assert.strictEqual(labels.get('BTN_TEST'), 'Restore BMW');
