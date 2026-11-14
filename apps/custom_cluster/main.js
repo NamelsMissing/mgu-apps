@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Custom Cluster 0.6.1 - read-only stationary getter polls, TXT export, manual OEM release.
+ * Custom Cluster 0.6.2 - scrollable current-session console and guarded renderer probes.
  * Stock is the default. Real values only can reach cluster-render; emulator
  * and demo values stay exclusively on the centre-screen preview.
  */
@@ -15,15 +15,37 @@ const { draw6WBPreview } = require('./sixwb_preview.js');
 const { resolveColor, resolve6WBColor, colorHex } = require('./cluster_colors.js');
 const { withAlpha } = require('./kit/canvas');
 const QR = require('./cluster_diagnostics.js');
+const { LiveLog } = require('./live_log.js');
 
 function fmt(v, unit) { return G.isNum(v) ? String(Math.round(v)) + (unit || '') : '--'; }
 function ageText(age) { return age === null ? 'no sample' : age + 's old'; }
 
 mgu.run({
     async start(ctx) {
-        const { settings, log, ui } = ctx;
-        const car = new Car(ctx, ['rpm', 'speed', 'temps', 'gear'], { pollMs: 5000 });
-        const journal = QR.startJournal(ctx);
+        const { settings, log: baseLog, ui } = ctx;
+        const liveLog = new LiveLog(1200, 96, 15);
+        const diskJournal = QR.startJournal(ctx);
+        const journal = {
+            get path() { return diskJournal.path; },
+            get error() { return diskJournal.error; },
+            write(message) {
+                liveLog.append(message); // always capture, even if disk I/O fails
+                return diskJournal.write(message);
+            },
+            reset() { liveLog.clear(); diskJournal.reset(); },
+        };
+        const log = Object.create(baseLog);
+        ['info', 'warn', 'error', 'debug'].forEach(level => {
+            log[level] = (...args) => {
+                const msg = args.map(a => String(a && a.message || a)).join(' ');
+                // UI events and renderer states already have explicit trace entries.
+                if (level !== 'debug' && !(level === 'info' &&
+                    /^(cluster ui:|panel layer |panel target |panel test:|cluster log export )/.test(msg)))
+                    journal.write(level.toUpperCase() + ' ' + msg);
+                if (typeof baseLog[level] === 'function') baseLog[level].apply(baseLog, args);
+            };
+        });
+        const car = new Car(Object.assign({}, ctx, { log }), ['rpm', 'speed', 'temps', 'gear'], { pollMs: 5000 });
         const cluster = new ClusterLayers(log);
         cluster.setTraceSink((line) => {
             journal.write('PANEL ' + line);
@@ -72,6 +94,14 @@ mgu.run({
         function updateButtons() {
             // Reflect the current actions in the real HMI bar and its GPU bar.
             // Settings remains the firmware-managed Settings button.
+            if (currentPage === 'LIVE_LOGS') {
+                ui.text('BTN_TEST', 'Back to cluster');
+                ui.text('BTN_DIAG', 'Older');
+                ui.text('BTN_QR', 'Newer');
+                ui.text('BTN_LOG', 'Latest');
+                return;
+            }
+            ui.text('BTN_LOG', 'Live Logs');
             ui.text('BTN_TEST', currentPage === 'DIAGNOSTICS' ? 'Restore BMW' :
                 currentPage === 'MAIN' ?
                     (!settings.get('enablePanelTests') || settings.get('panelTestMode') === 'preview' ?
@@ -86,6 +116,7 @@ mgu.run({
         function showPage(name) {
             if (currentPage !== name) clearArmedUntil = 0;
             currentPage = name;
+            if (name === 'LIVE_LOGS') liveLog.latest();
             uiEvent('in-page ' + name);
             updateButtons();
         }
@@ -146,6 +177,7 @@ mgu.run({
             log.info('panel test: ' + (enabled ? 'armed for 12 s' : cluster.status().disarmReason));
         });
         ui.onClick('BTN_DIAG', () => {
+            if (currentPage === 'LIVE_LOGS') return liveLog.move(-12);
             if (currentPage === 'QR_REPORT') return deleteLogs();
             if (currentPage === 'DIAGNOSTICS') return showPage('MAIN');
             uiEvent('show diagnostics in main state');
@@ -205,8 +237,26 @@ mgu.run({
         }
         const openQr = () => { uiEvent('show QR in main state'); captureQr(); return showPage('QR_REPORT'); };
         ui.onClick('BTN_QR', () => {
+            if (currentPage === 'LIVE_LOGS') return liveLog.move(12);
             if (currentPage === 'DIAGNOSTICS') return saveTxt('manual Save TXT button');
             return currentPage === 'QR_REPORT' ? nextQrPage() : openQr();
+        });
+        ui.onClick('BTN_LOG', () => {
+            if (currentPage === 'LIVE_LOGS') return liveLog.latest();
+            cluster.pollStatus(true);
+            return showPage('LIVE_LOGS');
+        });
+        // Same touch gesture as the Heating Comfort console; the native
+        // Older/Newer buttons also work with the rotary controller.
+        let logTouchY = null;
+        if (typeof ctx.onTouch === 'function') ctx.onTouch((phase, x, y) => {
+            if (currentPage !== 'LIVE_LOGS') { logTouchY = null; return; }
+            if (phase === 1 && x >= 35 && x <= 1565 && y >= 105 && y <= 480) logTouchY = y;
+            else if (phase === 3 && logTouchY !== null) {
+                const dy = y - logTouchY;
+                if (Math.abs(dy) > 18) liveLog.move(-Math.round(dy / 24));
+                logTouchY = null;
+            }
         });
         function nextQrPage() {
             uiEvent('QR next page');
@@ -249,6 +299,28 @@ mgu.run({
             journal.write('App process closing');
             clearInterval(cleanup); cluster.close(); bridge.stop();
         });
+
+        function renderLiveLogs(target) {
+            const t = ctx.theme();
+            const cv = ctx.canvas(1600, 520).clear(t.bg);
+            const page = liveLog.view();
+            G.frame(cv, t, ['Custom Cluster', 'Live Logs'], 0,
+                [{ text: page.following ? 'LIVE' : 'HISTORY' }]);
+            cv.text('Current session  |  ' + new Date(liveLog.startedAt).toISOString().slice(11, 19) +
+                ' UTC  |  Lines ' + page.start + '-' + page.end + ' / ' + page.total,
+                48, 76, 23, t.text, { literal: true });
+            cv.text(page.following ? 'Following newest events' : 'Paused on older events',
+                1095, 76, 18, page.following ? '#2fd27a' : t.warn);
+            if (!page.lines.length) cv.text('Waiting for diagnostic events...', 48, 130, 22, t.dim);
+            page.lines.forEach((line, i) => {
+                const color = /\b(?:ERROR|WARN|FAILED|refused|stale|NOT verified)\b/i.test(line) ? t.warn : t.text;
+                cv.text(line, 48, 111 + i * 24, 20, color, { literal: true });
+            });
+            cv.text('Older / Newer: scroll 12 lines  |  Latest: follow log  |  New app process: new log',
+                48, 496, 18, t.dim);
+            if (page.dropped) cv.text('Oldest lines rotated: ' + page.dropped, 1200, 496, 16, t.dim);
+            return ui.image(target, cv);
+        }
 
         function renderQr(target) {
             const t = ctx.theme();
@@ -319,9 +391,11 @@ mgu.run({
             return ui.image(target, cv);
         }
 
+        updateButtons();
         ctx.loop('MAIN', 2, () => {
             if (currentPage === 'DIAGNOSTICS') return renderDiagnostics('MAIN_GFX');
             if (currentPage === 'QR_REPORT') return renderQr('MAIN_GFX');
+            if (currentPage === 'LIVE_LOGS') return renderLiveLogs('MAIN_GFX');
             const t = ctx.theme(), realData = car.data(), st = cluster.status();
             const previewActive = Date.now() < staticPreviewUntil;
             // Static preview works with ignition off and stale signals, but is
