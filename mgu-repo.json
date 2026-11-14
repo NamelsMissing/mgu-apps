@@ -51,7 +51,7 @@
       "id": "g21_wheelheat",
       "kind": "app",
       "title": "G21 Heating Comfort",
-      "version": "0.4.18",
+      "version": "0.4.19",
       "path": "apps/g21_wheelheat",
       "icon": "icon.png",
       "mguHmi": [

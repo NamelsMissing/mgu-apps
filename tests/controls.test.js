@@ -26,8 +26,9 @@ test('BDC command bytes, temperature conversion and one-cycle timer', () => {
     const cfg = { autoEnabled: true, belowTemp: 8, coldDwell: 0,
         wheelAuto: true, wheelMins: 3, seatDriver: false, seatPassenger: false };
     const planner = new ComfortAuto();
-    assert.deepEqual(planner.step({now: 100000, tempC: 5, tempAt: 100000, cfg})
-        .map(x => x.type), ['ON']);
+    const intents = planner.step({now: 100000, tempC: 5, tempAt: 100000, cfg});
+    assert.deepEqual(intents.map(x => x.type), ['ON']);
+    planner.acknowledge(intents[0], true, 100000);
     assert.deepEqual(planner.step({now: 280000, tempC: 5, tempAt: 100000, cfg})
         .map(x => x.type), ['OFF']);
 });

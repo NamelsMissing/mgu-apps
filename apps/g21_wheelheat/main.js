@@ -5,11 +5,10 @@ const path = require('path');
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const B = require('./logic');
-const { ComfortAuto } = require('./comfort_auto');
+const { ComfortAuto, START_WINDOW_MS } = require('./comfort_auto');
 const { SafeDiag, bytes } = require('./safe_diag');
 const QR = require('./qr_log');
 const Cycle = require('./cycle_policy');
-const { seatOnWithBusyRetry } = require('./seat_retry');
 
 // Settings is automatically provided as ONE native tab by the renderer.
 const TABS = ['Comfort', 'Diagnostics', 'Log', 'QR Log'];
@@ -334,6 +333,18 @@ mgu.run({
         async function sendIntent(intent) {
             if (intent.type === 'OFF' && !acknowledged.has(intent.device)) return false;
             const generation = cancelGeneration;
+            const ignition = cycle.onAt;
+            intent.retryable = false;
+            const startAllowed = () => {
+                if (intent.type !== 'ON') return true;
+                const c = config(), current = tempReading(Date.now());
+                const selected = intent.device === 'Steering wheel' ? c.wheelAuto :
+                    intent.device === 'Driver seat' ? c.seatDriver : c.seatPassenger;
+                return Date.now() < intent.startUntil && selected &&
+                    current.value !== null && Number.isFinite(current.value) &&
+                    current.value <= c.belowTemp && Date.now() - current.at <= 120000;
+            };
+            if (!startAllowed()) return false;
             if (cycle.mode !== 'on' ||
                 (intent.type !== 'OFF' && !cycle.mayContinue())) {
                 record('BLOCK', intent.device + ' ' + intent.type +
@@ -341,6 +352,7 @@ mgu.run({
                 return false;
             }
             if (!permitted() || !ctl.online || !ctl.motionKnown) {
+                intent.retryable = permitted() && startAllowed();
                 lastAction = intent.device + ': NOT sent (permission / BDC / speed-signal check).';
                 ctx.log.warn('[AUTO BLOCKED] ' + lastAction);
                 record('BLOCK', lastAction);
@@ -355,40 +367,51 @@ mgu.run({
             // The command can run while moving, but stale speed data blocks it.
             const remaining = 3000 - (Date.now() - ctl.lastWriteAt);
             if (remaining > 0) await wait(remaining);
-            if (!permitted() || !ctl.motionKnown || !ctl.online ||
-                cycle.mode !== 'on' || (intent.type !== 'OFF' &&
+            if (!permitted() || !ctl.motionKnown || !ctl.online || !startAllowed() ||
+                cycle.mode !== 'on' || cycle.onAt !== ignition || (intent.type !== 'OFF' &&
                     (generation !== cancelGeneration || !cycle.mayContinue()))) {
+                intent.retryable = permitted() && cycle.mode === 'on' && cycle.onAt === ignition &&
+                    generation === cancelGeneration && cycle.mayContinue() && startAllowed();
                 lastAction = intent.device + ': NOT sent (conditions changed).';
                 record('BLOCK', lastAction);
                 return false;
             }
             if (!ctl.verified) await ctl.read(B.DID_HEAT);
-            if (!ctl.verified || !ctl.motionKnown || !permitted() ||
-                cycle.mode !== 'on' || (intent.type !== 'OFF' &&
+            if (!ctl.verified || !ctl.motionKnown || !permitted() || !startAllowed() ||
+                cycle.mode !== 'on' || cycle.onAt !== ignition || (intent.type !== 'OFF' &&
                     (generation !== cancelGeneration || !cycle.mayContinue()))) {
+                intent.retryable = permitted() && cycle.mode === 'on' && cycle.onAt === ignition &&
+                    generation === cancelGeneration && cycle.mayContinue() && startAllowed() &&
+                    (!ctl.verified ? /timeout|temporarily_not_accepted|busy|unavailable|no ecu response|cooldown/i.test(ctl.info) :
+                        !ctl.motionKnown);
                 lastAction = intent.device + ': NOT sent (' + ctl.info + ').';
                 record('BLOCK', lastAction);
                 return false;
             }
             const stillAllowed = () => permitted() && ctl.online && ctl.motionKnown &&
-                cycle.mode === 'on' && (intent.type === 'OFF' ||
+                cycle.mode === 'on' && cycle.onAt === ignition && startAllowed() && (intent.type === 'OFF' ||
                     (generation === cancelGeneration && cycle.mayContinue()));
             const attemptWrite = async attempt => {
                 if (!stillAllowed()) return { ok: false, nrc: null, blocked: true };
                 if (!ctl.verified) await ctl.read(B.DID_HEAT);
-                if (!stillAllowed() || !ctl.verified)
+                if (!stillAllowed() || !ctl.verified) {
+                    intent.retryable = stillAllowed() &&
+                        /timeout|temporarily_not_accepted|busy|unavailable|no ecu response|cooldown/i.test(ctl.info);
                     return { ok: false, nrc: null, blocked: true };
+                }
                 const accepted = await ctl.autoWrite(data, intent.device + ' ' + intent.type);
                 lastAction = (accepted ? 'BDC ACK' : 'NOT CONFIRMED') + ': ' + intent.device + ' ' +
                     intent.type + ' (2E ' + bytes(data) + ') attempt=' + attempt;
                 ctx.log.info('[AUTO LIVE] ' + lastAction);
                 record(accepted ? 'ECU ACK' : 'ECU REJECT', lastAction + ' [' + ctl.info + ']');
+                intent.retryable = !accepted && stillAllowed() &&
+                    (ctl.lastNrc === 0x21 || (!ctl.lastWriteAttempted &&
+                        /busy|cooldown|unavailable|stale|read bdc/i.test(ctl.info)));
+                if (!accepted && ctl.lastWriteAttempted && ctl.lastNrc === null)
+                    record('WRITE UNCONFIRMED', intent.device + ': outcome unknown; no blind ON retry');
                 return { ok: accepted, nrc: ctl.lastNrc };
             };
-            const result = await seatOnWithBusyRetry({
-                device: intent.device, type: intent.type, send: attemptWrite,
-                allowed: stillAllowed, wait, event: record,
-            });
+            const result = await attemptWrite(intent.attempt || 1);
             const ok = result.ok;
             if (ok && (intent.type === 'ON' || intent.type === 'EXTEND')) acknowledged.add(intent.device);
             if (ok && intent.type === 'OFF') acknowledged.delete(intent.device);
@@ -470,6 +493,8 @@ mgu.run({
             busy = true;
             try {
                 const now = Date.now(), cfg = config(), reading = tempReading(now);
+                const ignition = cycle.onAt;
+                cfg.startUntil = ignition + START_WINDOW_MS;
                 // STOP has priority over any new work. OFF writes are limited
                 // to heaters with a positive ACK for our own earlier ON/EXTEND.
                 for (const name of Array.from(pendingStops)) {
@@ -487,7 +512,7 @@ mgu.run({
                     }
                 }
                 const canStart = cfg.autoEnabled && permitted() && cycle.canStart() &&
-                    ctl.online && ctl.motionKnown;
+                    now < cfg.startUntil && ctl.online && ctl.motionKnown;
                 // Start, extend or stop a confirmed comfort-heating cycle while
                 // moving as long as speed data are fresh and BDC accepts writes.
                 const enabledForPlanner = cfg.autoEnabled && cycle.mayContinue() &&
@@ -500,7 +525,9 @@ mgu.run({
                     : now - reading.at > 120000 ? 'STALE TEMP'
                     : !ctl.online ? 'NO TASU CONNECTION'
                     : !ctl.motionKnown ? 'NO FRESH SPEED'
-                    : auto.fired ? 'CYCLE ALREADY RUN THIS DRIVE' :
+                    : Array.from(auto.active.values()).some(s => s.pending) ? 'START RETRY PENDING'
+                    : auto.fired ? 'CYCLE RESERVED / ALREADY ATTEMPTED THIS DRIVE'
+                    : now >= cfg.startUntil ? 'START WINDOW EXPIRED' :
                         reading.value > cfg.belowTemp ? 'ABOVE LIMIT' : 'COLD DWELL / READY';
                 if (plannerStatus !== lastPlannerStatus) {
                     record('AUTO', plannerStatus + '; T=' +
@@ -510,8 +537,12 @@ mgu.run({
                     lastPlannerStatus = plannerStatus;
                 }
                 const wasFired = auto.fired;
+                const pendingBefore = Array.from(auto.active).filter(([, s]) => s.pending).map(([name]) => name);
                 const intents = auto.step({ now, tempC: reading.value, tempAt: reading.at,
                     cfg: Object.assign({}, cfg, { autoEnabled: enabledForPlanner }) });
+                for (const name of pendingBefore) {
+                    if (!auto.active.has(name)) record('START EXPIRED', name + ': retry window ended or settings changed');
+                }
                 if (!wasFired && auto.fired) {
                     if (!cycle.consume() || !persistCycle()) {
                         auto.cancel();
@@ -519,17 +550,26 @@ mgu.run({
                         record('CYCLE BLOCKED', 'Failed to persist one-cycle marker; no ECU requests sent');
                         return;
                     }
-                    cycleReason = 'PLANNER FIRED ONCE FOR IGNITION ' +
+                    cycleReason = 'START WINDOW RESERVED FOR IGNITION ' +
                         new Date(cycle.onAt).toISOString() + '; intents=' + intents.length +
-                        '; no ECU confirmation yet; no repeats during this ignition';
+                        '; no ECU confirmation yet; bounded per-device retries only';
                     record('CYCLE', cycleReason);
                 }
                 for (const intent of intents)
                     record('PLAN', intent.device + ' ' + intent.type +
                         ' planned (NOT YET ECU CONFIRMED)');
                 for (const intent of intents) {
+                    if (cycle.onAt !== ignition || cycle.mode !== 'on') break;
                     const ok = await sendIntent(intent);
-                    auto.acknowledge(intent, ok, Date.now());
+                    if (cycle.onAt !== ignition || cycle.mode !== 'on') break;
+                    auto.acknowledge(intent, ok, Date.now(), intent.retryable === true);
+                    if (intent.type === 'ON' && !ok) {
+                        const pending = auto.active.get(intent.device);
+                        record(pending && pending.pending ? 'START RETRY' : 'START FAILED',
+                            intent.device + ' attempt=' + intent.attempt +
+                            (pending && pending.pending ? '; retry in 8s (fresh guards required)' :
+                                '; no further automatic ON this ignition'));
+                    }
                 }
             } catch (e) {
                 lastAction = 'Automatic heating error: ' + (e.message || String(e));
@@ -583,8 +623,10 @@ mgu.run({
             const fresh = r.value !== null && now - r.at <= 120000;
             const temp = fresh ? r.value.toFixed(1) + ' °C' : 'unavailable';
             const startReady = c.autoEnabled && permitted() && cycle.canStart() &&
+                now < cycle.onAt + START_WINDOW_MS &&
                 ctl.online && ctl.motionKnown && fresh;
             const status = !c.autoEnabled ? 'AUTOMATION OFF'
+                    : Array.from(auto.active.values()).some(s => s.pending) ? 'WAITING FOR BDC / START RETRY'
                     : auto.active.size ? 'HEATING SCHEDULE ACTIVE'
                     : cycle.mode !== 'on' ? 'WAITING FOR VERIFIED IGNITION ON'
                     : !cycle.mayContinue() ? 'CANCELLED FOR THIS DRIVE'

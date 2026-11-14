@@ -17,6 +17,7 @@ class SafeDiag {
         this.pending = null;
         this.busy = false;
         this.lastWriteAt = 0;
+        this.lastWriteAttempted = false;
         this.lastNrc = null; // diagnostic reason from the latest attempted 0x2E write
         this.readbacks = Object.create(null); // actual 0x22 replies, NEVER app-command state
     }
@@ -117,12 +118,14 @@ class SafeDiag {
         // Never carry an older ECU NRC into a new attempt that is rejected
         // locally by the readiness gate (e.g. a stale speed signal).
         this.lastNrc = null;
+        this.lastWriteAttempted = false;
         if (this.busy) { this.info = 'BDC busy'; return false; }
         const reason = this.autoWriteReady;
         if (reason) { this.info = reason; return false; }
         this.busy = true;
         this.info = 'Sending ' + label + ' to BDC ...';
         try {
+            this.lastWriteAttempted = true;
             const u = await this.diag.physical(this.target, 0x2E, data, 2300,
                 replyTo(0x2E, data), { maxRetries: 0 });
             if (u && u[0] === 0x6E && u[1] === data[0] && u[2] === data[1]) {
