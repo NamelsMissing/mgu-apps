@@ -3,8 +3,6 @@
 // no second RAMSES participant and no reconfiguration of Waze on cluster.
 const { ClusterRender } = require('./cluster_render_client.js');
 const fragmentShader = require('./cluster_shader.js');
-const g80Shader = require('./g80_panel_shader.js');
-const sixwbShader = require('./sixwb_panel_shader.js');
 const probeShader = require('./panel_probe_shader.js');
 const { PALETTE, resolveColor, resolve6WBColor, colorHex } = require('./cluster_colors.js');
 const COLORS = Object.keys(PALETTE).reduce((m, k) => { m[k] = PALETTE[k].concat([1]); return m; }, {});
@@ -19,6 +17,19 @@ void main() {
   vec3 c=mix(vec3(0.03,0.26,0.17),vec3(0.36,1.0,0.60),inside);
   gl_FragColor=vec4(c,outside);
 }`;
+// Independent tiny effects: inspired by the architecture (not the code) of
+// Cluster Layouts and Cluster Themes. No full-screen fragment shader here.
+const PIECE_FS = `#version 100
+precision mediump float;
+varying vec2 v_uv;
+uniform vec4 u_color;
+uniform float u_kind;
+void main() {
+    vec2 p = v_uv - vec2(0.5);
+    float a = step(abs(p.x),0.46)*step(abs(p.y),0.39);
+    if (u_kind > 0.5) a = 1.0-smoothstep(0.035,0.055,abs(length(p)-0.34));
+    gl_FragColor = vec4(u_color.rgb, a*u_color.a);
+}`;
 const MODES = { stock: 0, sport: 1, classic: 2, minimal: 3, g80: 4, oem: 5, sixwb: 6 };
 const finite = (x) => typeof x === 'number' && Number.isFinite(x);
 const PANEL_TEST_MS = 12000;
@@ -31,6 +42,7 @@ class ClusterLayers {
         this.cr = client || new ClusterRender('custom_cluster', socket);
         this.effectRef = 0;
         this.panelRef = 0;
+        this.panelRefs = [];
         this.badgeRef = 0;
         this.ready = false;
         this.layerState = 'inactive';
@@ -78,8 +90,8 @@ class ClusterLayers {
             this.panelLayerState = 'disconnected';
         });
         this.cr.on('layer', (ref, state, reason) => {
-            if (ref === this.panelRef) {
-                this.tracePanel('panel layer ' + state + (reason ? ': ' + reason : ''));
+            if (this.panelRefs.indexOf(ref) >= 0 || ref === this.panelRef && ref !== 0) {
+                this.tracePanel('panel layer ref=' + ref + ' ' + state + (reason ? ': ' + reason : ''));
                 this.panelLayerState = state;
                 this.panelLayerReason = reason || '';
                 this.log.info('panel layer ' + state + (reason ? ': ' + reason : ''));
@@ -149,7 +161,11 @@ class ClusterLayers {
         this.armedUntil = 0;
         this.activeTestMode = '';
         this.suspended = true;
-        if (this.panelRef) { this.cr.drop(this.panelRef); this.panelRef = 0; }
+        const owned = this.panelRefs.length ? this.panelRefs.slice() :
+            (this.panelRef ? [this.panelRef] : []);
+        this.panelRefs = [];
+        this.panelRef = 0;
+        owned.forEach(ref => this.cr.drop(ref));
         if (this.effectRef) { this.cr.drop(this.effectRef); this.effectRef = 0; }
         if (this.badgeRef) { this.cr.drop(this.badgeRef); this.badgeRef = 0; }
         this.recoveryRequestedAt = Date.now();
@@ -261,7 +277,8 @@ class ClusterLayers {
         }
         this.suspended = false;
         this.activePanelTarget = target;
-        this.activeTestMode = this.options.panelTestMode === 'design' ? 'design' : 'probe';
+        // Saved 'design' settings are migrated to the bounded layer probe.
+        this.activeTestMode = ['pieces','design'].indexOf(this.options.panelTestMode) >= 0 ? 'pieces' : 'probe';
         this.panelTargetState = 'requesting';
         this.panelTargetReason = '';
         this.panelLayerState = 'requesting';
@@ -289,25 +306,45 @@ class ClusterLayers {
         const mode = MODES[this.options.layout] || 0;
         const valid = this.live();
         if (this.armedUntil && (!this.parked() || Date.now() >= this.armedUntil)) {
-            this.disarm(this.parked() ? 'Test timeout — original cluster restored' : this.testGuard());
+            this.disarm(this.parked() ? 'Test timeout — release requested' : this.testGuard());
+            return;
         }
         const panelActive = (mode === 4 || mode === 5 || mode === 6) && this.armedUntil > Date.now() && this.parked();
         if (panelActive && !this.panelRef) {
-            const probe = this.activeTestMode === 'probe';
-            this.panelRef = this.cr.effect({ target: this.activePanelTarget, klass: 'content',
-                contend: true, guide_hold: false,
-                x: probe ? 86 : 0, y: probe ? 300 : 0,
-                w: probe ? 260 : 1920, h: probe ? 110 : 720,
-                fs: probe ? probeShader : mode === 6 ? sixwbShader : g80Shader });
-            this.lastSent = 0;
-            if (!this.panelRef) {
-                this.tracePanel('renderer refused panel layer creation');
-                this.disarmReason = 'Renderer refused panel layer creation';
-                this.armedUntil = 0;
-                this.panelLayerState = 'creation failed';
+            const multiple = this.activeTestMode === 'pieces';
+            const specs = multiple ? [
+                { x: 95, y: 300, w: 100, h: 100, color: [0.1, 0.9, 0.9, 1], kind: 1 },
+                { x: 205, y: 300, w: 100, h: 100, color: [0.9, 0.45, 0.12, 1], kind: 0 },
+                { x: 95, y: 412, w: 210, h: 36, color: [0.3, 0.85, 0.3, 1], kind: 0 },
+            ] : [{ x: 86, y: 300, w: 260, h: 110 }];
+            try {
+                // Build hidden; initialize every shader before the first
+                // visible request. All pieces stay outside the map window.
+                specs.forEach((p, i) => {
+                    const ref = this.cr.effect({ target: this.activePanelTarget,
+                        klass: 'overlay', z: i, contend: false, guide_hold: false,
+                        visible: false, x: p.x, y: p.y, w: p.w, h: p.h,
+                        fs: multiple ? PIECE_FS : probeShader });
+                    if (!ref) throw Error('piece ' + i + ' refused');
+                    this.panelRefs.push(ref);
+                    if (!this.panelRef) this.panelRef = ref;
+                    if (multiple) {
+                        this.cr.uniform(ref, 'u_color', p.color);
+                        this.cr.uniform(ref, 'u_kind', [p.kind]);
+                    } else {
+                        this.cr.uniform(ref, 'u_accent', resolveColor(this.options, Date.now()));
+                    }
+                });
+                this.panelRefs.forEach(ref => this.cr.set(ref, { visible: true }));
+                this.tracePanel('small non-contending layers initialized and shown: ' +
+                    this.panelRefs.join(',') + '; OEM media unverified');
+            } catch (e) {
+                this.tracePanel('piece creation failed: ' + String(e.message || e));
+                this.restoreOriginal();
+                return;
             }
         }
-        if (!panelActive && this.panelRef) this.disarm('Original cluster restored');
+        if (!panelActive && this.panelRef) { this.disarm('Panel release requested'); return; }
         const show = mode > 0 && mode < 4 && valid;
         if (show && !this.effectRef) {
             this.effectRef = this.cr.effect({ target: 'map', klass: 'overlay',
@@ -317,20 +354,6 @@ class ClusterLayers {
                 fs: fragmentShader });
         }
         if (!show && this.effectRef) { this.cr.drop(this.effectRef); this.effectRef = 0; }
-        if (panelActive && this.panelRef && Date.now() - this.lastSent >= 150) {
-            const d = this.data;
-            if (this.activeTestMode !== 'probe') {
-                this.cr.uniform(this.panelRef, 'u_values', [d.speed, d.rpm, finite(d.oil) ? d.oil : -1,
-                    finite(d.coolant) ? d.coolant : -1]);
-                const sixwbMode = { comfort: 0, sport: 1, eco: 2 }[this.options.sixwbTheme] || 0;
-                this.cr.uniform(this.panelRef, 'u_options', [1,
-                    finite(d.gear) ? d.gear : 0, this.options.phoneBadge && this.phoneOpen ? 1 : 0,
-                    mode === 6 ? sixwbMode : mode === 5 ? 1 : 0]);
-            }
-            this.cr.uniform(this.panelRef, 'u_accent', mode === 6 ? resolve6WBColor(this.options, Date.now())
-                : resolveColor(this.options, Date.now()));
-            this.lastSent = Date.now();
-        }
         if (show && this.effectRef && Date.now() - this.lastSent >= 150) {
             const d = this.data;
             this.cr.uniform(this.effectRef, 'u_values', [d.speed, d.rpm, finite(d.oil) ? d.oil : -1,
@@ -360,7 +383,7 @@ class ClusterLayers {
             sampleAgeSeconds: this.lastSample ? Math.max(0, Math.floor((Date.now() - this.lastSample) / 1000)) : null,
             speedAgeSeconds: finite(this.latestSignalTimes.speed) ? Math.max(0, Math.floor((Date.now() - this.latestSignalTimes.speed) / 1000)) : null,
             rpmAgeSeconds: finite(this.latestSignalTimes.rpm) ? Math.max(0, Math.floor((Date.now() - this.latestSignalTimes.rpm) / 1000)) : null,
-            panelActive: !!this.panelRef, panelLayer: this.panelLayerState,
+            panelActive: !!this.panelRef, panelRefs: this.panelRefs.slice(), panelLayer: this.panelLayerState,
             panelLayerReason: this.panelLayerReason,
             panelTarget: this.activePanelTarget, panelTargetState: this.panelTargetState,
             panelTargetReason: this.panelTargetReason, activeTestMode: this.activeTestMode,
