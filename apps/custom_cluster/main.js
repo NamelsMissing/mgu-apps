@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Custom Cluster 0.6.6 - KOMBI-only test control and lightweight main status page.
+ * Custom Cluster 0.6.7 - KOMBI-only test control and lightweight main status page.
  * Stock is the default. Real values only can reach cluster-render; emulator
  * and demo values stay exclusively on the centre-screen preview.
  */
@@ -140,6 +140,7 @@ mgu.run({
                 colorBrightness: settings.get('colorBrightness'), cycleSeconds: settings.get('cycleSeconds'),
                 phoneBadge: !!settings.get('phoneBadge'), wazeMap: settings.get('wazeMap'),
                 enablePanelTests: !!settings.get('enablePanelTests'),
+                coverOriginal: settings.get('coverOriginal') !== false,
                 panelTestMode: 'selected_layout', panelTarget: 'panel' });
             bridge.setEnabled(!!settings.get('phoneBridge'));
             waze.setChoice(settings.get('wazeMap'));
@@ -150,6 +151,7 @@ mgu.run({
             updateButtons();
             journal.write('Settings: layout=' + settings.get('layout') +
                 ' panelOptIn=' + !!settings.get('enablePanelTests') +
+                ' cover=' + (settings.get('coverOriginal') !== false) +
                 ' test=selected_layout target=panel');
             testNotice = 'Settings changed. Test KOMBI uses the selected layout.';
         });

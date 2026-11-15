@@ -1,4 +1,14 @@
-# Custom Cluster 0.6.6 — BMW G21 / MGU iDrive 7
+# Custom Cluster 0.6.7 — BMW G21 / MGU iDrive 7
+
+
+## 0.6.7 — cover plates, lit scales, gear and temperatures
+
+- **Cover original dials (new setting, default On):** during the parked KOMBI test each side gets one opaque, rounded plate (x 8..412 and 1508..1912, y 48..596) beneath our artwork, so the BMW dial graphics in that area should no longer show through. The edge towards the map fades out. The nominal centre map aperture (x 416..1504), the top row (y < 48) and the bottom strip (y >= 600) stay free; parts of the original dials outside these rectangles may still be visible. Applies to all six layouts including 6WB. **Settings → Cover original dials during KOMBI test** turns it off. According to the upstream `cluster-render` mapping the panel layer sits below the BMW telltales, but real telltale visibility above the plate is **not verified** on this car.
+- **Lit scale instead of a moving dot:** G21, G80, M Sport and Classic now light their scale in the accent colour from 0 up to the live value with a short white head (one small GLSL effect per side, updated by a single uniform). The face track is drawn unlit. All shader maths uses normalised coordinates, because KOMBI GPUs may implement `mediump` as fp16. Minimal keeps its bar in the readout.
+- **More live values:** the speed side shows the selector/gear (P, R, N, D or D1–D9 when the gearbox reports it), the rev-counter side shows oil and coolant temperature from the already subscribed `statusEngineTemperature`. Missing values show `--`. The readout has a transparent background and sits inside the scale contour. Changed values upload only the small readout texture.
+- **G21/G80 look:** fine graduation between the labelled values, labels and ticks oriented towards the dial centre (they no longer sit on the scale), and an approximate red zone on the rev counter from 4500 rpm. Still an original approximation from the tester's photo, not BMW artwork; a new clean photo of the original cluster would allow a closer match.
+- Layer count per test: up to 8 (6 for Minimal; 6WB: 6), all initialised hidden and released together exactly as before. 12-second limit, P/fresh-signal guard, opt-in and release acknowledgement are unchanged.
+- Verified on PC only: unit tests and an emulated 1920×720 composition of all five shared layouts. GLSL compilation on the real KOMBI GPU, the plate's effect on the OEM display, telltale visibility and recovery still need a parked test on the car.
 
 
 ## 0.6.6 — one KOMBI test, no legacy test selector

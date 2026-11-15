@@ -101,7 +101,7 @@ class ClusterLayers {
         this.options = { layout: 'stock', accent: 'm', phoneBadge: false, wazeMap: 'auto',
             sixwbTheme: 'comfort', sixwbColorSource: 'original',
             colorMode: 'palette', colorBrightness: 100,
-            panelTestMode: 'probe', panelTarget: 'panel' };
+            panelTestMode: 'probe', panelTarget: 'panel', coverOriginal: true };
         this.phoneOpen = false;
         this.lastSent = 0;
         this.armedUntil = 0;
@@ -279,7 +279,8 @@ class ClusterLayers {
                  previous.rgbGreen !== options.rgbGreen ||
                  previous.rgbBlue !== options.rgbBlue ||
                  previous.colorBrightness !== options.colorBrightness ||
-                 previous.cycleSeconds !== options.cycleSeconds)))
+                 previous.cycleSeconds !== options.cycleSeconds ||
+                 previous.coverOriginal !== options.coverOriginal)))
             this.disarm('Panel settings changed');
         this.apply();
     }
@@ -457,7 +458,9 @@ class ClusterLayers {
                 this.panelRefs.forEach(ref => this.cr.set(ref, {visible:true}));
                 this.lastSent = Date.now();
                 this.tracePanel('selected artwork ' + this.options.layout +
-                    ': ' + this.panelRefs.length + ' side layers; visibility requested; map not drawn over');
+                    ': ' + this.panelRefs.length + ' side layers' +
+                    (this.options.coverOriginal !== false ? ' incl. 2 cover plates' : ', no cover plates') +
+                    '; visibility requested; map not drawn over');
             } catch(e) {
                 this.tracePanel('selected layout creation failed: ' + String(e.message || e));
                 this.restoreOriginal();

@@ -64,15 +64,25 @@ function fraction(pos,data) {
 function buildDials(cr,target,data,options,accent,accentHex,track,CanvasOverride) {
     const Canvas=CanvasOverride || require('./kit/canvas').Canvas;
     const needles=[];
+    const cover=options.coverOriginal!==false;
     POSITIONS.forEach((pos,i)=>{
         const pixels=face(pos,accentHex,options.sixwbTheme,Canvas);
         const common={target,klass:'overlay',contend:false,guide_hold:false,
             visible:false,x:pos.x,y:pos.y,w:DRAW_SIZE,h:DRAW_SIZE};
-        const faceRef=cr.image(Object.assign({},common,{z:i*2,iw:SIZE,ih:SIZE,sampling:'bilinear'}));
+        // Same bounded cover plate as the shared side layouts (0.6.7).
+        if(cover){
+            const { COVERS, coverShader } = require('./layout_panels.js');
+            const c=COVERS[i];
+            const plate=cr.effect(Object.assign({},common,{x:c.x,y:c.y,w:c.w,h:c.h,z:i*3,fs:coverShader(c.inner)}));
+            if(!plate) throw Error('6WB '+pos.key+' cover refused');
+            track(plate);
+            cr.uniform(plate,'u_color',[0.039,0.063,0.094,1]);
+        }
+        const faceRef=cr.image(Object.assign({},common,{z:i*3+1,iw:SIZE,ih:SIZE,sampling:'bilinear'}));
         if(!faceRef) throw Error('6WB '+pos.key+' face refused');
         track(faceRef);
         if(!cr.pixels(faceRef,null,pixels)) throw Error('6WB '+pos.key+' pixels refused');
-        const needleRef=cr.effect(Object.assign({},common,{z:i*2+1,fs:NEEDLE_FS}));
+        const needleRef=cr.effect(Object.assign({},common,{z:i*3+2,fs:NEEDLE_FS}));
         if(!needleRef) throw Error('6WB '+pos.key+' needle refused');
         track(needleRef);
         const v=fraction(pos,data);
