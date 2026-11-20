@@ -200,7 +200,7 @@ mgu.run({
                 // BMW's Drive Recorder layout doesn't show images in narrow widgets.
                 if (state.widgetIndex[key] !== 'small') {
                     ctx.widget.set(inst.spawnId, 'Title', 'GIF Home', 'Text');
-                    ctx.widget.set(inst.spawnId, 'TextRecordings', state.name, 'Text');
+                    ctx.widget.set(inst.spawnId, 'TextRecordings', state.name, 'Text', true);
                     ctx.widget.set(inst.spawnId, 'TextCam', 'Tap to open', 'Text');
                     state.widgetIndex[key] = 'small';
                 }
