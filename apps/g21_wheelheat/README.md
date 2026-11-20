@@ -23,15 +23,15 @@ the standard BMW identification `22 F150` (read-only, no VIN, no serial numbers)
 | Address | Control unit | Used for |
 | --- | --- | --- |
 | `0x40` | BDC | steering wheel `D074`, seat heating `E432` / `E430` on cars without seat modules |
-| `0x6D` / `0x6E` | SMFA / SMBF (seat modules) | detection and read-only seat level `D714` |
+| `0x6D` / `0x6E` | SMFA / SMBF (seat modules) | detection and seat level `D714`. Experimental driver control via SMFA. |
 | `0x78` | IHKA | detection and read-only seat level `D8DB` (cross-check) |
 
-Route per channel (since 0.5.2):
+Route per channel:
 
 | Route | When | Automatic heating |
 | --- | --- | --- |
 | **BDC** | BDC seat DID readable **and** the matching seat module confirmed absent | yes (normal BDC readback gate) |
-| **Seat module** | seat module answers | no, read-only display |
+| **Seat module** | seat module answers | driver levels 1–3 with the experimental setting and verified FAS_G11 configuration. Read-only for other seat modules. |
 | **Conflict** | BDC seat DID readable **and** seat module answers | no (architecture not confirmed) |
 | **Unresolved** | seat module not identified yet, or BDC seat DID not readable | no, detection retries |
 | **Not available** | NRC 0x31 | no |
@@ -44,10 +44,9 @@ Route per channel (since 0.5.2):
 - On the first start after install or after a BDC change, the one-time plan waits up to 60 s after
   ignition ON for the seat routes (two detection runs). Afterwards it plans with what is known.
 - Seat ON/EXTEND is checked against the route again right before every write. If a route stops being
-  verified during a session, the seat is taken out of the plan and our own acknowledged ON is undone
-  with a BDC OFF. OFF is never blocked by the route.
+  verified during a session, the app cancels the schedule and requests a guarded OFF through the
+  same control unit that acknowledged ON.
 - The steering wheel is only left out on NRC 0x31; otherwise the normal BDC readback gate decides.
-- Seat modules and IHKA are **read-only**: no 0x2E, no routines, no session change.
 
 The profile is saved in the app settings. On the next start only the BDC identification is read
 again; a complete profile of the same BDC is reused, an incomplete one is completed, a different BDC
@@ -61,11 +60,34 @@ side. Missing, stale, invalid or unreadable values are never shown as OFF. Varia
 `FAS_G11`, `BFS_G11` and `IHKA_G05` are captured raw only. The QR log contains the last 10 complete
 `D714` / `D8DB` replies (ECU address, SGBD index/variant, state, decoded values if valid).
 
-The DIDs come from the SGBDs, see [`docs/sgbd-seat-heating.md`](../../docs/sgbd-seat-heating.md).
-**None of this is confirmed on a real car yet.** A positive BDC ACK does not prove physical heating.
+The DIDs come from the SGBDs. Grot110 confirmed both seat readbacks in Heating Comfort 0.5.2 and
+manually tested SMFA level 2, OFF and the renewable timeout on a 2021 G05. The app's automatic SMFA
+sequence has been tested in simulation. See [issue #2](https://github.com/NamelsMissing/mgu-apps/issues/2)
+and [the diagnostic definitions](../../docs/sgbd-seat-heating.md).
 
 The "Test next ignition ON" switch also works while the app is already running, and it applies
 to exactly one ignition.
+
+## Experimental SMFA driver heating (0.5.3)
+
+Enable **Experimental SMFA driver heating** and **Driver seat heating**, then select the desired
+**Seat heating level** (1–3). The experimental switch defaults to off. The app requires a verified
+BDC_G05 profile with NRC 0x22 on the driver's BDC seat path, and a FAS_G11 driver seat module
+with 2-circuit heating coded.
+
+The first request requires a fresh, valid OFF reading. The app renews the same acknowledged level
+about once per minute when the remaining duration needs it. Every renewal and OFF checks the module's
+identity and current level. If the module reports a different level, the app relinquishes control.
+A manual selection of the same level produces the same readback. Changing the configured level
+ends the current cycle, and the new setting applies at the next eligible start.
+
+Grot's vehicle test confirmed level 2. Levels 1 and 3 use the documented D714 action values.
+The app's automatic sequence for all three levels has been tested in simulation.
+
+The app requests OFF when its configured duration ends, when the user presses STOP or when the
+setting is disabled. OFF requires fresh vehicle speed and an active ignition. On ignition shutdown,
+process termination or missing diagnostic access, the app relies on the module's approximately
+120-second timeout observed on the test car.
 
 ## Install and enable
 

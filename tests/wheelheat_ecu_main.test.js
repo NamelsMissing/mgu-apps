@@ -67,7 +67,10 @@ function boot(t, car, settingsOverride, dir) {
                 if (typeof r === 'function') r = r(counts[key]);
                 return r === undefined ? null : r;
             }
-            if (sid === 0x2E) return [0x6E, data[0], data[1]];
+            if (sid === 0x2E) {
+                if (car.write) return car.write(addr, data);
+                return [0x6E, data[0], data[1]];
+            }
             return null;
         }
     }
@@ -102,9 +105,10 @@ function boot(t, car, settingsOverride, dir) {
         catch (_) { return []; }
     };
     const signal = (iface, name, value) => watchers[iface] && watchers[iface][name] && watchers[iface][name](value);
-    const tick = async ms => {
+    const tick = async (ms, ...otherApps) => {
         for (let done = 0; done < ms; done += 250) {
-            signal('de.bmw.infotainment.vehicle.Vehicle2', 'statusCarSpeed2', { speedVehicleCentreOfGravity: 0 });
+            for (const update of [signal, ...otherApps.map(app => app.signal)])
+                update('de.bmw.infotainment.vehicle.Vehicle2', 'statusCarSpeed2', { speedVehicleCentreOfGravity: 0 });
             t.mock.timers.tick(250);
             for (let i = 0; i < 12; i++) await new Promise(r => setImmediate(r));
         }
@@ -119,11 +123,29 @@ function boot(t, car, settingsOverride, dir) {
         return drawn.slice();
     };
     const writes = () => requests.filter(r => r.sid === 0x2E);
-    return { dir, values, requests, writes, clicks, events, tick, drive, signal, screen,
+    return { dir, values, settings, requests, writes, clicks, events, tick, drive, signal, screen,
         qr: () => qrText, kinds: k => events().filter(e => e.kind === k) };
 }
 function withTimers(t) { t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: T0 }); }
 const wrote = (app, did) => app.writes().filter(w => w.did === did);
+const smfaSettings = { smfaDriverAuto: true, seatLevel: 2, wheelAuto: false };
+
+function renewableSmfa(initialLevel = 0) {
+    let level = initialLevel;
+    let expiresAt = Infinity;
+    const car = Object.assign({}, G05, {
+        '6d:d714': () => pos(0xD714, Date.now() < expiresAt ? level : 0, 25, 0, 28, 0, 0, 0, 0),
+        write(addr, data) {
+            if (addr === 0x6D) {
+                level = data[2];
+                expiresAt = Date.now() + 120000;
+            }
+            return [0x6E, data[0], data[1]];
+        },
+        manualLevel(n) { level = n; expiresAt = Infinity; },
+    });
+    return car;
+}
 
 // --- scenarios -----------------------------------------------------------
 test('G05: wheel automated, seats skipped, no seat write and no seat retries', async t => {
@@ -164,6 +186,144 @@ test('G05: wheel automated, seats skipped, no seat write and no seat retries', a
     assert.match(qr, /IHKA 0x78 IHKA_G05 22 D8 DB -> 62 D8 DB( [0-9A-F]{2}){28} \[valid\] L=2 R=0/);
     assert.match(qr, /compare: consistent/);
     assert(!app.requests.some(r => r.did === 0xF190 || r.did === 0xF18C), 'no VIN / serial number');
+});
+
+for (const level of [1, 2, 3]) {
+    test('opted-in FAS_G11: renews level ' + level + ' for the configured duration, then sends a guarded OFF', async t => {
+        withTimers(t);
+        const app = boot(t, renewableSmfa(), Object.assign({}, smfaSettings, { wheelAuto: true, seatLevel: level }));
+        await app.drive(93);
+        await app.tick(300000);
+        const writes = wrote(app, 0xD714);
+        assert.deepEqual(writes.map(w => w.data[2]), [level, level, level, level, 0]);
+        assert.deepEqual(wrote(app, 0xD074).map(w => w.data[2]), [180, 0]);
+        assert.deepEqual(wrote(app, 0xE432).concat(wrote(app, 0xE430)), []);
+        for (const w of writes) {
+            assert.equal(w.addr, 0x6D);
+            assert.deepEqual(w.data, [0xD7, 0x14, w.data[2], 0, 0, 0, 0, 0, 0]);
+            const prior = app.requests[app.requests.indexOf(w) - 1];
+            assert.deepEqual([prior.addr, prior.sid, prior.did], [0x6D, 0x22, 0xD714]);
+        }
+        assert.deepEqual(writes.map(w => w.at - writes[0].at), [0, 60000, 120000, 180000, 240000]);
+    });
+}
+
+test('SMFA stays read-only without opt-in, with invalid levels and on a conflicting route', async t => {
+    withTimers(t);
+    const cases = [
+        [renewableSmfa(), { smfaDriverAuto: false }],
+        [renewableSmfa(), { seatLevel: 0 }],
+        [renewableSmfa(), { seatLevel: 254 }],
+        [Object.assign(renewableSmfa(), { '40:e432': G21['40:e432'] }), {}],
+        [Object.assign(renewableSmfa(), { '6d:f150': pos(0xF150, 0x0F, 0x2C, 0xB0) }), {}],
+    ];
+    const apps = cases.map(([car, cfg]) => boot(t, car, Object.assign({}, smfaSettings, cfg)));
+    for (const app of apps) await app.drive(93);
+    await apps[0].tick(20000, ...apps.slice(1));
+    for (const app of apps) assert.deepEqual(wrote(app, 0xD714), []);
+});
+
+test('SMFA needs a complete live OFF read and matching live coding before starting', async t => {
+    withTimers(t);
+    const apps = [
+        renewableSmfa(2),
+        Object.assign(renewableSmfa(), { '6d:d714': pos(0xD714, 0) }),
+        Object.assign(renewableSmfa(), { '6d:d701': n => D701(n === 1 ? 2 : 0) }),
+    ].map(car => boot(t, car, smfaSettings));
+    for (const app of apps) await app.drive(93);
+    await apps[0].tick(20000, ...apps.slice(1));
+    for (const app of apps) {
+        assert.deepEqual(wrote(app, 0xD714), []);
+        assert(app.kinds('START FAILED').some(e => /Driver seat/.test(e.message)));
+    }
+});
+
+test('SMFA yields to a manual level change and leaves that level alone on STOP', async t => {
+    withTimers(t);
+    const car = renewableSmfa();
+    const app = boot(t, car, Object.assign({}, smfaSettings, { seatLevel: 1 }));
+    await app.drive(93);
+    await app.tick(20000);
+    car.manualLevel(3);
+    await app.tick(70000);
+    app.clicks.BTN_STOP();
+    await app.tick(300000);
+    assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [1]);
+    assert(app.kinds('SMFA DIFFERENT').some(e => /D714 reports level 3/.test(e.message)));
+});
+
+test('changing the configured SMFA level stops the acknowledged level for this ignition', async t => {
+    withTimers(t);
+    const app = boot(t, renewableSmfa(), Object.assign({}, smfaSettings, { seatLevel: 3 }));
+    await app.drive(93);
+    await app.tick(20000);
+    app.settings.set('seatLevel', 1);
+    await app.tick(90000);
+    assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [3, 0]);
+});
+
+test('disabling either SMFA or overall automation sends OFF for the app-owned activation', async t => {
+    withTimers(t);
+    const apps = ['smfaDriverAuto', 'autoEnabled', 'seatDriver'].map(key =>
+        [key, boot(t, renewableSmfa(), smfaSettings)]);
+    for (const [, app] of apps) await app.drive(93);
+    const [first, ...others] = apps.map(([, app]) => app);
+    await first.tick(20000, ...others);
+    for (const [key, app] of apps) app.settings.set(key, false);
+    await first.tick(90000, ...others);
+    for (const [, app] of apps) assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [2, 0]);
+});
+
+test('SMFA STOP during an in-flight ON handles the late ACK with a guarded OFF', async t => {
+    withTimers(t);
+    const car = renewableSmfa();
+    const write = car.write;
+    let acknowledgeOn;
+    car.write = (addr, data) => {
+        const ack = write(addr, data);
+        return data[2] === 2 ? new Promise(resolve => { acknowledgeOn = () => resolve(ack); }) : ack;
+    };
+    const app = boot(t, car, smfaSettings);
+    await app.drive(93);
+    await app.tick(20000);
+    app.clicks.BTN_STOP();
+    acknowledgeOn();
+    await app.tick(90000);
+    assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [2, 0]);
+});
+
+test('SMFA never retries an unconfirmed ON and stops after a rejected renewal', async t => {
+    withTimers(t);
+    const unknown = renewableSmfa();
+    const unknownWrite = unknown.write;
+    unknown.write = (addr, data) => { unknownWrite(addr, data); return null; };
+    const rejected = renewableSmfa();
+    const write = rejected.write;
+    let onCount = 0;
+    rejected.write = (addr, data) => data[2] === 2 && ++onCount > 1 ? [0x7F, 0x2E, 0x22] : write(addr, data);
+    const app = boot(t, unknown, smfaSettings);
+    const second = boot(t, rejected, smfaSettings);
+    await app.drive(93);
+    await second.drive(93);
+    await app.tick(300000, second);
+    assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [2]);
+    assert.deepEqual(wrote(second, 0xD714).map(w => w.data[2]), [2, 2, 0]);
+});
+
+test('SMFA stops managing the seat when ignition ends or a suspension outlasts the ECU timer', async t => {
+    withTimers(t);
+    const car = renewableSmfa();
+    const app = boot(t, car, smfaSettings);
+    const shutdown = boot(t, renewableSmfa(), smfaSettings);
+    await app.drive(93);
+    await shutdown.drive(93);
+    await app.tick(20000, shutdown);
+    shutdown.signal('de.bmw.infrastructure.VehicleCondition', 'VehicleCondition', { statusConditionVehicle: 12 });
+    t.mock.timers.setTime(Date.now() + 125000);
+    car.manualLevel(2);
+    await app.tick(150000, shutdown);
+    assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [2]);
+    assert.deepEqual(wrote(shutdown, 0xD714).map(w => w.data[2]), [2]);
 });
 
 test('SMFA silent at first, answers later: no seat write, route settles to seat-module', async t => {

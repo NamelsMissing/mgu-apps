@@ -1,9 +1,8 @@
 # Sitzheizung: DIDs aus den SGBDs (FAS_G11, BFS_G11, IHKA_G05)
 
 Stand 18.11.2026. Quellen: `Ecu.zip` des Nutzers (EDIABAS-PRGs vom 02.12.2022), nur die Tabellen
-gelesen mit `tools/sgbd_tables.py`. Nichts ins Auto gesendet. Am Auto bestätigt ist bisher **nichts**
-aus diesem Dokument. Die BimmerLink- und BimmerCode-Daten selbst liegen nicht im Repo; übernommen sind
-nur die hier genannten Fakten.
+gelesen mit `tools/sgbd_tables.py`. Grot110s anschließende Fahrzeugtests stehen im Abschnitt unten.
+Die BimmerLink- und BimmerCode-Daten selbst liegen nicht im Repo.
 
 | Datei | MD5 | Adresse | SGBD-Index (`22 F150`) |
 | --- | --- | --- | --- |
@@ -13,8 +12,7 @@ nur die hier genannten Fakten.
 
 Index-Zuordnung aus `apps/light_show/sgbd-index.js`. Für dieselben Adressen gibt es auch
 `FAS_I20`/`BFS_I20` (`0F2CB0`) und `FAS_01`/`FAS_12`; deren PRGs sind hier nicht ausgewertet.
-Welcher Index im G05 aus Issue #2 antwortet, ist nicht bekannt; Heating Comfort 0.5.0 speichert
-ihn im Steuergeräteprofil.
+Heating Comfort 0.5.2 hat im G05 aus Issue #2 `FAS_G11` und `BFS_G11` erkannt.
 
 `FAS_G11` und `BFS_G11` sind für alle Sitzheizungs-DIDs **identisch** (gleiche Tabellen).
 
@@ -144,9 +142,12 @@ Teilwerte werden als „partial“ gekennzeichnet; eine ungültige Stufe wird ni
 
 - **Lesen (risikoarm):** SMFA/SMBF `22 D714` Byte 0 oder IHKA `22 D8DB` Byte 19/20 zeigen die
   tatsächliche Stufe beim G05. Außerdem `22 D701` Byte 15 als „codiert ja/nein“.
-- **Schalten:** Kandidat `2E D714 <Stufe> 00 00 00 00 00 00` an SMFA/SMBF. Vor einem Einbau am Auto
-  zu klären: positive Antwort ohne erweiterte Session? Hält die Stufe, und wie lange? Schaltet
-  `AKTION 0` sauber ab? Bleibt der Tastenstatus der IHKA konsistent?
+- **Schalten:** Grot110 bestätigte am SMFA seines G05 Stufe 2, sofortiges Ausschalten mit Aktion 0
+  und das Zurücksetzen des ungefähr 120 Sekunden langen Timers beim Wiederholen von Stufe 2.
+  Die App verwendet die dokumentierten Aktionen für Stufen 1–3. Der automatische Ablauf ist für
+  alle drei Stufen simuliert. Details stehen in
+  [Grots Testbericht](https://github.com/NamelsMissing/mgu-apps/issues/2#issuecomment-7012570156) und
+  [seinem Timeout-Test](https://github.com/NamelsMissing/mgu-apps/issues/2#issuecomment-7022542927).
 - BDC `E432`/`E430` bleibt der Weg für Autos ohne Sitzmodul (G21).
 - **Alternative ohne App-Schreibbefehle:** die fahrzeugeigene Automatik per Codierung (siehe oben).
   Für G05-Nutzer mit Sitzmodulen ist das vermutlich der sicherste Weg zur automatischen

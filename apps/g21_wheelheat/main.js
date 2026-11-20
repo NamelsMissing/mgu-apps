@@ -5,7 +5,7 @@ const path = require('path');
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const B = require('./logic');
-const { ComfortAuto, START_WINDOW_MS } = require('./comfort_auto');
+const { ComfortAuto, START_WINDOW_MS, SMFA_MAX_RENEW_AGE_MS } = require('./comfort_auto');
 const { SafeDiag, bytes } = require('./safe_diag');
 const QR = require('./qr_log');
 const Cycle = require('./cycle_policy');
@@ -16,6 +16,7 @@ const TABS = ['Comfort', 'Diagnostics', 'Log', 'QR Log'];
 const text = (cv, s, x, y, size, color, opts) =>
     cv.text(String(s), x, y, size, color, opts || {});
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+const SMFA_STOP_MAX_AGE_MS = 110000;
 
 mgu.run({
     async start(ctx) {
@@ -50,6 +51,8 @@ mgu.run({
         let cycleReason = cycle.reason;
         const outside = { value: null, at: 0, raw: null };
         const acknowledged = new Set();
+        let smfaActivation = null;
+        let smfaVehicleOn = false;
         const pendingStops = new Set();
         const stopAttempts = new Map();
         let firstUiAt = 0, uiOpenCount = 0, cancelGeneration = 0;
@@ -170,8 +173,6 @@ mgu.run({
                             new Date(marker).toISOString() : null,
                         markerAgeSeconds: Number.isFinite(marker) && marker > 0 ?
                             Math.round((now - marker) / 1000) : null,
-                        lastBdcPositiveOnAt: Number.isFinite(marker) && marker > 0 ?
-                            new Date(marker).toISOString() : null,
                         noRepeatsWithinIgnition: true,
                         manualStopPending: Array.from(pendingStops),
                         coldDwellStart: auto.coldSince,
@@ -182,7 +183,8 @@ mgu.run({
                         speedKmh: ctl.speed, speedAgeMs: ctl.speedAt ? now - ctl.speedAt : null,
                         bdcOnline: ctl.online, bdcReadVerified: ctl.verified,
                         speedFresh: ctl.motionKnown, bdcMessage: ctl.info,
-                        lastBdcWriteAt: ctl.lastWriteAt, bdcReadbacks: ctl.readbacks,
+                        lastBdcWriteAt: ctl.lastBdcWriteAt, bdcReadbacks: ctl.readbacks,
+                        smfaActivation,
                         oneShotTestArmed: cycle.testBypass,
                         ecuProfileState: ecuState, ecuProfile,
                         seatSourceComparison: seatSources && seatSources.comparison,
@@ -221,7 +223,8 @@ mgu.run({
         // TASU is online, stored again for the next start.
         let ecuProfile = E.load(ctx.settings.get(E.PROFILE_KEY));
         let ecuState = ecuProfile ? 'STORED (not yet verified)' : 'NOT DETECTED';
-        let ecuBusy = false, ecuDone = false, ecuAttemptAt = 0, ecuForce = false, ecuAttempts = 0;
+        let ecuBusy = false, ecuDone = false, ecuVerified = false, ecuForce = false;
+        let ecuAttemptAt = 0, ecuAttempts = 0;
         let lastRouteNote = '';
         let lastSkipNote = '';
         // Read-only seat sources (SMFA/SMBF D714, IHKA D8DB): latest snapshot
@@ -290,6 +293,7 @@ mgu.run({
             VehicleCondition: value => {
                 const raw = value && value.statusConditionVehicle;
                 const before = cycle.mode;
+                smfaVehicleOn = Cycle.condition(raw) === 'on';
                 if (Cycle.condition(raw) === 'on' && before !== 'on')
                     cycle.offMinutes = offMinutes();
                 const observed = cycle.observe(raw, Date.now());
@@ -314,6 +318,7 @@ mgu.run({
                     pendingStops.clear();
                     stopAttempts.clear();
                     acknowledged.clear();
+                    smfaActivation = null;
                     // Only a real ON -> OFF cycle resets the QR log. An
                     // initial OFF observation at process boot is not a new
                     // journey; retain the PROCESS START evidence in that case.
@@ -349,13 +354,14 @@ mgu.run({
             wheelMins: Number(ctx.settings.get('wheelMins')),
             seatDriver: ctx.settings.get('seatDriver') === true,
             seatPassenger: ctx.settings.get('seatPassenger') === true,
+            smfaDriverAuto: ctx.settings.get('smfaDriverAuto') === true,
             seatLevel: Number(ctx.settings.get('seatLevel')),
             seatMins: Number(ctx.settings.get('seatMins')),
         });
-        // The one visible automatic-heating switch is explicit consent for
-        // guarded control. Preserve its saved value across app updates.
+        // Guarded control requires the saved automatic-heating switch.
         const permitted = () => ctx.settings.get('autoEnabled') === true;
         const tempReading = now => B.temperatureInput(outside.value, outside.at, false, null, now);
+        const driverViaSmfa = cfg => ecuVerified && !ecuForce && E.allowsSmfa(ecuProfile, cfg);
 
         function stopAutoHeating() {
             cancelGeneration++;
@@ -371,15 +377,84 @@ mgu.run({
             lastPlannerStatus = '';
             record('MANUAL STOP', 'source=app button; ignition=' + cycle.mode +
                 '; cancelled=' + cancelled + '; timers=' + active.join(', ') +
-                '; BDC OFF queued=' + Array.from(pendingStops).join(', ') +
+                '; ECU OFF queued=' + Array.from(pendingStops).join(', ') +
                 ' (only if ECU guards permit)');
         }
 
+        function forgetSmfaActivation() {
+            smfaActivation = null;
+            auto.active.delete('Driver seat');
+            acknowledged.delete('Driver seat');
+            pendingStops.delete('Driver seat');
+            stopAttempts.delete('Driver seat');
+        }
+
+        async function sendSmfaIntent(intent) {
+            const name = intent.device;
+            const starting = intent.type === 'ON', stopping = intent.type === 'OFF';
+            const generation = cancelGeneration, ignition = cycle.onAt;
+            const activation = smfaActivation;
+            const active = auto.active.get(name);
+            intent.retryable = false;
+            if (!starting && !activation) return false;
+            const level = starting ? intent.data.level : activation.level;
+
+            const allowed = () => {
+                const now = Date.now();
+                if (!smfaVehicleOn || cycle.mode !== 'on' || cycle.onAt !== ignition) return false;
+                const age = activation && smfaActivation === activation && activation.ignition === ignition ?
+                    now - activation.sentAt : Infinity;
+                if (stopping) return age >= 0 && age < SMFA_STOP_MAX_AGE_MS;
+                const c = config();
+                if (generation !== cancelGeneration || !cycle.mayContinue() || !permitted() ||
+                    !c.seatDriver || c.seatLevel !== level || !driverViaSmfa(c)) return false;
+                if (starting) {
+                    const temp = tempReading(now);
+                    return now < intent.startUntil && temp.value !== null && temp.value <= c.belowTemp &&
+                        temp.at <= now && now - temp.at <= 120000;
+                }
+                return active && now < active.deadline && age >= 0 && age < SMFA_MAX_RENEW_AGE_MS;
+            };
+
+            if (stopping && Date.now() - activation.sentAt >= SMFA_STOP_MAX_AGE_MS) {
+                forgetSmfaActivation();
+                record('STOP UNCONFIRMED', name + ': SMFA activation timed out of app tracking');
+                return false;
+            }
+            const remaining = 3000 - (Date.now() - ctl.lastWriteAt);
+            if (remaining > 0 && allowed()) await wait(remaining);
+            const result = await ctl.autoWriteSmfa(stopping ? 0 : level, starting ? 0 : level, allowed);
+            const ok = result.state === 'acknowledged';
+            lastAction = (ok ? 'SMFA ACK' : 'SMFA ' + result.state.toUpperCase()) + ': ' +
+                name + ' ' + intent.type + ' (D714): ' + result.detail;
+            record(ok ? 'ECU ACK' : 'SMFA ' + result.state.toUpperCase(), lastAction);
+            if (cycle.mode !== 'on' || cycle.onAt !== ignition) return false;
+
+            if (result.state === 'different' || (stopping && ok)) {
+                // The current level differs from our own, or our OFF was accepted.
+                // In either case the app has no activation left to manage.
+                if (activation) forgetSmfaActivation();
+                return ok;
+            }
+            if (ok) {
+                const stopRequested = !allowed();
+                smfaActivation = { ignition, level, sentAt: result.sentAt };
+                acknowledged.add(name);
+                if (starting) ctx.settings.set('_autoCycleAt', result.sentAt);
+                if (stopRequested) pendingStops.add(name);
+            } else if (!starting && activation) {
+                pendingStops.add(name);
+            }
+            return ok;
+        }
+
         // A planner event is not a live heater state. Report an actual request
-        // only if the BDC positively acknowledged it. The vehicle's physical
+        // only if its ECU positively acknowledged it. The vehicle's physical
         // response remains unverified until an on-car test.
         async function sendIntent(intent) {
             if (intent.type === 'OFF' && !acknowledged.has(intent.device)) return false;
+            if (intent.data.viaSmfa || (intent.type === 'OFF' &&
+                intent.device === 'Driver seat' && smfaActivation)) return sendSmfaIntent(intent);
             // Seat ON/EXTEND only on a verified BDC route (checked again right
             // before the write). OFF of our own acknowledged ON is never blocked.
             const routeOk = () => intent.type === 'OFF' || E.allows(ecuProfile, intent.device);
@@ -603,6 +678,7 @@ mgu.run({
                     if (decision.reuse) {
                         ecuState = decision.verified ? 'STORED, VERIFIED' : 'STORED (BDC not reachable)';
                         ecuDone = decision.verified;
+                        ecuVerified = decision.verified;
                         record('ECU PROFILE', decision.reason + ': ' + E.summary(ecuProfile));
                         return;
                     }
@@ -613,6 +689,7 @@ mgu.run({
                 const found = await E.detect((addr, did) => ctl.probe(addr, did),
                     { appVersion: ctx.spec && ctx.spec.version || null, previous });
                 ecuForce = false;
+                ecuVerified = found.ecus.BDC.state === 'ok' && !!found.ecus.BDC.index;
                 if (!found.ecus.BDC.present) {
                     ecuState = ecuProfile ? 'STORED (BDC not reachable)' : 'NOT DETECTED (BDC not reachable)';
                     record('ECU PROFILE', 'BDC 0x40 did not answer; retry later');
@@ -634,6 +711,7 @@ mgu.run({
                     lastRouteNote = note;
                 }
             } catch (e) {
+                ecuVerified = false;
                 ecuState = 'DETECTION ERROR';
                 record('ECU PROFILE ERROR', String(e && (e.message || e)));
             } finally { ecuBusy = statusBusy = false; }
@@ -654,24 +732,30 @@ mgu.run({
             try {
                 const now = Date.now(), cfg = config(), reading = tempReading(now);
                 const wantedSeats = { driver: cfg.seatDriver, passenger: cfg.seatPassenger };
+                cfg.driverViaSmfa = driverViaSmfa(cfg);
                 const skipped = E.applyRoutes(cfg, ecuProfile);
                 const skipNote = skipped.join('; ');
                 if (skipNote !== lastSkipNote) {
                     if (skipNote) record('SKIP', skipNote + ' -> not planned, no request');
                     lastSkipNote = skipNote;
                 }
-                // Profile changed during a session: drop seat starts/extensions
-                // that are no longer allowed; undo our own acknowledged ON via
-                // the same BDC path (OFF is never route-blocked).
+                // Stop using a seat route as soon as it ceases to be eligible.
+                // An OFF request still uses the route of our acknowledged ON.
                 for (const name of ['Driver seat', 'Passenger seat']) {
-                    if (!auto.active.has(name) || E.allows(ecuProfile, name)) continue;
+                    const active = auto.active.get(name);
+                    if (!active) continue;
+                    const viaSmfa = active.on.viaSmfa;
+                    if (viaSmfa ? cfg.driverViaSmfa && cfg.seatDriver && smfaVehicleOn &&
+                        cfg.seatLevel === active.on.level : E.allows(ecuProfile, name))
+                        continue;
                     auto.active.delete(name);
                     if (acknowledged.has(name)) {
                         pendingStops.add(name);
                         stopAttempts.set(name, 0);
                     }
                     record('ROUTE CHANGED', name + ': ' + E.routeLabel(ecuProfile, E.DEVICE_KEY[name]) +
-                        '; automatic seat stopped' + (acknowledged.has(name) ? ', BDC OFF queued' : ''));
+                        '; automatic seat stopped' + (acknowledged.has(name) ?
+                            (viaSmfa ? ', SMFA OFF queued' : ', BDC OFF queued') : ''));
                 }
                 const ignition = cycle.onAt;
                 cfg.startUntil = ignition + START_WINDOW_MS;
@@ -687,8 +771,10 @@ mgu.run({
                     if (ok || !acknowledged.has(name) || attempts >= 3) {
                         pendingStops.delete(name);
                         stopAttempts.delete(name);
-                        if (!ok && acknowledged.has(name))
+                        if (!ok && acknowledged.has(name)) {
                             record('STOP UNCONFIRMED', name + ': 3 bounded attempts failed; use BMW physical button');
+                            if (name === 'Driver seat' && smfaActivation) forgetSmfaActivation();
+                        }
                     }
                 }
                 const canStart = cfg.autoEnabled && permitted() && cycle.canStart() &&
@@ -703,7 +789,8 @@ mgu.run({
                 // one-shot plan is made. Afterwards plan with what is known.
                 const routePending = key => {
                     const r = ecuProfile && ecuProfile.routes[key];
-                    return !r || r.route === 'unresolved' || r.route === 'unknown';
+                    return !r || r.route === 'unresolved' || r.route === 'unknown' ||
+                        (key === 'driver' && !ecuVerified && E.allowsSmfa(ecuProfile, cfg));
                 };
                 const awaitingRoutes = !auto.fired && auto.active.size === 0 && cfg.autoEnabled &&
                     cycle.mode === 'on' && cycle.canStart() && ecuAttempts < 2 &&
@@ -757,7 +844,8 @@ mgu.run({
                     if (cycle.onAt !== ignition || cycle.mode !== 'on') break;
                     const ok = await sendIntent(intent);
                     if (cycle.onAt !== ignition || cycle.mode !== 'on') break;
-                    auto.acknowledge(intent, ok, Date.now(), intent.retryable === true);
+                    const at = ok && intent.data.viaSmfa ? smfaActivation.sentAt : Date.now();
+                    auto.acknowledge(intent, ok, at, intent.retryable === true);
                     if (intent.type === 'ON' && !ok) {
                         const pending = auto.active.get(intent.device);
                         record(pending && pending.pending ? 'START RETRY' : 'START FAILED',
@@ -818,13 +906,14 @@ mgu.run({
         ctx.loop('MAIN', 5, () => {
             const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
             const now = Date.now(), c = config(), r = tempReading(now);
+            const viaSmfa = driverViaSmfa(c);
             const fresh = r.value !== null && now - r.at <= 120000;
             const temp = fresh ? r.value.toFixed(1) + ' °C' : 'unavailable';
             const startReady = c.autoEnabled && permitted() && cycle.canStart() &&
                 now < cycle.onAt + START_WINDOW_MS &&
                 ctl.online && ctl.motionKnown && fresh;
             const status = !c.autoEnabled ? 'AUTOMATION OFF'
-                    : Array.from(auto.active.values()).some(s => s.pending) ? 'WAITING FOR BDC / START RETRY'
+                    : Array.from(auto.active.values()).some(s => s.pending) ? 'WAITING FOR ECU / START RETRY'
                     : auto.active.size ? 'HEATING SCHEDULE ACTIVE'
                     : cycle.mode !== 'on' ? 'WAITING FOR VERIFIED IGNITION ON'
                     : !cycle.mayContinue() ? 'CANCELLED FOR THIS DRIVE'
@@ -837,15 +926,16 @@ mgu.run({
             G.frame(cv, t, TABS, tab,
                 [{ text: auto.active.size ? 'AUTO SCHEDULED' :
                     startReady ? 'AUTO READY' : 'AUTO NOT READY', color: t.dim }]);
-            // configured -> skipped (route) -> pending -> BDC ACK. An ACK is not
+            // configured -> skipped (route) -> pending -> ECU ACK. An ACK is not
             // proof of physical heating.
-            const blocked = key => !E.allows(ecuProfile, key);
+            const blocked = key => !(key === 'driver' && viaSmfa) && !E.allows(ecuProfile, key);
             const planText = (key, on, value) => !on ? 'Off' : blocked(key) ?
                 'Skipped: ' + E.routeLabel(ecuProfile, key) : value;
             const confirmText = (device, key, on) => {
                 if (!on) return 'Off';
                 if (blocked(key)) return 'skipped (' + E.routeLabel(ecuProfile, key) + ')';
-                if (acknowledged.has(device)) return 'BDC ACK (heat not verified)';
+                if (acknowledged.has(device))
+                    return (key === 'driver' && smfaActivation ? 'SMFA' : 'BDC') + ' ACK (heat not verified)';
                 const a = auto.active.get(device);
                 if (a && a.pending) return 'start pending';
                 return 'configured';
