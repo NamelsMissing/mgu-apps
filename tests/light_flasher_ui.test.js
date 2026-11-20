@@ -7,7 +7,7 @@ const screen=name=>app.screens.find(s=>s.name===name);
 test('main is compact; settings separate',()=>{
  assert.deepEqual(screen('MAIN').items.map(x=>x[1]),['FLASH_CONFIG','BTN_FLASH','BTN_FLASH_STOP','FLASH_STATUS','BTN_RECOVER','BTN_OPTIONS']);
  assert.equal(screen('MAIN').settings,undefined);assert.equal(screen('OPTIONS').settings,true);
- assert.equal(app.settings.filter(x=>!x.hidden).length,7);
+ assert.equal(app.settings.filter(x=>!x.hidden).length,9);
 });
 test('raw logs absent from UI while reports retain traces',()=>{
  assert.ok(app.screens.every(s=>s.items.every(x=>x[0]!=='scroll'&&x[1]!=='DIAG_LOG')));

@@ -15,11 +15,25 @@ const DEFAULTS=Object.freeze({
  cooldownMs:5000,  // after a run ends, before the detector re-arms
  staleMs:2500,     // same freshness limit as the manual flash guard
 });
+const MIN_CHOICES=Object.freeze([0,250,500,750,1000,1250,1500]);
+const MAX_CHOICES=Object.freeze([250,500,750,1000,1250,1500,1750,2000]);
+function pulseRange(min,max){
+ const a=Number(min),b=Number(max);
+ return min!==null&&min!==undefined&&min!==''&&max!==null&&max!==undefined&&max!==''&&MIN_CHOICES.includes(a)&&MAX_CHOICES.includes(b)&&a<b?{minOnMs:a,maxOnMs:b}:null;
+}
 class LeverTrigger {
  constructor(now=Date.now,opts={}){
-  this.now=now;this.opts={...DEFAULTS,...opts};
+  this.now=now;this.opts={...DEFAULTS,...opts};this.rangeValid=true;
   this.enabled=false;this.state='disabled';this.offSince=null;this.onSince=null;this.releasedAt=null;
   this.cooldownUntil=0;this.lastPulseMs=null;this.events=[];this.triggers=0;this.rejected=0;this.lastReason='Lever trigger off';
+ }
+ setRange(min,max){
+  const range=pulseRange(min,max);
+  if(!range){if(this.rangeValid){this.rangeValid=false;this.reset('Invalid lever pulse range');}return false;}
+  if(!this.rangeValid||this.opts.minOnMs!==range.minOnMs||this.opts.maxOnMs!==range.maxOnMs){
+   this.rangeValid=true;Object.assign(this.opts,range);this.reset('Timing changed; wait for stable OFF');
+  }
+  return true;
  }
  setEnabled(on){on=on===true;if(on!==this.enabled){this.enabled=on;this.reset(on?'Armed after stable OEM beam OFF':'Lever trigger off');}}
  reset(reason){this.state=this.enabled?'waitOff':'disabled';this.offSince=null;this.onSince=null;this.releasedAt=null;this.lastReason=reason;}
@@ -32,6 +46,7 @@ class LeverTrigger {
  update(status,statusAt,allowed){
   const t=this.now(),o=this.opts;
   if(!this.enabled){this.state='disabled';return false;}
+  if(!this.rangeValid){this.reset('Invalid lever pulse range');return false;}
   if(!allowed){this.reset('Blocked: parked guard, setting or another operation');return false;}
   if(t<this.cooldownUntil){this.reset('Cooldown after flash');return false;}
   if((status!=='EIN'&&status!=='AUS')||!Number.isFinite(statusAt)||t-statusAt>o.staleMs){this.reset('OEM light status unknown or stale');return false;}
@@ -49,6 +64,7 @@ class LeverTrigger {
      return false;
     }
     this.lastPulseMs=t-this.onSince;
+    if(this.lastPulseMs>o.maxOnMs){this.rejected++;this.record('rejected',{onMs:this.lastPulseMs,why:'too long at release'});this.reset('Ignored: high beam held; re-arming');return false;}
     if(this.lastPulseMs<o.minOnMs){this.rejected++;this.record('rejected',{onMs:this.lastPulseMs,why:'too short'});this.state='armed';return false;}
     this.state='released';this.releasedAt=t;this.lastReason='Released; confirming OFF';
     return false;
@@ -65,7 +81,7 @@ class LeverTrigger {
   }
  }
  snapshot(){return {enabled:this.enabled,state:this.state,reason:this.lastReason,triggers:this.triggers,rejected:this.rejected,lastPulseMs:this.lastPulseMs,
-   cooldownRemainingMs:Number.isFinite(this.cooldownUntil)?Math.max(0,this.cooldownUntil-this.now()):null,limits:{...this.opts},
-   scope:'P, stationary, MAIN visible, manual flash enabled; short pull only',events:this.events.slice()};}
+   cooldownRemainingMs:Number.isFinite(this.cooldownUntil)?Math.max(0,this.cooldownUntil-this.now()):null,limits:{...this.opts},rangeValid:this.rangeValid,
+   scope:'P, stationary, manual flash enabled; foreground or explicitly enabled background; short pull only',events:this.events.slice()};}
 }
-module.exports={LeverTrigger,DEFAULTS};
+module.exports={LeverTrigger,DEFAULTS,MIN_CHOICES,MAX_CHOICES,pulseRange};

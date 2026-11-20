@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -148,6 +148,82 @@
       "default": false
     },
     {
+      "key": "leverMinMs",
+      "label": "Lever hold minimum",
+      "type": "choice",
+      "default": "0",
+      "options": [
+        [
+          "0",
+          "0 ms (no minimum)"
+        ],
+        [
+          "250",
+          "0.25 s"
+        ],
+        [
+          "500",
+          "0.5 s"
+        ],
+        [
+          "750",
+          "0.75 s"
+        ],
+        [
+          "1000",
+          "1.0 s"
+        ],
+        [
+          "1250",
+          "1.25 s"
+        ],
+        [
+          "1500",
+          "1.5 s"
+        ]
+      ]
+    },
+    {
+      "key": "leverMaxMs",
+      "label": "Lever hold maximum",
+      "type": "choice",
+      "default": "1500",
+      "options": [
+        [
+          "250",
+          "0.25 s"
+        ],
+        [
+          "500",
+          "0.5 s"
+        ],
+        [
+          "750",
+          "0.75 s"
+        ],
+        [
+          "1000",
+          "1.0 s"
+        ],
+        [
+          "1250",
+          "1.25 s"
+        ],
+        [
+          "1500",
+          "1.5 s"
+        ],
+        [
+          "1750",
+          "1.75 s"
+        ],
+        [
+          "2000",
+          "2.0 s"
+        ]
+      ]
+    },
+    {
       "key": "enabled",
       "label": "Enable diagnostic mode (no lamp commands)",
       "type": "bool",
@@ -206,6 +282,11 @@
       "title": "Light Flasher | Settings",
       "settings": true,
       "items": [
+        [
+          "text3",
+          "LEVER_RANGE_STATUS",
+          "Lever hold range"
+        ],
         [
           "button",
           "BTN_DIAG",
