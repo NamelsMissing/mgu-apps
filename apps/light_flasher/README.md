@@ -1,5 +1,9 @@
 # Light Flasher 0.1.14
 
+## 0.1.18 – Simplified interface
+
+Main: pattern/interval/duration summary, Start, Stop, short status, Restore normal lights and Settings. Settings now have their own page with seven operational choices. Service / diagnostics is accessible from Settings, with a short status and Save diagnostic report; the BDC/stalk/FLM read-only tests are in Advanced tests and require stationary P. Raw UDS, PWM/current traces, counters and file paths are no longer shown on the head unit, but remain in local automatic JSON reports and manual exports. The legacy diagnostic enable/background observation switches are hidden; manual service tests are enabled by explicitly opening Advanced tests, and passive background observation retains its saved setting/default. No changes to flash timing, routine commands, recovery or existing guard configuration. Background lever triggering is blocked in Settings and Service pages. No vehicle UI test yet.
+
 ## 0.1.17 – Experimental sub-100 ms requests (fast mode)
 
 With fast mode enabled, the interval menu additionally offers 20, 40, 60 and 80 ms. These settings require an explicit Start button press, fresh stationary/P and OEM high-beam-OFF signals, and the foreground main menu. They are not available to stalk/autostart triggers or standard mode. No extra concurrent TASU requests are introduced: ON and PWM 0 still await diagnostic replies, so values below the transport round trip may produce identical actual timing. Existing OFF electrical verification, duration limits, STOP/default-session cleanup and recovery remain. Actual START gaps in the log are host-side timings, not measured optical pulse widths. Existing guard configuration for intervals >=100 ms is unchanged. Test on private property away from bystanders; in-vehicle behavior is unverified.

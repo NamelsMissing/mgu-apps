@@ -1,8 +1,8 @@
 {
   "id": "light_flasher",
   "title": "Light Flasher",
-  "description": "Compact parked flash control with optional lever trigger in P (also with the app closed via autostart), one diagnostics page, requested intervals 100–1000 ms; experimental 20–80 ms in parked fast mode only.",
-  "version": "0.1.17",
+  "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
+  "version": "0.1.18",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -28,38 +28,8 @@
   },
   "settings": [
     {
-      "key": "enabled",
-      "label": "Enable diagnostic mode (no lamp commands)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "backgroundMonitor",
-      "label": "Background status monitor (read only)",
-      "type": "bool",
-      "default": true
-    },
-    {
       "key": "manualFlash",
-      "label": "Enable manual parked flash (private property only)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "fastTest",
-      "label": "Test: fast mode (no 150 ms gap, PWM 0 instead of STOP between pulses)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "leverTrigger",
-      "label": "Start pattern by short lever flash (P only)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "leverBackground",
-      "label": "Lever trigger also with app closed (autostart, P only)",
+      "label": "Enable flash control",
       "type": "bool",
       "default": false
     },
@@ -89,7 +59,7 @@
     },
     {
       "key": "interval",
-      "label": "Requested interval (ms)",
+      "label": "Requested flash interval",
       "type": "choice",
       "default": "100",
       "options": [
@@ -158,6 +128,38 @@
           "5 s"
         ]
       ]
+    },
+    {
+      "key": "fastTest",
+      "label": "Fast mode (PWM 0)",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "leverTrigger",
+      "label": "Start via high-beam stalk (P only)",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "leverBackground",
+      "label": "Stalk trigger in background (P only)",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "enabled",
+      "label": "Enable diagnostic mode (no lamp commands)",
+      "type": "bool",
+      "default": false,
+      "hidden": true
+    },
+    {
+      "key": "backgroundMonitor",
+      "label": "Background status monitor (read only)",
+      "type": "bool",
+      "default": true,
+      "hidden": true
     }
   ],
   "screens": [
@@ -165,7 +167,6 @@
       "name": "MAIN",
       "kind": "menu",
       "title": "Light Flasher",
-      "settings": true,
       "items": [
         [
           "text3",
@@ -183,51 +184,81 @@
           "Stop"
         ],
         [
+          "text3",
+          "FLASH_STATUS",
+          "Ready"
+        ],
+        [
           "button",
           "BTN_RECOVER",
           "Restore normal lights (P)"
         ],
         [
-          "text3",
-          "LEVER_STATUS",
-          "Lever: off"
-        ],
-        [
-          "text3",
-          "FLASH_STATUS",
-          "Idle"
-        ],
-        [
-          "text3",
-          "FLASH_RESULT",
-          "No result yet"
-        ],
+          "button",
+          "BTN_OPTIONS",
+          "Settings"
+        ]
+      ]
+    },
+    {
+      "name": "OPTIONS",
+      "kind": "menu",
+      "title": "Light Flasher | Settings",
+      "settings": true,
+      "items": [
         [
           "button",
           "BTN_DIAG",
-          "Diagnostics"
+          "Service / diagnostics"
         ],
         [
-          "text3",
-          "NOTICE",
-          "Parked test only (P). Lever trigger optionally also with the app closed. Private property. Automatic JSON log."
+          "button",
+          "BTN_OPTIONS_BACK",
+          "Back"
         ]
       ]
     },
     {
       "name": "DIAGNOSTICS",
       "kind": "menu",
-      "title": "Light Flasher | Diagnostics",
+      "title": "Light Flasher | Service",
       "items": [
         [
           "text3",
           "DIAG_STATE",
-          "Connection status"
+          "Service status"
         ],
         [
           "text3",
           "DIAG_RESULT",
-          "Last flash and return status"
+          "Last operation"
+        ],
+        [
+          "button",
+          "BTN_SAVE",
+          "Save diagnostic report"
+        ],
+        [
+          "button",
+          "BTN_ADVANCED",
+          "Advanced tests"
+        ],
+        [
+          "button",
+          "BTN_BACK",
+          "Back"
+        ]
+      ]
+    },
+    {
+      "name": "ADVANCED",
+      "kind": "menu",
+      "title": "Light Flasher | Advanced tests",
+      "items": [
+        [
+          "text3",
+          "DIAG_CAPTURE",
+          "Read-only test status"
         ],
         [
           "button",
@@ -250,23 +281,8 @@
           "Read FLM light status"
         ],
         [
-          "text3",
-          "DIAG_CAPTURE",
-          "Read-only test status"
-        ],
-        [
           "button",
-          "BTN_SAVE",
-          "Save full diagnostic JSON"
-        ],
-        [
-          "scroll",
-          "DIAG_LOG",
-          "Recent diagnostic details"
-        ],
-        [
-          "button",
-          "BTN_BACK",
+          "BTN_ADVANCED_BACK",
           "Back"
         ]
       ]

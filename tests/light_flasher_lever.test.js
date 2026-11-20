@@ -110,10 +110,10 @@ test('main wires lever only through the guarded flash path', () => {
     assert.match(src, /const runAllowed=background\?backgroundRunAllowed:flashAllowed/);
     // Background runs keep the full P/stationary/OEM-off guard, but never with diagnostics open.
     const bg = src.match(/const backgroundRunAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!ui.isVisible('DIAGNOSTICS')", '!guard.reason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", '!guard.reason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
         assert.ok(bg.includes(term), 'backgroundRunAllowed lacks ' + term);
     const screen = src.match(/const leverScreenOk=\(\)=>([^;]+);/)[1];
-    assert.equal(screen, "ui.isVisible('MAIN')||(leverBackground()&&!ui.isVisible('DIAGNOSTICS'))");
+    assert.equal(screen, "ui.isVisible('MAIN')||(leverBackground()&&!menuVisible())");
     const app = require('../apps/light_flasher/app.json');
     for (const key of ['leverTrigger', 'leverBackground', 'manualFlash'])
         assert.equal(app.settings.find((x) => x.key === key).default, false, key + ' must default OFF');
