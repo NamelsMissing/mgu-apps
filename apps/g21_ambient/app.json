@@ -2,7 +2,7 @@
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
   "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",
@@ -32,83 +32,23 @@
       "buttons": [
         [
           "BTN_PAGE",
-          "Next tab"
+          "Next page"
         ],
         [
-          "BTN_MODE",
-          "Mode / Select"
+          "BTN_PREV",
+          "Previous"
         ],
         [
-          "BTN_COLOR",
-          "Color / Hue"
-        ],
-        [
-          "BTN_SAT",
-          "Saturation / Value"
-        ],
-        [
-          "BTN_RGB_NEXT",
-          "Select RGB channel"
-        ],
-        [
-          "BTN_RGB_DOWN",
-          "RGB -1"
-        ],
-        [
-          "BTN_RGB_UP",
-          "RGB +1"
-        ],
-        [
-          "BTN_BRIGHT",
-          "Brightness preset"
-        ],
-        [
-          "BTN_BRIGHT_DOWN",
-          "Brightness -1%"
-        ],
-        [
-          "BTN_BRIGHT_UP",
-          "Brightness +1%"
-        ],
-        [
-          "BTN_TARGET",
-          "RAM test / Menu 11 plan"
+          "BTN_NEXT",
+          "Next"
         ],
         [
           "BTN_ACTION",
-          "Apply / Read RAM"
-        ],
-        [
-          "BTN_RESTORE",
-          "Factory menu plan"
+          "Select"
         ],
         [
           "BTN_SETTINGS",
-          "All settings"
-        ],
-        [
-          "BTN_BDC_STATUS",
-          "Read BDC status"
-        ],
-        [
-          "BTN_FAV_NEXT",
-          "Next favorite"
-        ],
-        [
-          "BTN_FAV_SAVE",
-          "Save favorite"
-        ],
-        [
-          "BTN_FAV_LOAD",
-          "Load favorite"
-        ],
-        [
-          "BTN_MODE_NEXT",
-          "Next driving mode"
-        ],
-        [
-          "BTN_MODE_SAVE",
-          "Save driving-mode colour"
+          "Settings"
         ]
       ]
     }
@@ -295,23 +235,6 @@
         224,
         240,
         254
-      ]
-    },
-    {
-      "key": "applyTarget",
-      "label": "Apply mode",
-      "hidden": true,
-      "type": "choice",
-      "default": "temporary",
-      "options": [
-        [
-          "temporary",
-          "RAM01 temporary test"
-        ],
-        [
-          "slot11",
-          "iDrive menu slot 11 (FDL plan)"
-        ]
       ]
     },
     {

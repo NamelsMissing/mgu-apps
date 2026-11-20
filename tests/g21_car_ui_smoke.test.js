@@ -10,6 +10,7 @@ const root = path.resolve(__dirname, '..');
 const source = (app) => fs.readFileSync(path.join(root, 'apps', app, 'main.js'), 'utf8');
 const spec = (app) => require(path.join(root, 'apps', app, 'app.json'));
 const ambient = source('g21_ambient');
+const ambientHmi = fs.readFileSync(path.join(root, 'apps', 'g21_ambient', 'hmi.js'), 'utf8');
 const wheel = source('g21_wheelheat');
 const dpf = source('dpf_monitor');
 
@@ -17,7 +18,7 @@ assert.match(dpf, /ctx\.onTab\(\(index\)/, 'DPF pages must receive header tab ta
 assert(!spec('dpf_monitor').settings.some(s => s.key === 'dde_live' || s.key === 'demo'),
     'DPF must always read real data and hide both test settings');
 assert(!dpf.includes("settings.get('demo')"), 'DPF must never show synthetic readings');
-assert.deepStrictEqual([...ambient.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
+assert.deepStrictEqual([...ambientHmi.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
     ["'Color', 'Favorites', 'Drive modes', 'Diagnostics'"],
     'Ambient has color, favorites, drive-mode and diagnostic pages');
 assert.deepStrictEqual([...wheel.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
@@ -43,8 +44,8 @@ assert(!dpf.includes('cv.roundRect(70, 451, 1450, 6'), 'fake DPF progress bar re
 assert.match(dpf, /\['Overview', 'Details', 'History', 'Regeneration'\]/,
     'DPF keeps live overview, measurements and stored history on separate pages');
 assert(!dpf.includes('No verified activity flag'), 'unverified regeneration badge removed');
-assert.match(ambient, /'CONFIRM APPLY' : 'APPLY'/, 'stable Apply button must be visible');
-assert.match(ambient, /setMany\(change\)/, 'slider changes must batch persistence');
+assert.match(ambientHmi, /'Confirm temporary color' : 'Apply temporary color'/, 'Apply and confirmation share a control');
+assert.match(ambient, /const updateRGB.*settings\.setMany/, 'slider changes must batch persistence');
 
 // The pure planner emits one ON event followed by one OFF event.
 const { ComfortAuto } = require(path.join(root, 'apps/g21_wheelheat/comfort_auto'));
