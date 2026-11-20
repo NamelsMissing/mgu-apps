@@ -172,15 +172,16 @@ class SafeDiag {
         return false;
     }
 
-    /** Use the documented SMFA heating levels and OFF. Keep the live
+    /** Use the documented seat-module heating levels and OFF. Keep the live
      * identity, readback and write in one diagnostic operation. */
-    async autoWriteSmfa(action, expectedLevel, allowed) {
-        const valid = action === 0 ? E.isSmfaHeatLevel(expectedLevel) :
-            E.isSmfaHeatLevel(action) && (expectedLevel === 0 || expectedLevel === action);
-        if (!valid) throw new RangeError('Unsupported SMFA action or readback level');
+    async autoWriteSeatModule(side, action, expectedLevel, allowed) {
+        const module = E.SEAT_MODULES[side];
+        const valid = action === 0 ? E.isModuleHeatLevel(expectedLevel) :
+            E.isModuleHeatLevel(action) && (expectedLevel === 0 || expectedLevel === action);
+        if (!module || !valid) throw new RangeError('Unsupported seat module, action or readback level');
         const starting = action !== 0 && expectedLevel === 0;
         const ready = () => this.online && this.motionKnown && allowed() &&
-            (action === 0 || this.ctx.settings.get('smfaDriverAuto') === true &&
+            (action === 0 || this.ctx.settings.get(module.enableSetting) === true &&
                 this.ctx.settings.get('autoEnabled') === true) &&
             Date.now() - this.lastWriteAt >= 3000;
         if (this.busy || !ready()) return { state: 'blocked', detail: 'Diagnostic guards not ready' };
@@ -188,13 +189,13 @@ class SafeDiag {
         this.busy = true;
         const options = { maxRetries: 0, callTimeoutMs: 2300, hardTimeoutMs: 3000 };
         const request = (sid, data) =>
-            this.diag.physical(E.SMFA_ADDR, sid, data, 1500, replyTo(sid, data), options);
+            this.diag.physical(module.addr, sid, data, 1500, replyTo(sid, data), options);
         const did = [E.MODULE_DID.seat >> 8, E.MODULE_DID.seat & 255];
         let sentAt = null;
         try {
             const id = E.classify(E.ID_DID, await request(0x22, [E.ID_DID >> 8, E.ID_DID & 255]));
-            if (id.state !== 'ok' || bytes(id.payload.slice(0, 3)).replace(/ /g, '') !== E.SMFA_INDEX)
-                return { state: 'unreadable', detail: 'Live FAS_G11 identification unavailable' };
+            if (id.state !== 'ok' || bytes(id.payload.slice(0, 3)).replace(/ /g, '') !== module.index)
+                return { state: 'unreadable', detail: 'Live ' + module.sgbd + ' identification unavailable' };
             if (starting) {
                 const codedDid = E.MODULE_DID.coded;
                 const coded = E.classify(codedDid, await request(0x22, [codedDid >> 8, codedDid & 255]));

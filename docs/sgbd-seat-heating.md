@@ -144,8 +144,9 @@ Teilwerte werden als „partial“ gekennzeichnet; eine ungültige Stufe wird ni
   tatsächliche Stufe beim G05. Außerdem `22 D701` Byte 15 als „codiert ja/nein“.
 - **Schalten:** Grot110 bestätigte am SMFA seines G05 Stufe 2, sofortiges Ausschalten mit Aktion 0
   und das Zurücksetzen des ungefähr 120 Sekunden langen Timers beim Wiederholen von Stufe 2.
-  Die App verwendet die dokumentierten Aktionen für Stufen 1–3. Der automatische Ablauf ist für
-  alle drei Stufen simuliert. Details stehen in
+  Die App verwendet die dokumentierten Aktionen für Stufen 1–3 an SMFA und SMBF. Der automatische
+  Ablauf ist für alle drei Stufen auf beiden Seiten simuliert. Der Fahrzeugtest für SMBF steht aus.
+  Details stehen in
   [Grots Testbericht](https://github.com/NamelsMissing/mgu-apps/issues/2#issuecomment-7012570156) und
   [seinem Timeout-Test](https://github.com/NamelsMissing/mgu-apps/issues/2#issuecomment-7022542927).
 - BDC `E432`/`E430` bleibt der Weg für Autos ohne Sitzmodul (G21).

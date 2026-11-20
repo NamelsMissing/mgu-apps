@@ -168,6 +168,12 @@
       "default": false
     },
     {
+      "key": "smbfPassengerAuto",
+      "label": "Experimental SMBF passenger heating",
+      "type": "bool",
+      "default": false
+    },
+    {
       "key": "seatLevel",
       "label": "Seat heating level",
       "type": "number",
