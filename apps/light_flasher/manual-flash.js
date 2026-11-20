@@ -70,8 +70,8 @@ class ManualFlash {
   if(this.running)throw Error('Flash already running');
   if(this.cleanupUnconfirmed||(this.journal&&this.journal.exists()))throw Error('Previous cleanup unconfirmed: verify normal lights; locked pending service inspection');
   if(!allowed()||!this.diag.available)throw Error('Enable parked flash, select P and switch OEM high beam OFF');
-  const cfg=config(requested.pattern,requested.intervalMs,requested.durationMs);
   const fast=requested.fast===true;
+  const cfg=config(requested.pattern,requested.intervalMs,requested.durationMs,fast);
   this.config={...cfg,mode:fast?'fast-test':'standard'};this.stepsCompleted=0;this.elapsedMs=0;
   this.fast=fast?{offMethod:'FLM_KANAL PWM 0 (31 01 A5 4B 08 00 01)',fixedGapMs:0,offVerified:{left:null,right:null},offRequests:0}:null;
   this.running=true;this.cancelled=false;this.trace=[];this.status='Checking FLM identities and high beam OFF';changed();
@@ -122,7 +122,9 @@ class ManualFlash {
      }
      if(started.length)await delay(Math.max(0,cfg.intervalMs-(this.now()-stepAt)),deadline);
      for(const m of started){
-      await send(m,0x31,OFF_PWM0,true);this.fast.offRequests++;
+      // For experimental sub-100 ms tests, guard loss falls directly through to STOP cleanup.
+      if(cfg.intervalMs<100)check();
+      await send(m,0x31,OFF_PWM0,cfg.intervalMs>=100);this.fast.offRequests++;
       if(this.fast.offVerified[m.side]===null)await verifyOff(m);
      }
      if(started.length===step.length)this.stepsCompleted++;

@@ -1,5 +1,9 @@
 # Light Flasher 0.1.14
 
+## 0.1.17 – Experimental sub-100 ms requests (fast mode)
+
+With fast mode enabled, the interval menu additionally offers 20, 40, 60 and 80 ms. These settings require an explicit Start button press, fresh stationary/P and OEM high-beam-OFF signals, and the foreground main menu. They are not available to stalk/autostart triggers or standard mode. No extra concurrent TASU requests are introduced: ON and PWM 0 still await diagnostic replies, so values below the transport round trip may produce identical actual timing. Existing OFF electrical verification, duration limits, STOP/default-session cleanup and recovery remain. Actual START gaps in the log are host-side timings, not measured optical pulse widths. Existing guard configuration for intervals >=100 ms is unchanged. Test on private property away from bystanders; in-vehicle behavior is unverified.
+
 ## 0.1.16 – Manual cleanup recovery (candidate)
 
 If LOCKED appears after a run, park securely in P on private property, switch OEM high beam OFF and select **Restore normal lights (P)**. No new flash pattern is started. Recovery validates both FLM identities, attempts STOP and return to default diagnostic session, then checks CH8 OFF (0% / 0 mA) on both sides. Only confirmed replies and current parked/OEM-off signals permit removing the pending marker. If STOP is rejected (including an already expired routine), a timeout occurs, or readback fails, the lock remains: inspect the automatically exported recovery log and seek service if needed. Electrical readback is not optical restoration proof. The existing flash guard in 0.1.15 is unchanged; the recovery button independently requires current zero speed and P. A successful final STOP retry supersedes an earlier failed STOP. Vehicle validation is pending.

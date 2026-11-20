@@ -9,7 +9,7 @@ const Monitor=require('./background-monitor');
 const Release=require('./release-status');
 const Timing=require('./timing');
 const {LeverTrigger}=require('./lever-trigger');
-const VERSION='0.1.16';
+const VERSION='0.1.17';
 mgu.run({async start(ctx){
  const {ui,settings,log}=ctx, capture=new Capture(),reader=new Reader(ctx.signals,log);
  const monitor=new Monitor(Date.now,ctx.app&&ctx.app.startReason);
@@ -19,15 +19,15 @@ mgu.run({async start(ctx){
  let lastCombined=null, lastRead=0, pending=false, generation=0, exported='', closing=false, connectionState='Not checked', lastError='';
  const feedback=[];let feedbackStatus='No FLM samples recorded';
  let flashExport='',flashExportError='',flashAttempt=0;
- // Migrate retired interval choices explicitly; preserve valid saved settings.
- if(['20','40','60','80'].includes(String(settings.get('interval'))))settings.set('interval','100');
+ // Sub-100 ms selections are now supported only in the experimental fast mode.
  const lever=new LeverTrigger(Date.now);lever.setEnabled(settings.get('leverTrigger')===true);
  const bgFile=path.join(ctx.dataDir,'light-flasher-background.json');let lastBg='',bgError='';
  const persistBackground=()=>{try{const lv=lever.snapshot();const bg={...monitor.snapshot(),lever:{enabled:lv.enabled,background:settings.get('leverBackground')===true,state:lv.state,triggers:lv.triggers,rejected:lv.rejected,lastPulseMs:lv.lastPulseMs,events:lv.events}};const raw=JSON.stringify(bg);if(raw!==lastBg){fs.writeFileSync(bgFile+'.tmp',JSON.stringify({...bg,version:VERSION,pid:process.pid,writtenAt:new Date().toISOString()},null,2));fs.renameSync(bgFile+'.tmp',bgFile);lastBg=raw;}bgError='';}catch(e){bgError=String(e.message||e);}};
  persistBackground();
  const enabled=()=>settings.get('enabled')===true;
  const guard=new Guard(Date.now,()=>{});
- const getConfig=()=>config(settings.get('pattern'),settings.get('interval'),settings.get('hold'));
+ const getConfig=()=>config(settings.get('pattern'),settings.get('interval'),settings.get('hold'),settings.get('fastTest')===true);
+ const sub100=()=>Number(settings.get('interval'))<100;
  const marker=path.join(ctx.dataDir,'manual-flash-pending.json');
  const journal={exists:()=>fs.existsSync(marker),mark:()=>fs.writeFileSync(marker,JSON.stringify({at:new Date().toISOString()}),{flag:'wx'}),clear:()=>fs.unlinkSync(marker)};
  const flash=new ManualFlash(reader.diag,log,undefined,Date.now,journal);let lastLightAt=0,flashTask=null;
@@ -42,7 +42,7 @@ mgu.run({async start(ctx){
    const release=Release.summarize(flash.trace,flash.cleanupUnconfirmed);
    const returnState=release.locked?'LOCKED: check normal lamps':release.acknowledged?'STOP / default session acknowledged':release.attempted?'return not confirmed':'not tested';
    if(ui.isVisible('MAIN')){
-     let cfgText;try{const cfg=getConfig();cfgText=(settings.get('fastTest')===true?'FAST TEST | ':'')+cfg.label+' | '+cfg.intervalMs+' ms requested | '+cfg.durationMs/1000+' s'}catch(e){cfgText='Invalid settings: select 100 ms or above'}
+     let cfgText;try{const cfg=getConfig();cfgText=(settings.get('fastTest')===true?'FAST TEST | ':'')+cfg.label+' | '+cfg.intervalMs+' ms requested | ' +cfg.durationMs/1000+' s'+(cfg.intervalMs<100?' | parked button only':'')}catch(e){cfgText=String(e.message||e)}
      ui.text('FLASH_CONFIG',cfgText);
      ui.text('FLASH_STATUS',(flash.running?flash.status:flash.cleanupUnconfirmed?(flash.status.startsWith('LOCKED: recovery')?flash.status:'LOCKED: previous cleanup not confirmed - use Restore normal lights'):flash.status)+' | '+(g.blockedBy||'P / stationary')+' | OEM beam '+(lastCombined||'unknown')+(lastError?' | '+lastError:''));
      const lv=lever.snapshot();ui.text('LEVER_STATUS','Lever'+(leverBackground()?' (also closed)':'')+': '+(settings.get('leverTrigger')===true?lv.reason+' | triggers '+lv.triggers+(lv.rejected?' | ignored '+lv.rejected:''):'off (enable in settings)'));
@@ -75,14 +75,14 @@ mgu.run({async start(ctx){
    update();
  };
  const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()}));
- const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
+ const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!sub100()||(settings.get('fastTest')===true&&!guard.recoveryReason()&&lightProviderAvailable()));
  // Background lever mode: same P/stationary/OEM-off guard, but no visible menu needed.
  // Never while the diagnostics page is open (shared TASU, read-only tests).
  const leverBackground=()=>settings.get('leverBackground')===true;
  const leverScreenOk=()=>ui.isVisible('MAIN')||(leverBackground()&&!ui.isVisible('DIAGNOSTICS'));
- const backgroundRunAllowed=()=>!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!ui.isVisible('DIAGNOSTICS')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
+ const backgroundRunAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!ui.isVisible('DIAGNOSTICS')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
  let runNeedsMain=true;
- const leverAllowed=()=>!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&!guard.reason()&&!pending&&!capture.active&&!flash.running&&!flash.cleanupUnconfirmed;
+ const leverAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&!guard.reason()&&!pending&&!capture.active&&!flash.running&&!flash.cleanupUnconfirmed;
  const feedLever=()=>{const fired=lever.update(lastCombined,lastLightAt,leverAllowed());persistBackground();if(fired)startFlash('lever').catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()});};
  async function startFlash(source){
    if(pending||capture.active||flash.running){if(source==='lever')lever.runEnded();throw Error('Another operation in progress');}
@@ -96,6 +96,7 @@ mgu.run({async start(ctx){
    let task;
    try{
      const cfg=getConfig();attempt.requested={...cfg,fast:settings.get('fastTest')===true};
+     if(cfg.intervalMs<100&&source!=='button')throw Error('Sub-100 ms tests require an explicit button press while parked');
      const background=source==='lever'&&leverBackground();attempt.background=background;
      const runAllowed=background?backgroundRunAllowed:flashAllowed;runNeedsMain=!background;
      if(!runAllowed())throw Error('Park securely in P, enable manual flash and switch OEM high beam OFF');

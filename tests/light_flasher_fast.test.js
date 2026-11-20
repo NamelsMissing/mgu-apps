@@ -99,3 +99,40 @@ test('fast setting defaults OFF', () => {
     const app = require('../apps/light_flasher/app.json');
     assert.equal(app.settings.find((x) => x.key === 'fastTest').default, false);
 });
+
+const {config}=require('../apps/light_flasher/flash-config');
+test('sub-100 intervals are available only with fast enabled',()=>{
+ for(const ms of [20,40,60,80]){
+  assert.equal(config('alternate',ms,2000,true).intervalMs,ms);
+  assert.throws(()=>config('alternate',ms,2000),/require fast mode/);
+ }
+ assert.throws(()=>config('alternate',1,2000,true),/Invalid flash timing/);
+});
+test('standard sub-100 rejects before any diagnostic request',async()=>{
+ const r=rig();await assert.rejects(r.lf.run(req(false,{intervalMs:40}),()=>true),/require fast mode/);
+ assert.equal(r.log.length,0);
+});
+test('sub-100 fast mode executes with positive replies and final STOP/default',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(true,{intervalMs:40}),()=>true);
+ assert.equal(r.lf.config.intervalMs,40);
+ assert.deepEqual(r.log.slice(-4),['433102A54B','443102A54B','431001','441001']);
+ assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('transport-bound fast mode does not promise shorter physical timing',async()=>{
+ const gap=async ms=>{const r=rig({rttMs:120});await r.lf.run(req(true,{intervalMs:ms}),()=>true);return Timing.summarize(r.lf.trace).startDispatchGaps.meanMs};
+ assert.equal(await gap(20),await gap(100));
+});
+test('sub-100 fast mode skips PWM restart on guard loss and performs STOP',async()=>{
+ const r=rig({rttMs:10});
+ await assert.rejects(r.lf.run(req(true,{intervalMs:40}),()=>!r.log.some(x=>x.includes('3101A54B083C01'))),/guard changed/);
+ assert.ok(!r.log.some(x=>x.includes('3101A54B080001')));
+ assert.ok(r.log.includes('433102A54B'));
+ assert.equal(r.state[0x43].running,false);
+});
+test('sub-100 requires foreground explicit start and strict parked guard',()=>{
+ const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
+ assert.match(src,/cfg\.intervalMs<100&&source!=='button'/);
+ assert.match(src,/!sub100\(\)\|\|\(settings\.get\('fastTest'\)===true&&!guard\.recoveryReason\(\)&&lightProviderAvailable\(\)\)/);
+ assert.match(src,/const leverAllowed=\(\)=>!sub100\(\)/);
+ assert.match(src,/const backgroundRunAllowed=\(\)=>!sub100\(\)/);
+});
