@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact parked flash control with optional lever trigger in P (also with the app closed via autostart), one diagnostics page, requested intervals 100–1000 ms.",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -165,6 +165,11 @@
           "button",
           "BTN_FLASH_STOP",
           "Stop"
+        ],
+        [
+          "button",
+          "BTN_RECOVER",
+          "Restore normal lights (P)"
         ],
         [
           "text3",

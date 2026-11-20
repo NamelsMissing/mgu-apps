@@ -1,5 +1,9 @@
 # Light Flasher 0.1.14
 
+## 0.1.16 – Manual cleanup recovery (candidate)
+
+If LOCKED appears after a run, park securely in P on private property, switch OEM high beam OFF and select **Restore normal lights (P)**. No new flash pattern is started. Recovery validates both FLM identities, attempts STOP and return to default diagnostic session, then checks CH8 OFF (0% / 0 mA) on both sides. Only confirmed replies and current parked/OEM-off signals permit removing the pending marker. If STOP is rejected (including an already expired routine), a timeout occurs, or readback fails, the lock remains: inspect the automatically exported recovery log and seek service if needed. Electrical readback is not optical restoration proof. The speed/P guard is restored; a successful final STOP retry supersedes an earlier failed STOP. Vehicle validation is pending.
+
 ## 0.1.14 – Test option: fast mode
 
 New setting "Test: fast mode (no 150 ms gap, PWM 0 instead of STOP between pulses)", default OFF; applies to button and lever runs. Background: BimmerLight uses the same FLM_KANAL routine; its shorter intervals come mainly from a direct adapter connection and from sending STOP only at the end. Our 512 ms START gap at 100 ms requested consists of START and STOP round trips over TASU plus the fixed 150 ms dark gap.

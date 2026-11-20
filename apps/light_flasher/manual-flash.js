@@ -11,6 +11,61 @@ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 class ManualFlash {
  constructor(diag,log,sleep=wait,now=Date.now,journal=null){this.diag=diag;this.log=log;this.sleep=sleep;this.now=now;this.journal=journal;this.running=false;this.cancelled=false;this.trace=[];this.status='Idle';this.cleanupUnconfirmed=!!(journal&&journal.exists());this.config=null;this.stepsCompleted=0;this.elapsedMs=0;this.fast=null;}
  cancel(){this.cancelled=true;}
+ // Explicit recovery only: never send routine START or PWM commands.
+ async recover(allowed,changed=()=>{}){
+  if(this.running)throw Error('Another operation in progress');
+  if(!this.cleanupUnconfirmed&&!(this.journal&&this.journal.exists()))return;
+  this.cleanupUnconfirmed=true;
+  if(!allowed()||!this.diag.available)throw Error('Park in P, stationary, switch OEM high beam OFF and wait for TASU');
+  this.running=true;this.cancelled=false;this.trace=[];this.config=null;this.fast=null;this.stepsCompleted=0;this.elapsedMs=0;
+  this.status='Recovering normal lamp control';
+  const began=this.now(),touched=[],errors=[];
+  const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Recovery cancelled or parked/OEM-light guard changed')};
+  const send=async(m,sid,data,cleanup=false)=>{
+   if(!cleanup)check();
+   const at=this.now(),rec={at:new Date().toISOString(),side:m.side,tx:hex([sid,...data]),elapsedMs:at-began};this.trace.push(rec);
+   try{
+    if(!this.diag.available)throw Error('TASU unavailable');
+    const u=await this.diag.physical(m.address,sid,data,1500,replyTo(sid,data),{maxRetries:0,callTimeoutMs:1500,hardTimeoutMs:2400,pendingTimeoutMs:1500});
+    rec.rx=u?hex(u):'TIMEOUT';
+    if(!u||u[0]!==sid+0x40||!replyTo(sid,data)(u))throw Error(m.side+' '+rec.tx+' reply '+rec.rx);
+    return u;
+   }catch(e){rec.error=String(e.message||e);throw e}
+   finally{rec.requestMs=Math.max(0,this.now()-at);}
+  };
+  const record=e=>{const msg=String(e.message||e);errors.push(msg);this.log.warn(msg)};
+  try{
+   changed();
+   // Validate both identities before changing either session.
+   for(const m of units){const u=await send(m,0x22,[0xF1,0x50]);if(hex(u.slice(3))!==m.index)throw Error('Unsupported '+m.side+' FLM identity');}
+   try{
+    for(const m of units){
+     check();touched.push(m);
+     try{
+      await send(m,0x10,[0x03]);await send(m,0x31,[0x02,0xA5,0x4B]);
+     }catch(e){record(e)}
+    }
+   }finally{
+    // Always attempt default session for any possibly changed ECU.
+    for(const m of touched){try{await send(m,0x10,[0x01],true)}catch(e){record(e)}}
+   }
+   if(errors.length)throw Error('STOP/default session not confirmed');
+   for(const m of units){
+    const raw=await send(m,0x22,[0xD6,0xDB]);
+    const ch=Feedback.decode(Array.from(raw).map(x=>x.toString(16).padStart(2,'0')).join(' '));
+    if(!ch||ch[7].pwmPercent!==0||ch[7].currentMa!==0)throw Error(m.side+' high beam OFF not confirmed');
+   }
+   check();
+   if(this.journal&&this.journal.exists())this.journal.clear();
+   this.cleanupUnconfirmed=false;
+  }catch(e){record(e)}
+  finally{
+   this.elapsedMs=this.now()-began;this.running=false;
+   this.status=this.cleanupUnconfirmed?'LOCKED: recovery not confirmed; '+errors.join(' | '):'Recovery acknowledged; verify normal lamps';
+   changed();
+  }
+  if(this.cleanupUnconfirmed)throw Error(this.status);
+ }
  async run(requested,allowed,changed=()=>{}){
   if(this.running)throw Error('Flash already running');
   if(this.cleanupUnconfirmed||(this.journal&&this.journal.exists()))throw Error('Previous cleanup unconfirmed: verify normal lights; locked pending service inspection');
@@ -95,6 +150,8 @@ class ManualFlash {
    }
   }catch(e){error=e}
   finally{
+   // A successful final STOP supersedes a failed intermediate STOP.
+   if(marked||touched.length)this.cleanupUnconfirmed=false;
    for(const m of affected)await cleanup(m,0x31,[0x02,0xA5,0x4B]);
    for(const m of touched)await cleanup(m,0x10,[0x01]);
    if(marked&&!this.cleanupUnconfirmed){try{this.journal.clear()}catch(e){this.cleanupUnconfirmed=true;error=error||e}}

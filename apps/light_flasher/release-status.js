@@ -14,7 +14,7 @@ function summarize(trace,locked){
    let outstanding=false,stopFailure=false;
    for(const r of list){
      if(r.tx.startsWith('3101A54B'))outstanding=true;
-     if(r.tx==='3102A54B'){if(ok(r,'7102A54B'))outstanding=false;else stopFailure=true;}
+     if(r.tx==='3102A54B'){if(ok(r,'7102A54B')){outstanding=false;stopFailure=false;}else stopFailure=true;}
    }
    sides[side]={startsAttempted:startCount,stopsAcknowledged:stopCount,stopConfirmed:!outstanding&&!stopFailure,defaultSessionAcknowledged:defaults.some(r=>ok(r,'5001')),sessionAttempted:sessions.length>0};
  }

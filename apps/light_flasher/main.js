@@ -9,7 +9,7 @@ const Monitor=require('./background-monitor');
 const Release=require('./release-status');
 const Timing=require('./timing');
 const {LeverTrigger}=require('./lever-trigger');
-const VERSION='0.1.15';
+const VERSION='0.1.16';
 mgu.run({async start(ctx){
  const {ui,settings,log}=ctx, capture=new Capture(),reader=new Reader(ctx.signals,log);
  const monitor=new Monitor(Date.now,ctx.app&&ctx.app.startReason);
@@ -44,7 +44,7 @@ mgu.run({async start(ctx){
    if(ui.isVisible('MAIN')){
      let cfgText;try{const cfg=getConfig();cfgText=(settings.get('fastTest')===true?'FAST TEST | ':'')+cfg.label+' | '+cfg.intervalMs+' ms requested | '+cfg.durationMs/1000+' s'}catch(e){cfgText='Invalid settings: select 100 ms or above'}
      ui.text('FLASH_CONFIG',cfgText);
-     ui.text('FLASH_STATUS',(flash.cleanupUnconfirmed?'LOCKED: previous cleanup not confirmed':flash.status)+' | '+(g.blockedBy||'P / stationary')+' | OEM beam '+(lastCombined||'unknown')+(lastError?' | '+lastError:''));
+     ui.text('FLASH_STATUS',(flash.running?flash.status:flash.cleanupUnconfirmed?(flash.status.startsWith('LOCKED: recovery')?flash.status:'LOCKED: previous cleanup not confirmed - use Restore normal lights'):flash.status)+' | '+(g.blockedBy||'P / stationary')+' | OEM beam '+(lastCombined||'unknown')+(lastError?' | '+lastError:''));
      const lv=lever.snapshot();ui.text('LEVER_STATUS','Lever'+(leverBackground()?' (also closed)':'')+': '+(settings.get('leverTrigger')===true?lv.reason+' | triggers '+lv.triggers+(lv.rejected?' | ignored '+lv.rejected:''):'off (enable in settings)'));
      ui.text('FLASH_RESULT',(gaps?'Actual START gap '+gaps.meanMs+' ms | ':'')+returnState+(flashExportError?' | Save error: '+flashExportError:flashExport?' | Log saved':''));
    }
@@ -114,6 +114,23 @@ mgu.run({async start(ctx){
  }
  handler('BTN_FLASH',()=>startFlash('button'));
  handler('BTN_FLASH_STOP',()=>{flash.cancel();update()});
+ handler('BTN_RECOVER',async()=>{
+   if(pending||capture.active||flash.running)throw Error('Stop other operations and wait for cleanup');
+   if(!flash.cleanupUnconfirmed&&!journal.exists()){lastError='';flash.status='Already unlocked; no recovery needed';update();return;}
+   const allowed=()=>!closing&&ui.isVisible('MAIN')&&!guard.reason()&&lightProviderAvailable()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
+   if(!allowed())throw Error('Park securely in P, switch OEM high beam OFF and wait for fresh signals');
+   pending=true;runNeedsMain=true;lever.runStarted();lastError='';flashExport='';flashExportError='';
+   const attempt={id:++flashAttempt,source:'recovery',at:new Date().toISOString(),requested:null,outcome:'not started',error:null};
+   const previousTrace=flash.trace;let finishAttempt;
+   flashTask=new Promise(resolve=>{finishAttempt=resolve});
+   try{await flash.recover(allowed,update);attempt.outcome='recovery acknowledged'}
+   catch(e){attempt.error=String(e.message||e);lastError=attempt.error;attempt.outcome='recovery failed';log.warn(lastError)}
+   finally{
+     attempt.endedAt=new Date().toISOString();attempt.newTrace=flash.trace!==previousTrace;
+     try{flashExport=saveFlashAttempt(attempt)}catch(e){flashExportError=String(e.message||e);log.warn('Recovery autosave: '+flashExportError)}
+     flashTask=null;pending=false;lever.runEnded();finishAttempt();update();
+   }
+ });
  handler('BTN_DIAG',()=>{if(flash.running)throw Error('Stop manual flash first');return ui.open('DIAGNOSTICS')});
  async function checkConnection(startCapture){
    if(!valid())throw Error('Enable diagnostic mode and park in P: '+(guard.reason()||'diagnostic mode/page not enabled'));
