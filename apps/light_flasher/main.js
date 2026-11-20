@@ -117,7 +117,7 @@ mgu.run({async start(ctx){
  handler('BTN_RECOVER',async()=>{
    if(pending||capture.active||flash.running)throw Error('Stop other operations and wait for cleanup');
    if(!flash.cleanupUnconfirmed&&!journal.exists()){lastError='';flash.status='Already unlocked; no recovery needed';update();return;}
-   const allowed=()=>!closing&&ui.isVisible('MAIN')&&!guard.reason()&&lightProviderAvailable()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
+   const allowed=()=>!closing&&ui.isVisible('MAIN')&&!guard.recoveryReason()&&lightProviderAvailable()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
    if(!allowed())throw Error('Park securely in P, switch OEM high beam OFF and wait for fresh signals');
    pending=true;runNeedsMain=true;lever.runStarted();lastError='';flashExport='';flashExportError='';
    const attempt={id:++flashAttempt,source:'recovery',at:new Date().toISOString(),requested:null,outcome:'not started',error:null};

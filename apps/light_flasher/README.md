@@ -2,7 +2,7 @@
 
 ## 0.1.16 – Manual cleanup recovery (candidate)
 
-If LOCKED appears after a run, park securely in P on private property, switch OEM high beam OFF and select **Restore normal lights (P)**. No new flash pattern is started. Recovery validates both FLM identities, attempts STOP and return to default diagnostic session, then checks CH8 OFF (0% / 0 mA) on both sides. Only confirmed replies and current parked/OEM-off signals permit removing the pending marker. If STOP is rejected (including an already expired routine), a timeout occurs, or readback fails, the lock remains: inspect the automatically exported recovery log and seek service if needed. Electrical readback is not optical restoration proof. The speed/P guard is restored; a successful final STOP retry supersedes an earlier failed STOP. Vehicle validation is pending.
+If LOCKED appears after a run, park securely in P on private property, switch OEM high beam OFF and select **Restore normal lights (P)**. No new flash pattern is started. Recovery validates both FLM identities, attempts STOP and return to default diagnostic session, then checks CH8 OFF (0% / 0 mA) on both sides. Only confirmed replies and current parked/OEM-off signals permit removing the pending marker. If STOP is rejected (including an already expired routine), a timeout occurs, or readback fails, the lock remains: inspect the automatically exported recovery log and seek service if needed. Electrical readback is not optical restoration proof. The existing flash guard in 0.1.15 is unchanged; the recovery button independently requires current zero speed and P. A successful final STOP retry supersedes an earlier failed STOP. Vehicle validation is pending.
 
 ## 0.1.14 – Test option: fast mode
 
