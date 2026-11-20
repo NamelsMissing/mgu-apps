@@ -137,3 +137,27 @@ test('sub-100 requires foreground explicit start and strict parked guard',()=>{
  assert.match(src,/const leverAllowed=\(\)=>!sub100\(\)/);
  assert.match(src,/const backgroundRunAllowed=\(\)=>!sub100\(\)/);
 });
+
+test('cycle configuration supports 20 while preserving old time selections',()=>{
+ const a=config('alternate',100,'cycles:20',true);assert.equal(a.cycleCount,20);assert.equal(a.durationMs,30000);
+ assert.equal(config('alternate',100,3000).cycleCount,null);
+ assert.throws(()=>config('alternate',100,'cycles:21',true),/Invalid flash timing/);
+});
+test('20 alternate cycles complete exactly 40 steps in fast mode',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(true,{cycleCount:20}),()=>true);assert.equal(r.lf.stepsCompleted,40);assert.equal(r.log.filter(x=>x.includes('3101A54B083C01')).length,40);
+ assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('20 triple cycles complete 120 steps when transport permits',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(true,{pattern:'triple',cycleCount:20}),()=>true);assert.equal(r.lf.stepsCompleted,120);assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('standard cycles stop at exact count',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(false,{pattern:'double',cycleCount:3}),()=>true);assert.equal(r.lf.stepsCompleted,12);assert.equal(r.state[0x43].running||r.state[0x44].running,false);
+});
+test('cycle deadline ends a slow pattern with cleanup and partial count',async()=>{
+ const r=rig({rttMs:120});await r.lf.run(req(false,{pattern:'triple',intervalMs:1000,cycleCount:20}),()=>true);assert.ok(r.lf.stepsCompleted<120);assert.match(r.lf.status,/Time limit/);assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('cycle guard stays active for entire selected run',()=>{
+ const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
+ assert.match(src,/!\(cycleSelected\(\)\|\|runCycles\)\|\|\(!guard\.recoveryReason\(\)&&lightProviderAvailable\(\)\)/);
+ assert.match(src,/runCycles=cfg\.cycleCount!==null/);
+});

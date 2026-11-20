@@ -1,5 +1,9 @@
 # Light Flasher 0.1.14
 
+## 0.1.20 – Repeat by cycle count
+
+Run length offers the previous 2–5 s choices and 1–20 cycles. A cycle means one complete pattern (alternate L/R = 2 steps, double = 4, triple = 6, both together = 1). The chosen count is used for button and eligible parked stalk runs. Cycle mode requires confirmed stationary/P and fresh OEM-light/provider state throughout; existing below-100 ms button-only restriction remains. At most 30 s of pattern starts are permitted, so slow transport or long patterns may end before the requested count, with the achieved count reported. STOP/default session cleanup remains mandatory. No vehicle test yet.
+
 ## 0.1.19 – Adjustable stalk pulse range
 
 Settings: Lever hold minimum (0–1.5 s) and maximum (0.25–2 s), default 0–1.5 s as before. Minimum must be strictly below maximum; invalid combinations disable the stalk trigger until corrected. Stable OFF before pull (1 s), OFF confirmation after release (400 ms) and cooldown (5 s) remain unchanged. Changing the range resets pending detection. A too-long pulse is rejected even if its first observed OFF transition arrives after the maximum. Passive background signal monitoring is always on while the app process is running; no additional diagnostic requests. Stalk activation requires flash control and stalk trigger enabled, plus background trigger enabled outside the main menu, confirmed stationary/P and fresh signals. Sub-100 ms flash intervals remain explicit button only. Timing reflects observed combined OEM beam signal, not direct lever position; sustained beam toggled briefly may look like a pull. Background launch/provider behavior must still be verified on the actual MGU.

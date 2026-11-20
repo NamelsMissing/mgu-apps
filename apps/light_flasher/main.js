@@ -9,7 +9,7 @@ const Monitor=require('./background-monitor');
 const Release=require('./release-status');
 const Timing=require('./timing');
 const {LeverTrigger}=require('./lever-trigger');
-const VERSION='0.1.19';
+const VERSION='0.1.20';
 mgu.run({async start(ctx){
  const {ui,settings,log}=ctx, capture=new Capture(),reader=new Reader(ctx.signals,log);
  const monitor=new Monitor(Date.now,ctx.app&&ctx.app.startReason);
@@ -28,6 +28,7 @@ mgu.run({async start(ctx){
  const guard=new Guard(Date.now,()=>{});
  const getConfig=()=>config(settings.get('pattern'),settings.get('interval'),settings.get('hold'),settings.get('fastTest')===true);
  const sub100=()=>Number(settings.get('interval'))<100;
+ const cycleSelected=()=>/^cycles:/.test(String(settings.get('hold')));
  const marker=path.join(ctx.dataDir,'manual-flash-pending.json');
  const journal={exists:()=>fs.existsSync(marker),mark:()=>fs.writeFileSync(marker,JSON.stringify({at:new Date().toISOString()}),{flag:'wx'}),clear:()=>fs.unlinkSync(marker)};
  const flash=new ManualFlash(reader.diag,log,undefined,Date.now,journal);let lastLightAt=0,flashTask=null;
@@ -40,9 +41,9 @@ mgu.run({async start(ctx){
  const update=()=>{
    const locked=flash.cleanupUnconfirmed||journal.exists()&&!flash.running;
    if(ui.isVisible('MAIN')){
-     let cfgText;try{const cfg=getConfig();cfgText=cfg.label+' | '+cfg.intervalMs+' ms | '+cfg.durationMs/1000+' s'+(settings.get('fastTest')===true?' | Fast':'')}catch(e){cfgText=String(e.message||e)}
+     let cfgText;try{const cfg=getConfig();cfgText=cfg.label+' | '+cfg.intervalMs+' ms | '+(cfg.cycleCount===null?cfg.durationMs/1000+' s':cfg.cycleCount+' cycles')+(settings.get('fastTest')===true?' | Fast':'')}catch(e){cfgText=String(e.message||e)}
      ui.text('FLASH_CONFIG',cfgText);
-     let status=flash.running?'Working...':locked?'Locked - restore normal lights (P)':lastError?'Error - '+lastError:settings.get('manualFlash')!==true?'Flash control disabled':!reader.diag.available?'Waiting for connection':flash.status.startsWith('Pattern finished')?'Finished':flash.status.startsWith('Recovery acknowledged')?'Lights released':'Ready';
+     let status=flash.running?(flash.config&&flash.config.cycleCount?'Cycles '+Math.floor(flash.stepsCompleted/flash.config.steps.length)+'/'+flash.config.cycleCount:'Working...'):locked?'Locked - restore normal lights (P)':lastError?'Error - '+lastError:settings.get('manualFlash')!==true?'Flash control disabled':!reader.diag.available?'Waiting for connection':flash.status.startsWith('Time limit')?flash.status.split('; verify')[0]:flash.status.startsWith('Pattern finished')?(flash.config&&flash.config.cycleCount?'Finished - '+flash.config.cycleCount+' cycles':'Finished'):flash.status.startsWith('Recovery acknowledged')?'Lights released':'Ready';
      if(flashExportError)status+=' | Report save failed';
      ui.text('FLASH_STATUS',status);
    }
@@ -77,13 +78,13 @@ mgu.run({async start(ctx){
    update();
  };
  const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()}));
- const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!(sub100()||runSub100)||(settings.get('fastTest')===true&&!guard.recoveryReason()&&lightProviderAvailable()));
+ const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!(sub100()||runSub100)||(settings.get('fastTest')===true&&!guard.recoveryReason()&&lightProviderAvailable()))&&(!(cycleSelected()||runCycles)||(!guard.recoveryReason()&&lightProviderAvailable()));
  // Background lever mode: same P/stationary/OEM-off guard, but no visible menu needed.
  // Never while the diagnostics page is open (shared TASU, read-only tests).
  const leverBackground=()=>settings.get('leverBackground')===true;
  const leverScreenOk=()=>ui.isVisible('MAIN')||(leverBackground()&&!menuVisible());
  const backgroundRunAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!menuVisible()&&!guard.recoveryReason()&&lightProviderAvailable()&&lever.rangeValid&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
- let runNeedsMain=true,runSub100=false;
+ let runNeedsMain=true,runSub100=false,runCycles=false;
  const leverAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&!guard.recoveryReason()&&lightProviderAvailable()&&lever.rangeValid&&!pending&&!capture.active&&!flash.running&&!flash.cleanupUnconfirmed;
  const feedLever=()=>{const fired=lever.update(lastCombined,lastLightAt,leverAllowed());persistBackground();if(fired)startFlash('lever').catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()});};
  async function startFlash(source){
@@ -99,21 +100,21 @@ mgu.run({async start(ctx){
    try{
      const cfg=getConfig();attempt.requested={...cfg,fast:settings.get('fastTest')===true};
      if(cfg.intervalMs<100&&source!=='button')throw Error('Sub-100 ms tests require an explicit button press while parked');
-     runSub100=cfg.intervalMs<100;
+     runSub100=cfg.intervalMs<100;runCycles=cfg.cycleCount!==null;
      const background=source==='lever'&&leverBackground();attempt.background=background;
      const runAllowed=source==='lever'?()=>lever.rangeValid&&settings.get('leverTrigger')===true&&!guard.recoveryReason()&&lightProviderAvailable()&&(background?backgroundRunAllowed():flashAllowed()):flashAllowed;runNeedsMain=!background;
      if(!runAllowed())throw Error('Park securely in P, enable manual flash and switch OEM high beam OFF');
      attempt.outcome='started';
      task=flash.run({...cfg,fast:settings.get('fastTest')===true},runAllowed,update);
      await task;
-     attempt.outcome='finished';
+     attempt.outcome=flash.status.startsWith('Time limit')?'cycle time limit reached':'finished';
    }catch(e){attempt.error=String(e.message||e);lastError=attempt.error;attempt.outcome='failed or cancelled';log.warn(lastError)}
    finally{
      attempt.endedAt=new Date().toISOString();
      // Only attach this run's trace when ManualFlash actually started a new run.
      attempt.newTrace=!!task&&flash.trace!==previousTrace;
      try{flashExport=saveFlashAttempt(attempt)}catch(e){flashExportError=String(e.message||e);log.warn('Flash autosave: '+flashExportError)}
-     flashTask=null;pending=false;runSub100=false;lever.runEnded();finishAttempt();update();
+     flashTask=null;pending=false;runSub100=false;runCycles=false;lever.runEnded();finishAttempt();update();
    }
  }
  handler('BTN_FLASH',()=>startFlash('button'));
@@ -165,7 +166,7 @@ mgu.run({async start(ctx){
    return {app:'light_flasher',version:VERSION,at:new Date().toISOString(),guard:guard.snapshot(),
      bdcIndex:reader.index,identityReply:reader.identityReply,connectionState,lastError,
      tasuAvailable:reader.diag.available,tasuError:reader.diag.error||null,trace:reader.trace.slice(),
-     physicalActuation:flash.trace.some(x=>x.tx.startsWith('3101')),manualFlash:{status:flash.status,trace:flash.trace.slice(),cleanupUnconfirmed:flash.cleanupUnconfirmed,config:flash.config,fastTest:flash.fast,stepsCompleted:flash.stepsCompleted,elapsedMs:flash.elapsedMs,timing:Timing.summarize(flash.trace),release:Release.summarize(flash.trace,flash.cleanupUnconfirmed)},combinedSignal:lastCombined,capture:capture.snapshot(),flmFeedback:feedback.slice(),decodedFeedback:feedback.map(Feedback.sampleState),overrideReadiness:Feedback.limits,backgroundMonitor:monitor.snapshot(),leverTrigger:lever.snapshot(),feedbackStatus};
+     physicalActuation:flash.trace.some(x=>x.tx.startsWith('3101')),manualFlash:{status:flash.status,trace:flash.trace.slice(),cleanupUnconfirmed:flash.cleanupUnconfirmed,config:flash.config,fastTest:flash.fast,stepsCompleted:flash.stepsCompleted,cyclesCompleted:flash.config?Math.floor(flash.stepsCompleted/flash.config.steps.length):0,elapsedMs:flash.elapsedMs,timing:Timing.summarize(flash.trace),release:Release.summarize(flash.trace,flash.cleanupUnconfirmed)},combinedSignal:lastCombined,capture:capture.snapshot(),flmFeedback:feedback.slice(),decodedFeedback:feedback.map(Feedback.sampleState),overrideReadiness:Feedback.limits,backgroundMonitor:monitor.snapshot(),leverTrigger:lever.snapshot(),feedbackStatus};
  }
  function writeReport(file,report){
    fs.writeFileSync(file+'.tmp',JSON.stringify(report,null,2));fs.renameSync(file+'.tmp',file);

@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -107,7 +107,7 @@
     },
     {
       "key": "hold",
-      "label": "Flash duration",
+      "label": "Run length (time or cycles)",
       "type": "choice",
       "default": "3000",
       "options": [
@@ -126,6 +126,50 @@
         [
           "5000",
           "5 s"
+        ],
+        [
+          "cycles:1",
+          "1 cycle"
+        ],
+        [
+          "cycles:2",
+          "2 cycles"
+        ],
+        [
+          "cycles:3",
+          "3 cycles"
+        ],
+        [
+          "cycles:4",
+          "4 cycles"
+        ],
+        [
+          "cycles:5",
+          "5 cycles"
+        ],
+        [
+          "cycles:6",
+          "6 cycles"
+        ],
+        [
+          "cycles:8",
+          "8 cycles"
+        ],
+        [
+          "cycles:10",
+          "10 cycles"
+        ],
+        [
+          "cycles:12",
+          "12 cycles"
+        ],
+        [
+          "cycles:15",
+          "15 cycles"
+        ],
+        [
+          "cycles:20",
+          "20 cycles"
         ]
       ]
     },

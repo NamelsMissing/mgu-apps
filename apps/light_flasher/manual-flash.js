@@ -71,12 +71,13 @@ class ManualFlash {
   if(this.cleanupUnconfirmed||(this.journal&&this.journal.exists()))throw Error('Previous cleanup unconfirmed: verify normal lights; locked pending service inspection');
   if(!allowed()||!this.diag.available)throw Error('Enable parked flash, select P and switch OEM high beam OFF');
   const fast=requested.fast===true;
-  const cfg=config(requested.pattern,requested.intervalMs,requested.durationMs,fast);
+  const cfg=config(requested.pattern,requested.intervalMs,requested.cycleCount!=null?'cycles:'+requested.cycleCount:requested.durationMs,fast);
   this.config={...cfg,mode:fast?'fast-test':'standard'};this.stepsCompleted=0;this.elapsedMs=0;
   this.fast=fast?{offMethod:'FLM_KANAL PWM 0 (31 01 A5 4B 08 00 01)',fixedGapMs:0,offVerified:{left:null,right:null},offRequests:0}:null;
   this.running=true;this.cancelled=false;this.trace=[];this.status='Checking FLM identities and high beam OFF';changed();
   let began=null,deadline=Infinity,marked=false,error=null;
   const touched=[],affected=new Set();
+  const targetSteps=cfg.cycleCount===null?null:cfg.cycleCount*cfg.steps.length;
   const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Cancelled or park/OEM-light guard changed')};
   const send=async(m,sid,data,cleanup=false)=>{
    if(!cleanup)check();
@@ -112,7 +113,7 @@ class ManualFlash {
      const ok=!!ch&&ch[7].pwmPercent===0&&ch[7].currentMa===0;this.fast.offVerified[m.side]=ok;changed();
      if(!ok)throw Error(m.side+': PWM 0 not confirmed as OFF (D6DB channel 8 '+(ch?ch[7].pwmPercent+' % / '+ch[7].currentMa+' mA':'unreadable')+'); fast test unusable');
     };
-    for(let i=0;i<100&&this.now()<deadline;i++){
+    for(let i=0;i<(targetSteps===null?100:targetSteps)&&this.now()<deadline;i++){
      check();const step=cfg.steps[i%cfg.steps.length];const started=[];const stepAt=this.now();
      this.status='FAST TEST '+cfg.label+' | step '+(i+1)+' | '+step.join(' + ');changed();
      for(const side of step){
@@ -123,14 +124,14 @@ class ManualFlash {
      if(started.length)await delay(Math.max(0,cfg.intervalMs-(this.now()-stepAt)),deadline);
      for(const m of started){
       // For experimental sub-100 ms tests, guard loss falls directly through to STOP cleanup.
-      if(cfg.intervalMs<100)check();
-      await send(m,0x31,OFF_PWM0,cfg.intervalMs>=100);this.fast.offRequests++;
+      if(cfg.intervalMs<100||cfg.cycleCount!==null)check();
+      await send(m,0x31,OFF_PWM0,cfg.intervalMs>=100&&cfg.cycleCount===null);this.fast.offRequests++;
       if(this.fast.offVerified[m.side]===null)await verifyOff(m);
      }
      if(started.length===step.length)this.stepsCompleted++;
     }
    }else
-   for(let i=0;i<50&&this.now()<deadline;i++){
+   for(let i=0;i<(targetSteps===null?50:targetSteps)&&this.now()<deadline;i++){
     check();const step=cfg.steps[i%cfg.steps.length];const started=[];const stepAt=this.now();
     this.status='Pattern '+cfg.label+' | step '+(i+1)+' | '+step.join(' + ');changed();
     try{
@@ -148,7 +149,7 @@ class ManualFlash {
     if(this.cleanupUnconfirmed)throw Error('STOP not confirmed; no further pulses');
     if(started.length===step.length)this.stepsCompleted++;
     // A real dark gap between repeated same-side pulses; no new pulse before STOP.
-    if(this.now()<deadline)await delay(150,deadline);
+    if(this.now()<deadline&&(targetSteps===null||this.stepsCompleted<targetSteps))await delay(150,deadline);
    }
   }catch(e){error=e}
   finally{
@@ -160,7 +161,7 @@ class ManualFlash {
    this.elapsedMs=began===null?0:this.now()-began;
    this.running=false;
    this.status=this.cleanupUnconfirmed?'LOCKED: cleanup not confirmed; check normal lamps':
-    error?'Stopped: '+String(error.message||error):'Pattern finished; '+this.stepsCompleted+' steps; verify normal lamps';
+    error?'Stopped: '+String(error.message||error):targetSteps!==null&&this.stepsCompleted<targetSteps?'Time limit; '+Math.floor(this.stepsCompleted/cfg.steps.length)+'/'+cfg.cycleCount+' cycles; verify normal lamps':'Pattern finished; '+this.stepsCompleted+' steps; verify normal lamps';
    changed();
   }
   if(error)throw error;
