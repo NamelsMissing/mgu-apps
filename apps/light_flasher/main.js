@@ -75,13 +75,13 @@ mgu.run({async start(ctx){
    update();
  };
  const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()}));
- const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!sub100()||(settings.get('fastTest')===true&&!guard.recoveryReason()&&lightProviderAvailable()));
+ const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!(sub100()||runSub100)||(settings.get('fastTest')===true&&!guard.recoveryReason()&&lightProviderAvailable()));
  // Background lever mode: same P/stationary/OEM-off guard, but no visible menu needed.
  // Never while the diagnostics page is open (shared TASU, read-only tests).
  const leverBackground=()=>settings.get('leverBackground')===true;
  const leverScreenOk=()=>ui.isVisible('MAIN')||(leverBackground()&&!ui.isVisible('DIAGNOSTICS'));
  const backgroundRunAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!ui.isVisible('DIAGNOSTICS')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
- let runNeedsMain=true;
+ let runNeedsMain=true,runSub100=false;
  const leverAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&!guard.reason()&&!pending&&!capture.active&&!flash.running&&!flash.cleanupUnconfirmed;
  const feedLever=()=>{const fired=lever.update(lastCombined,lastLightAt,leverAllowed());persistBackground();if(fired)startFlash('lever').catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()});};
  async function startFlash(source){
@@ -97,6 +97,7 @@ mgu.run({async start(ctx){
    try{
      const cfg=getConfig();attempt.requested={...cfg,fast:settings.get('fastTest')===true};
      if(cfg.intervalMs<100&&source!=='button')throw Error('Sub-100 ms tests require an explicit button press while parked');
+     runSub100=cfg.intervalMs<100;
      const background=source==='lever'&&leverBackground();attempt.background=background;
      const runAllowed=background?backgroundRunAllowed:flashAllowed;runNeedsMain=!background;
      if(!runAllowed())throw Error('Park securely in P, enable manual flash and switch OEM high beam OFF');
@@ -110,7 +111,7 @@ mgu.run({async start(ctx){
      // Only attach this run's trace when ManualFlash actually started a new run.
      attempt.newTrace=!!task&&flash.trace!==previousTrace;
      try{flashExport=saveFlashAttempt(attempt)}catch(e){flashExportError=String(e.message||e);log.warn('Flash autosave: '+flashExportError)}
-     flashTask=null;pending=false;lever.runEnded();finishAttempt();update();
+     flashTask=null;pending=false;runSub100=false;lever.runEnded();finishAttempt();update();
    }
  }
  handler('BTN_FLASH',()=>startFlash('button'));

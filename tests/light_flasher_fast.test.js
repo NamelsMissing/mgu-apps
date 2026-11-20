@@ -132,7 +132,8 @@ test('sub-100 fast mode skips PWM restart on guard loss and performs STOP',async
 test('sub-100 requires foreground explicit start and strict parked guard',()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
  assert.match(src,/cfg\.intervalMs<100&&source!=='button'/);
- assert.match(src,/!sub100\(\)\|\|\(settings\.get\('fastTest'\)===true&&!guard\.recoveryReason\(\)&&lightProviderAvailable\(\)\)/);
+ assert.match(src,/!\(sub100\(\)\|\|runSub100\)\|\|\(settings\.get\('fastTest'\)===true&&!guard\.recoveryReason\(\)&&lightProviderAvailable\(\)\)/);
+ assert.match(src,/runSub100=cfg\.intervalMs<100/);
  assert.match(src,/const leverAllowed=\(\)=>!sub100\(\)/);
  assert.match(src,/const backgroundRunAllowed=\(\)=>!sub100\(\)/);
 });
