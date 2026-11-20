@@ -1,119 +1,177 @@
 'use strict';
 
 const { Diag, hex, NRC, replyTo } = require('./kit/diag');
+const { ECU, DID, PROBE_DID, fromPreset } = require('./logic');
 
-// Never write without a fresh read-only RAM probe, confirmed standstill and
-// two deliberate presses. The settings no longer contain an additional opt-in.
+const READ_OPTIONS = { maxRetries: 0, callTimeoutMs: 3000, pendingTimeoutMs: 4000, hardTimeoutMs: 7000 };
+const BDC = 0x40;
+const BDC_DIDS = [0xDA5F, 0xE3D1];
+const writeDID = [DID >> 8, DID & 255];
+const probeDID = [PROBE_DID >> 8, PROBE_DID & 255];
+
+function bytes(data) { return data.map(n => hex(n)).join(' '); }
+function resultText(reply) {
+    if (!reply) return 'No ECU response (timeout)';
+    if (reply[0] === 0x7F && reply.length >= 3) {
+        return bytes(reply.slice(0, 3)) + ' · ' + (NRC[reply[2]] || 'unknown NRC');
+    }
+    return 'Unexpected reply: ' + bytes(reply.slice(0, 8));
+}
+
 class SafeDiag {
-    constructor(ctx, target, probeDid) {
+    constructor(ctx) {
         this.ctx = ctx;
-        this.target = target;
-        this.probeDid = probeDid;
         this.diag = new Diag(ctx.signals, ctx.log);
         this.speed = null;
         this.speedAt = 0;
-        this.readAt = 0;
-        this.readText = 'not read yet';
-        this.info = 'Select a color, then press APPLY twice while stationary.';
-        this.lastReadDid = null;
+        this.readAt = null;
         this.identity = null;
-        this.lastWriteOk = null;
+        this.ramStatus = 'Identity not read';
+        this.bdcStatus = BDC_DIDS.map(() => 'Not checked');
+        this.lastWrite = null;
+        this.lastWriteAt = null;
         this.pending = null;
         this.busy = false;
-        this.lastWriteAt = 0;
+        this.connectionRevision = 0;
+        this.info = 'Select a color and press APPLY twice at standstill.';
     }
     async init() {
         this.ctx.signals.watch('de.bmw.infotainment.vehicle.Vehicle2', '1', {
-            statusCarSpeed2: (v) => {
-                const raw = v && v.speedVehicleCentreOfGravity;
-                if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0 && raw < 65535) {
-                    this.speed = raw * 0.015625;
-                    this.speedAt = Date.now();
-                    if (this.speed > 0.5) this.pending = null;
-                }
-            },
+            statusCarSpeed2: v => this.updateSpeed(v && v.speedVehicleCentreOfGravity),
         }, this.ctx.log, { pollMs: 2000 }).catch(e => this.ctx.log.warn('Vehicle speed: ' + e));
+        this.diag.on('available', available => {
+            if (!available) {
+                this.connectionRevision++;
+                this.cancel();
+                this.readAt = null;
+                this.identity = null;
+                this.ramStatus = 'TASU connection interrupted';
+            }
+        });
         await this.diag.init();
     }
+    updateSpeed(raw) {
+        const valid = Number.isInteger(raw) && raw >= 0 && raw < 65535;
+        if (!this.parked) this.cancel();
+        this.speed = valid ? raw * 0.015625 : null;
+        this.speedAt = Date.now();
+        if (!this.parked) this.cancel();
+    }
     get online() { return !!(this.diag.p && this.diag.available); }
-    get parked() { return this.speed !== null && this.speed <= 0.5 && Date.now() - this.speedAt < 5000; }
-    get verified() { return this.readAt > 0 && Date.now() - this.readAt < 60000; }
+    get speedFresh() { return this.speed !== null && Date.now() - this.speedAt < 5000; }
+    get parked() { return this.speedFresh && this.speed === 0; }
+    get verified() { return this.readAt !== null && Date.now() - this.readAt < 60000; }
+    get confirming() { return !!this.pending && this.verified && !this.writeReady && Date.now() < this.pending.until; }
     get writeReady() {
-        if (!this.online) return 'TASU/ECU unavailable';
-        if (!this.verified) return 'Read status first (max. 60s)';
+        if (!this.online) return 'TASU unavailable';
         if (!this.parked) return 'Vehicle standstill not confirmed';
-        if (Date.now() - this.lastWriteAt < 3000) return '3s cooldown active';
+        if (this.lastWriteAt !== null && Date.now() - this.lastWriteAt < 3000) return 'Wait 3 seconds after the last request';
         return '';
     }
     cancel() { this.pending = null; }
-    async read(did) {
-        this.cancel();
-        if (this.busy) { this.info = 'Diagnostics busy'; return; }
-        if (!this.online) { this.info = 'TASU unavailable (expected in emulator)'; return; }
-        this.busy = true;
-        const data = [did >> 8, did & 255];
+    async readData(target, did, timeout) {
+        const request = [did >> 8, did & 255];
+        return this.diag.physical(target, 0x22, request, timeout, replyTo(0x22, request), READ_OPTIONS);
+    }
+    async probeRam() {
+        this.readAt = null;
+        this.identity = null;
+        this.ramStatus = 'Checking RAM01…';
+        const revision = this.connectionRevision;
         try {
-            const u = await this.diag.physical(this.target, 0x22, data, 2300, replyTo(0x22, data), { maxRetries: 0 });
-            if (u && u[0] === 0x62 && u[1] === data[0] && u[2] === data[1]) {
-                if (did === this.probeDid) {
-                    // BMW 22 F150 returns the three-byte SGBD index. The
-                    // vehicle's observed 0F 25 90 identifies RAM01 (0x37).
-                    // Authorize this known variant only; other replies remain
-                    // read-only and cannot pass the write gate.
-                    this.identity = u.length >= 6 ? bytes(u.slice(3, 6)) : 'short reply';
-                    this.readAt = u.length >= 6 && u[3] === 0x0F &&
-                        u[4] === 0x25 && u[5] === 0x90 ? Date.now() : 0;
-                }
-                this.lastReadDid = did;
-                this.readText = bytes(u);
-                this.info = 'RAM read 0x' + hex(did, 4) + ' OK' +
-                    (did === this.probeDid
-                        ? (this.verified
-                            ? ' (RAM01 0F2590 verified; apply requires two presses while parked)'
-                            : ' (unknown SGBD index ' + this.identity + '; write blocked)')
-                        : '');
-            } else {
-                if (did === this.probeDid) { this.readAt = 0; this.identity = null; }
-                this.lastReadDid = did;
-                this.readText = u ? bytes(u) : 'Timeout';
-                this.info = errorFor(u);
+            const reply = await this.readData(ECU, PROBE_DID, 2300);
+            if (!this.online || this.connectionRevision !== revision) {
+                this.ramStatus = 'TASU connection interrupted';
+                return;
             }
-        } catch (e) {
-            if (did === this.probeDid) { this.readAt = 0; this.identity = null; }
-            this.lastReadDid = did;
-            this.info = 'Read error: ' + String(e.message || e);
-        }
+            if (!reply || reply[0] !== 0x62 || reply[1] !== probeDID[0] || reply[2] !== probeDID[1] || reply.length !== 6) {
+                this.ramStatus = resultText(reply);
+                return;
+            }
+            this.identity = bytes(reply.slice(3, 6));
+            this.ramStatus = 'SGBD ' + this.identity + ' · unknown RAM variant';
+            if (this.identity === '0F 25 90') {
+                this.readAt = Date.now();
+                this.ramStatus = 'RAM01 identified · 0F 25 90';
+            }
+        } catch (e) { this.ramStatus = 'RAM read failed: ' + String(e.message || e); }
+    }
+    async readRam() {
+        this.cancel();
+        if (this.busy) return;
+        if (!this.online) { this.ramStatus = 'TASU unavailable'; return; }
+        this.busy = true;
+        try { await this.probeRam(); }
         finally { this.busy = false; }
     }
-    /** Only an explicitly confirmed user action reaches TASU 0x2E. */
-    async write(data, label) {
+    async readBdc() {
+        this.cancel();
+        if (this.busy) return;
+        if (!this.online) { this.bdcStatus = BDC_DIDS.map(() => 'TASU unavailable'); return; }
+        this.busy = true;
+        this.bdcStatus = BDC_DIDS.map(() => 'Waiting…');
+        try {
+            for (let i = 0; i < BDC_DIDS.length; i++) {
+                const did = BDC_DIDS[i];
+                if (!this.online) { this.bdcStatus[i] = 'TASU unavailable'; continue; }
+                this.bdcStatus[i] = 'Reading…';
+                try {
+                    let reply = await this.readData(BDC, did, 4000);
+                    if (this.online && reply && reply[0] === 0x7F && reply[1] === 0x22 && reply[2] === 0x21) {
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                        if (this.online) reply = await this.readData(BDC, did, 4000);
+                    }
+                    const positive = reply && reply[0] === 0x62 && reply[1] === (did >> 8) &&
+                        reply[2] === (did & 255) && reply.length > 3;
+                    if (!this.online) this.bdcStatus[i] = 'TASU unavailable';
+                    else if (positive) this.bdcStatus[i] = 'Positive reply · data length ' + (reply.length - 3);
+                    else this.bdcStatus[i] = resultText(reply);
+                } catch (e) { this.bdcStatus[i] = 'Read failed: ' + String(e.message || e); }
+                this.ctx.log.info('[AMBIENT BDC ' + hex(did, 4) + '] ' + this.bdcStatus[i]);
+            }
+        } finally { this.busy = false; }
+    }
+    async apply(color, brightness, seconds, isCurrent) {
         if (this.busy) { this.info = 'Diagnostics busy'; return; }
-        const reason = this.writeReady;
-        if (reason) { this.cancel(); this.info = reason; return; }
+        const blocked = this.writeReady;
+        if (blocked) { this.cancel(); this.info = blocked; return; }
+        if (!isCurrent()) { this.cancel(); return; }
+        const data = fromPreset(color, brightness, seconds);
         const signature = bytes(data);
-        if (!this.pending || this.pending.signature !== signature || Date.now() > this.pending.until) {
+        if (!this.verified || !this.confirming || this.pending.signature !== signature) {
+            this.cancel();
+            if (!this.verified) {
+                this.info = 'Checking RAM01…';
+                this.busy = true;
+                try { await this.probeRam(); }
+                finally { this.busy = false; }
+                if (!this.verified) { this.info = this.ramStatus; return; }
+            }
+            if (!isCurrent()) { this.info = 'Selection changed. Press APPLY to start again.'; return; }
+            const reason = this.writeReady;
+            if (reason) { this.info = reason; return; }
             this.pending = { signature, until: Date.now() + 8000 };
-            this.info = 'Press SEND AGAIN to confirm: ' + label + ' (8s)';
+            this.info = 'Press APPLY again within 8 seconds to send the RAM test.';
             return;
         }
         this.cancel();
+        this.readAt = null;
+        this.lastWriteAt = Date.now();
         this.busy = true;
         try {
-            const u = await this.diag.physical(this.target, 0x2E, data, 2300, replyTo(0x2E, data), { maxRetries: 0 });
-            if (u && u[0] === 0x6E && u[1] === data[0] && u[2] === data[1]) {
-                this.info = 'ECU acknowledged 0x2E; vehicle effect UNVERIFIED';
-                this.lastWriteOk = true;
-                this.lastWriteAt = Date.now();
-                this.readAt = 0; // require a fresh 0x22 read for any further write
-            } else { this.lastWriteOk = false; this.info = errorFor(u); }
-        } catch (e) { this.lastWriteOk = false; this.info = 'Write error: ' + String(e.message || e); }
-        finally { this.busy = false; }
+            const reply = await this.diag.physical(ECU, 0x2E, data, 2300, replyTo(0x2E, writeDID), READ_OPTIONS);
+            const acknowledged = !!(reply && reply[0] === 0x6E && reply[1] === writeDID[0] && reply[2] === writeDID[1]);
+            this.lastWrite = {
+                acknowledged,
+                text: acknowledged ? '6E E3 11 · acknowledged. Check the lights.' : resultText(reply),
+            };
+        } catch (e) { this.lastWrite = { acknowledged: false, text: 'Write failed: ' + String(e.message || e) }; }
+        finally {
+            this.busy = false;
+            this.info = this.lastWrite.text;
+            this.ctx.log.info('[AMBIENT RAM E311] ' + this.info);
+        }
     }
 }
-function bytes(b) { return Array.from(b || []).map(n => hex(n)).join(' '); }
-function errorFor(u) {
-    if (!u) return 'No ECU response (timeout)';
-    if (u[0] === 0x7F) return 'ECU rejected: NRC 0x' + hex(u[2]) + ' (' + (NRC[u[2]] || 'unknown') + ')';
-    return 'Unexpected ECU reply: ' + bytes(u);
-}
-module.exports = { SafeDiag, bytes };
+
+module.exports = { SafeDiag };

@@ -2,7 +2,7 @@
 
 1. In MGU Store add the GitHub source `NamelsMissing/mgu-apps` (authenticate if the repository is private).
 2. Select **Branch → main**. Do not choose the historical `wheelheat-autostart-0.4.2-qa` branch.
-3. Refresh the source and update `dpf_monitor` 0.2.7, `g21_ambient` 0.3.9 and `g21_wheelheat` 0.4.8.
+3. Refresh the source and update `dpf_monitor` 0.2.7, `g21_ambient` 0.4.1 and `g21_wheelheat` 0.4.8.
 4. WheelHeat's installed package already includes `mguAppStartType: autostart`; there is no separate USB patch or second source branch required.
 5. Restart the MGU to test *process* autostart. Separately enable **Automatic heating on cold startup** in the app if it has never been enabled. Future normal updates preserve that choice and the other settings.
 
@@ -15,8 +15,7 @@ Offline checks (no BMW SDK):
 ```sh
 node tests/g21_car_ui_smoke.test.js
 node tests/wheelheat_live_gate.test.js
-node tests/ambient_temporary_apply.test.js
-node --test tests/ambient_ui.test.js tests/wheelheat_ui.test.js tests/controls.test.js
+node --test tests/ambient_*.test.js tests/wheelheat_ui.test.js tests/controls.test.js
 ```
 
 Settings are stored atomically in each installed app's stable `data/settings.json` with a local backup and should survive normal app restarts and Store updates. If the settings disappear again, inspect the application's log for `settings save failed` and the MGU Store update log for whether the app's data directory was retained.

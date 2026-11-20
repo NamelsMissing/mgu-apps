@@ -3,12 +3,14 @@
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const A = require('./logic');
-const { SafeDiag, bytes } = require('./safe_diag');
-const { BdcLin } = require('./bdc_lin');
+const { SafeDiag } = require('./safe_diag');
 const { AmbientProfiles, MODES, modeFromSignal } = require('./ambient_profiles');
 
 // The renderer itself adds the single native Settings tab via BTN_SETTINGS.
-const TABS = ['Color', 'Zones', 'Favorites', 'Drive modes', 'Diagnostics'];
+const TABS = ['Color', 'Favorites', 'Drive modes', 'Diagnostics'];
+const COLOR = 0, FAVORITES = 1, DRIVE_MODES = 2, DIAGNOSTICS = 3;
+const OFF = A.COLORS.length - 1;
+const DEFAULT_RGB = [0, 127, 254];
 const PICKER = { x: 56, y: 130, w: 632, h: 140, cols: 24, rows: 11 };
 const RGB_SLIDERS = [
     { key: 'customRed', label: 'R', y: 285 },
@@ -19,19 +21,38 @@ const BRIGHTNESS_Y = 419;
 const SLIDER_X = 145, SLIDER_W = 490;
 const text = (cv, s, x, y, size, color, options) => cv.text(String(s), x, y, size, color, options || {});
 const rgbHex = rgb => rgb.map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase();
-function softButton(cv, t, x, y, w, label, active) {
+function button(cv, t, x, y, w, label, run, key, active = false) {
     cv.fillRect(x, y, w, 44, active ? '#216071' : '#253342');
     text(cv, label, x + 13, y + 29, 20, active ? '#ffffff' : t.text);
+    if (cv.own && run) cv.target(x, y, w, 44, run, key);
 }
+function status(cv, value, x, y, width, color) {
+    let remaining = String(value);
+    for (let line = 0; line < 2 && remaining; line++) {
+        let end = remaining.length;
+        const suffix = line === 1 && cv.textWidth(remaining, 20) > width ? '…' : '';
+        while (end > 0 && cv.textWidth(remaining.slice(0, end) + suffix, 20) > width) end--;
+        if (line === 0 && end < remaining.length) {
+            const space = remaining.lastIndexOf(' ', end);
+            if (space > 0) end = space;
+        }
+        text(cv, remaining.slice(0, end) + suffix, x, y + line * 25, 20, color);
+        remaining = remaining.slice(end).trim();
+    }
+}
+
+const SWATCHES = A.SATURATIONS.slice().reverse().map(saturation =>
+    A.HUES.map(hue => '#' + rgbHex(A.hsvToRgb(hue, saturation))));
+
 
 function drawPicker(cv, hue, saturation, active) {
     const p = PICKER;
     for (let row = 0; row < p.rows; row++) {
         for (let col = 0; col < p.cols; col++) {
-            const left = p.x + Math.round(col * p.w / p.cols);
-            const top = p.y + Math.round(row * p.h / p.rows);
-            cv.fillRect(left, top, Math.ceil(p.w / p.cols) + 1, Math.ceil(p.h / p.rows) + 1,
-                '#' + rgbHex(A.hsvToRgb(A.HUES[col], 100 - A.SATURATIONS[row])));
+            const left = Math.ceil(col * p.w / p.cols), right = Math.ceil((col + 1) * p.w / p.cols);
+            const top = Math.ceil(row * p.h / p.rows), bottom = Math.ceil((row + 1) * p.h / p.rows);
+            cv.fillRect(p.x + left, p.y + top, right - left, bottom - top,
+                SWATCHES[row][col]);
         }
     }
     if (active) {
@@ -64,516 +85,302 @@ function drawBrightnessSlider(cv, t, value) {
 
 mgu.run({
     async start(ctx) {
-        const ctl = new SafeDiag(ctx, A.ECU, A.PROBE_DID);
-        const bdc = new BdcLin(ctx, ctl);
-        const profiles = new AmbientProfiles(ctx.settings);
-        let tab = 0, rgbChannel = 0;
-        let zoneSelected = 0, zoneScroll = 0, favoriteSelected = 0, modeSelected = 0;
-        let driveMode = null;
-        let touchedSlider = null;
-        let lastDragUpdate = 0;
-        let actionNotice = 'No action requested.';
-        let plan = null;
-        // Settings from 0.3.0 may still contain the removed local lilac mode.
-        if (ctx.settings.get('colorMode') === 'saved') ctx.settings.set('colorMode', 'preset');
-        if (ctx.settings.get('presetColor') === '6') ctx.settings.set('presetColor', '0');
-        const setTab = i => {
-            if (Number.isInteger(i) && i >= 0 && i < TABS.length) {
-                tab = i;
-                if (tab === 4) ctl.read(A.PROBE_DID).catch(e => {
-                    ctl.info = 'RAM status read: ' + e.message;
-                });
-            }
+        const settings = ctx.settings;
+        const ctl = new SafeDiag(ctx);
+        const profiles = new AmbientProfiles(settings);
+        let tab = COLOR, rgbChannel = 0, favoriteSelected = 0, modeSelected = 0;
+        let driveMode = null, colorNotice = '', favoriteNotice = '', modeNotice = '', menuPlan = null;
+        let touchedSlider = null, lastDragUpdate = 0, editRevision = 0;
+
+        const number = (key, min, max, fallback) => {
+            const value = settings.get(key);
+            const n = typeof value === 'string' && value.trim() ? Number(value) : value;
+            return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
         };
-        const mode = () => ctx.settings.get('colorMode');
-        const selected = () => mode() === 'custom'
-            ? A.exactColor(RGB_SLIDERS.map(s => Number(ctx.settings.get(s.key))))
-            : A.chooseColor('preset', Number(ctx.settings.get('presetColor')),
-                Number(ctx.settings.get('customHue')), Number(ctx.settings.get('customSat')));
-        const currentSnapshot = () => profiles.snapshot(selected().rgb, Number(ctx.settings.get('brightness')));
-        const raw = () => A.fromPreset(selected(), Number(ctx.settings.get('linId')),
-            Number(ctx.settings.get('brightness')), Number(ctx.settings.get('duration')));
-        const trackedKeys = ['colorMode', 'presetColor', 'customHue', 'customSat',
-            ...RGB_SLIDERS.map(s => s.key)];
-        const pickerSnapshot = () => trackedKeys.map(k => ctx.settings.get(k));
-        let previousPicker = pickerSnapshot(), pickerSyncing = false;
-        const updateSafely = fn => {
-            if (pickerSyncing) return;
-            pickerSyncing = true;
-            try { fn(); }
-            finally { previousPicker = pickerSnapshot(); pickerSyncing = false; }
+        const presetIndex = () => number('presetColor', 0, OFF, 0);
+        const hue = () => number('customHue', 0, 359, 210);
+        const saturation = () => number('customSat', 0, 100, 100);
+        const brightness = () => number('brightness', 0, 100, 50);
+        const duration = () => number('duration', 1, 254, 5);
+        const selected = () => settings.get('colorMode') === 'custom'
+            ? A.exactColor(RGB_SLIDERS.map((s, i) => number(s.key, 0, 254, DEFAULT_RGB[i])))
+            : A.COLORS[presetIndex()];
+        const target = () => settings.get('applyTarget') === 'slot11' ? 'slot11' : 'temporary';
+        const setMany = change => settings.setMany(change);
+        const resetConfirmation = () => {
+            editRevision++;
+            ctl.cancel();
+            colorNotice = '';
+            menuPlan = null;
         };
-        const syncRGB = (rgb, keepPreset = false) => {
-            updateSafely(() => {
-                const grid = A.rgbToGrid(rgb);
-                const change = {
-                    customRed: rgb[0], customGreen: rgb[1], customBlue: rgb[2],
-                    customHue: grid.hue, customSat: grid.saturation,
-                };
-                if (!keepPreset) change.colorMode = 'custom';
-                // One persistence operation per sampled drag position; previously
-                // each finger move caused six synchronous flash/file writes.
-                if (typeof ctx.settings.setMany === 'function') ctx.settings.setMany(change);
-                else Object.keys(change).forEach(k => ctx.settings.set(k, change[k]));
-            });
+        const setTab = index => {
+            if (!Number.isInteger(index) || index < 0 || index >= TABS.length) return;
+            resetConfirmation();
+            touchedSlider = null;
+            tab = index;
         };
-        const updateRGB = rgb => syncRGB(rgb);
-        const syncPreset = () => syncRGB(A.chooseColor('preset',
-            Number(ctx.settings.get('presetColor')), 0, 100).rgb, true);
-        if (mode() === 'preset') syncPreset(); // initial sliders and marker match the preset
-        const updateFromGrid = () => updateRGB(A.hsvToRgb(
-            Number(ctx.settings.get('customHue')), Number(ctx.settings.get('customSat'))));
-        const adjustRGB = delta => {
-            const rgb = RGB_SLIDERS.map(s => Number(ctx.settings.get(s.key)));
-            rgb[rgbChannel] = Math.max(0, Math.min(254, rgb[rgbChannel] + delta));
-            updateRGB(rgb);
-        };
+        settings.onChange(resetConfirmation);
+        if (settings.get('applyTarget') === 'bdc') settings.set('applyTarget', 'temporary');
+        if (settings.get('colorMode') === 'saved') settings.set('colorMode', 'preset');
+        if (Number(settings.get('presetColor')) === 6) settings.set('presetColor', '0');
+
+        const updateRGB = (rgb, grid = A.rgbToGrid(rgb), extra = {}) => setMany(Object.assign({
+            colorMode: 'custom', customRed: rgb[0], customGreen: rgb[1], customBlue: rgb[2],
+            customHue: grid.hue, customSat: grid.saturation,
+        }, extra));
+        const updateGrid = (h, s) => updateRGB(A.hsvToRgb(h, s), { hue: h, saturation: s });
         const setBrightness = value => {
             const next = Math.max(0, Math.min(100, Math.round(value)));
-            if (next !== Number(ctx.settings.get('brightness'))) ctx.settings.set('brightness', next);
+            if (next !== brightness()) settings.set('brightness', next);
         };
-        const nextBrightnessPreset = () => {
-            const current = Number(ctx.settings.get('brightness'));
-            setBrightness(current >= 100 ? 0 : Math.floor(current / 10) * 10 + 10);
+        const changeRGB = value => {
+            const rgb = selected().rgb.slice();
+            rgb[rgbChannel] = Math.max(0, Math.min(254, value));
+            updateRGB(rgb);
         };
-        const loadSnapshot = snapshot => {
-            if (!snapshot) return false;
-            syncRGB(snapshot.main.rgb);
-            setBrightness(snapshot.main.brightness);
-            profiles.replaceZones(snapshot);
-            bdc.cancel();
+        const snapshot = () => profiles.snapshot(selected(), brightness());
+        const loadSnapshot = look => {
+            if (!look) return false;
+            const { rgb, brightness: level, on } = look.main;
+            if (on === 0) setMany({ colorMode: 'preset', presetColor: String(OFF), brightness: level });
+            else updateRGB(rgb, A.rgbToGrid(rgb), { brightness: level });
             return true;
         };
-        const selectedModule = () => bdc.modules[zoneSelected] || null;
-        const nextZone = () => {
-            if (!bdc.modules.length) return;
-            zoneSelected = (zoneSelected + 1) % bdc.modules.length;
-            zoneScroll = Math.floor(zoneSelected / 7) * 7;
+        const chooseTarget = value => {
+            if (value !== target()) settings.set('applyTarget', value);
         };
-        const changeZonePolicy = value => {
-            const module = selectedModule();
-            if (!module) { actionNotice = 'Scan BDC LIN modules first.'; return; }
-            const old = profiles.zone(module), next = value ||
-                (old.mode === 'main' ? 'own' : old.mode === 'own' ? 'car' : 'main');
-            profiles.setZone(module, next, selected().rgb, Number(ctx.settings.get('brightness')));
-            bdc.cancel();
-        };
-        const activeModeName = () => MODES[modeSelected];
-        const selectFavorite = i => { if (i >= 0 && i < 6) favoriteSelected = i; };
-        const saveFavorite = () => {
-            profiles.saveFavorite(favoriteSelected, currentSnapshot());
-            actionNotice = 'Favorite ' + (favoriteSelected + 1) + ' saved.';
-        };
-        const loadFavorite = () => {
-            if (loadSnapshot(profiles.loadFavorite(favoriteSelected)))
-                actionNotice = 'Favorite ' + (favoriteSelected + 1) + ' loaded. Press APPLY for ECU output.';
-            else actionNotice = 'Favorite is empty.';
-        };
-        const saveDriveMode = () => {
-            profiles.saveMode(activeModeName(), currentSnapshot());
-            actionNotice = activeModeName() + ' RGB profile saved (manual APPLY required).';
-        };
-        const cycleTarget = () => ctx.settings.cycle('applyTarget');
-        const prepareSlot11 = () => {
-            plan = { kind: 'apply', result: A.slot11Plan(selected().rgb) };
-            actionNotice = 'MENU 11: RGB #' + rgbHex(selected().rgb) + ' requested; isolated palette not verified. NOT CODED.';
-        };
-        const prepareOriginal = () => {
-            plan = { kind: 'restore', result: A.slot11RestorePlan() };
-            actionNotice = 'FACTORY MENU 11: 05/00; original NCD required. NOT CODED.';
+        const planFactory = () => {
+            chooseTarget('slot11');
+            menuPlan = A.slot11RestorePlan();
         };
         const applyChoice = async () => {
-            if (ctx.settings.get('applyTarget') === 'slot11') {
-                prepareSlot11();
+            if (tab !== COLOR) return;
+            if (target() === 'slot11') {
+                menuPlan = A.slot11Plan(selected().rgb);
                 return;
             }
-            plan = null;
-            if (ctx.settings.get('applyTarget') === 'bdc') {
-                await bdc.apply(currentSnapshot(), Number(ctx.settings.get('duration')), false);
-                actionNotice = bdc.info;
-                return;
-            }
-            if (!ctl.online) {
-                actionNotice = 'No connection to RAM / TASU. No command sent.';
-                return;
-            }
-            if (!ctl.verified) {
-                // E310 and E311 readbacks are rejected by this vehicle.
-                // Validate the RAM01 numeric identity before a LIN write.
-                actionNotice = 'Checking RAM variant (22 F150) ...';
-                await ctl.read(A.PROBE_DID);
-                if (!ctl.verified) { actionNotice = ctl.info; return; }
-            }
-            await ctl.write(raw(), 'RAM-LIN RGB #' + rgbHex(selected().rgb));
-            actionNotice = ctl.info;
+            const revision = editRevision;
+            colorNotice = '';
+            await ctl.apply(selected(), brightness(), duration(), () => revision === editRevision);
+            if (revision === editRevision) colorNotice = ctl.info;
         };
+        const saveFavorite = () => {
+            profiles.saveFavorite(favoriteSelected, snapshot());
+            favoriteNotice = 'Favorite ' + (favoriteSelected + 1) + ' saved.';
+        };
+        const loadFavorite = () => {
+            favoriteNotice = loadSnapshot(profiles.loadFavorite(favoriteSelected))
+                ? 'Favorite loaded into the editor.' : 'Favorite is empty.';
+        };
+        const deleteFavorite = () => {
+            profiles.clearFavorite(favoriteSelected);
+            favoriteNotice = 'Favorite deleted.';
+        };
+        const activeMode = () => MODES[modeSelected];
+        const saveDriveMode = () => {
+            profiles.saveMode(activeMode(), snapshot());
+            modeNotice = 'Look saved.';
+        };
+        const loadDriveMode = () => {
+            modeNotice = loadSnapshot(profiles.mode(activeMode())) ? 'Look loaded into the editor.' : 'No look saved.';
+        };
+        const clearDriveMode = () => {
+            profiles.clearMode(activeMode());
+            modeNotice = 'Look deleted.';
+        };
+        const followDriveMode = () => {
+            const follow = profiles.toggleFollow();
+            if (follow && loadSnapshot(profiles.mode(driveMode))) modeNotice = 'Current driving mode loaded into the editor.';
+            else modeNotice = follow ? 'Driving-mode previews enabled.' : 'Driving-mode previews disabled.';
+        };
+
+        const page = (index, action) => () => { if (tab === index) return action(); };
         ctx.ui.onClick('BTN_PAGE', () => setTab((tab + 1) % TABS.length));
-        ctx.ui.onClick('BTN_MODE', () => {
-            if (tab === 0) {
-                ctx.settings.cycle('colorMode');
-                if (mode() === 'preset') syncPreset();
-            } else setTab((tab + 1) % TABS.length);
-        });
-        ctx.ui.onClick('BTN_COLOR', () => {
-            if (tab === 0) {
-                ctx.settings.cycle(mode() === 'custom' ? 'customHue' : 'presetColor');
-                if (mode() === 'custom') updateFromGrid();
-                else syncPreset();
-            }
-        });
-        ctx.ui.onClick('BTN_SAT', () => {
-            if (tab === 0) {
-                ctx.settings.cycle('customSat');
-                updateFromGrid();
-            }
-        });
-        ctx.ui.onClick('BTN_RGB_NEXT', () => { if (tab === 0) rgbChannel = (rgbChannel + 1) % 3; });
-        ctx.ui.onClick('BTN_RGB_DOWN', () => { if (tab === 0) adjustRGB(-1); });
-        ctx.ui.onClick('BTN_RGB_UP', () => { if (tab === 0) adjustRGB(1); });
-        ctx.ui.onClick('BTN_TARGET', () => cycleTarget());
-        ctx.ui.onClick('BTN_RESTORE', () => prepareOriginal());
-        ctx.ui.onClick('BTN_BDC_SCAN', () => bdc.scan().catch(e => {
-            bdc.info = 'BDC scan failed: ' + String(e.message || e);
+        ctx.ui.onClick('BTN_MODE', page(COLOR, () => {
+            if (settings.get('colorMode') === 'custom') settings.set('colorMode', 'preset');
+            else updateRGB(selected().rgb);
         }));
-        ctx.ui.onClick('BTN_ZONE_NEXT', () => { if (tab === 1) nextZone(); });
-        ctx.ui.onClick('BTN_ZONE_POLICY', () => { if (tab === 1) changeZonePolicy(); });
-        ctx.ui.onClick('BTN_FAV_NEXT', () => { if (tab === 2) favoriteSelected = (favoriteSelected + 1) % 6; });
-        ctx.ui.onClick('BTN_FAV_SAVE', () => { if (tab === 2) saveFavorite(); });
-        ctx.ui.onClick('BTN_FAV_LOAD', () => { if (tab === 2) loadFavorite(); });
-        ctx.ui.onClick('BTN_MODE_NEXT', () => { if (tab === 3) modeSelected = (modeSelected + 1) % MODES.length; });
-        ctx.ui.onClick('BTN_MODE_SAVE', () => { if (tab === 3) saveDriveMode(); });
-        ctx.ui.onClick('BTN_BDC_RESET', () => {
-            if (tab === 1 || tab === 4) bdc.apply(currentSnapshot(), 1, true)
-                .then(() => { actionNotice = bdc.info; })
-                .catch(e => { actionNotice = 'BDC reset error: ' + String(e.message || e); });
-        });
-        ctx.ui.onClick('BTN_BRIGHT', () => { if (tab === 0) nextBrightnessPreset(); });
-        ctx.ui.onClick('BTN_BRIGHT_DOWN', () => { if (tab === 0) setBrightness(Number(ctx.settings.get('brightness')) - 1); });
-        ctx.ui.onClick('BTN_BRIGHT_UP', () => { if (tab === 0) setBrightness(Number(ctx.settings.get('brightness')) + 1); });
+        ctx.ui.onClick('BTN_COLOR', page(COLOR, () => {
+            if (settings.get('colorMode') === 'custom') updateGrid((hue() + 15) % 360, saturation());
+            else settings.set('presetColor', String((presetIndex() + 1) % A.COLORS.length));
+        }));
+        ctx.ui.onClick('BTN_SAT', page(COLOR, () => updateGrid(hue(), (Math.floor(saturation() / 10) * 10 + 10) % 110)));
+        ctx.ui.onClick('BTN_RGB_NEXT', page(COLOR, () => { rgbChannel = (rgbChannel + 1) % RGB_SLIDERS.length; }));
+        ctx.ui.onClick('BTN_RGB_DOWN', page(COLOR, () => changeRGB(selected().rgb[rgbChannel] - 1)));
+        ctx.ui.onClick('BTN_RGB_UP', page(COLOR, () => changeRGB(selected().rgb[rgbChannel] + 1)));
+        ctx.ui.onClick('BTN_TARGET', page(COLOR, () => chooseTarget(target() === 'slot11' ? 'temporary' : 'slot11')));
+        ctx.ui.onClick('BTN_RESTORE', page(COLOR, planFactory));
+        ctx.ui.onClick('BTN_FAV_NEXT', page(FAVORITES, () => { favoriteSelected = (favoriteSelected + 1) % 6; }));
+        ctx.ui.onClick('BTN_FAV_SAVE', page(FAVORITES, saveFavorite));
+        ctx.ui.onClick('BTN_FAV_LOAD', page(FAVORITES, loadFavorite));
+        ctx.ui.onClick('BTN_MODE_NEXT', page(DRIVE_MODES, () => { modeSelected = (modeSelected + 1) % MODES.length; }));
+        ctx.ui.onClick('BTN_MODE_SAVE', page(DRIVE_MODES, saveDriveMode));
+        ctx.ui.onClick('BTN_BRIGHT', page(COLOR, () => setBrightness((Math.floor(brightness() / 10) * 10 + 10) % 110)));
+        ctx.ui.onClick('BTN_BRIGHT_DOWN', page(COLOR, () => setBrightness(brightness() - 1)));
+        ctx.ui.onClick('BTN_BRIGHT_UP', page(COLOR, () => setBrightness(brightness() + 1)));
         ctx.ui.onClick('BTN_ACTION', () => {
-            if (tab === 0) { applyChoice().catch(e => { actionNotice = 'Apply error: ' + e.message; }); return; }
-            if (tab === 4) ctl.read(A.PROBE_DID).catch(e => { ctl.info = 'Read error: ' + e.message; });
+            if (tab === DIAGNOSTICS) return ctl.readRam();
+            if (tab === COLOR) return applyChoice();
         });
-        if (typeof ctx.onTab === 'function') ctx.onTab(setTab);
-        const moveSlider = (kind, x, y) => {
-            if (kind === 'picker') {
-                const px = Math.max(PICKER.x, Math.min(PICKER.x + PICKER.w - 1, x));
-                const py = Math.max(PICKER.y, Math.min(PICKER.y + PICKER.h - 1, y));
-                const cell = A.pickerCell(px, py, PICKER.x, PICKER.y, PICKER.w, PICKER.h);
-                if (cell) updateRGB(A.hsvToRgb(cell.hue, cell.saturation));
-            } else if (kind === 'brightness') {
-                setBrightness((x - SLIDER_X) * 100 / SLIDER_W);
-            } else if (kind >= 0 && kind < RGB_SLIDERS.length) {
-                rgbChannel = kind;
-                const rgb = RGB_SLIDERS.map(s => Number(ctx.settings.get(s.key)));
-                rgb[kind] = Math.max(0, Math.min(254, Math.round((x - SLIDER_X) * 254 / SLIDER_W)));
-                updateRGB(rgb);
-            }
-        };
+        ctx.ui.onClick('BTN_BDC_STATUS', page(DIAGNOSTICS, () => ctl.readBdc()));
+        ctx.onTab(setTab);
+        const cancelOnHide = (name, visible) => { if (name === 'MAIN' && !visible) resetConfirmation(); };
+        if (typeof ctx.ui.onVisible === 'function') ctx.ui.onVisible(cancelOnHide);
+        if (typeof ctx.ui.onFocus === 'function') ctx.ui.onFocus(cancelOnHide);
+        if (typeof ctx.hideButton === 'function') {
+            ['BTN_PAGE', 'BTN_TARGET', 'BTN_ACTION', 'BTN_RESTORE', 'BTN_BDC_STATUS',
+                'BTN_FAV_NEXT', 'BTN_FAV_SAVE', 'BTN_FAV_LOAD', 'BTN_MODE_NEXT', 'BTN_MODE_SAVE']
+                .forEach(id => ctx.hideButton(id));
+        }
         if (typeof ctx.onTouch === 'function') ctx.onTouch((phase, x, y) => {
-            if (tab !== 0) { touchedSlider = null; return; }
+            if (tab !== COLOR || !Number.isFinite(x) || !Number.isFinite(y)) {
+                touchedSlider = null;
+                return;
+            }
             if (phase === 1) {
                 touchedSlider = null;
-                if (x >= PICKER.x && x <= PICKER.x + PICKER.w && y >= PICKER.y && y <= PICKER.y + PICKER.h)
+                if (x >= PICKER.x && x < PICKER.x + PICKER.w && y >= PICKER.y && y < PICKER.y + PICKER.h) {
                     touchedSlider = 'picker';
-                else if (x >= SLIDER_X - 12 && x <= SLIDER_X + SLIDER_W + 12) {
-                    touchedSlider = RGB_SLIDERS.findIndex(s => y >= s.y - 12 && y <= s.y + 32);
-                    if (touchedSlider < 0 && y >= BRIGHTNESS_Y - 12 && y <= BRIGHTNESS_Y + 32)
-                        touchedSlider = 'brightness';
+                } else if (x >= SLIDER_X - 12 && x <= SLIDER_X + SLIDER_W + 12) {
+                    const channel = RGB_SLIDERS.findIndex(s => y >= s.y - 9 && y <= s.y + 28);
+                    if (channel >= 0) touchedSlider = channel;
+                    else if (y >= BRIGHTNESS_Y - 9 && y <= BRIGHTNESS_Y + 28) touchedSlider = 'brightness';
                 }
             }
-            if (touchedSlider !== null && touchedSlider !== -1 && (phase === 1 || phase === 2 || phase === 3)) {
-                // Sample at <= 10 Hz, always commit final release position.
-                // Reading/settings writes on every raw touch-move overloads MGU.
-                const now = Date.now();
-                if (phase !== 2 || now - lastDragUpdate >= 100) {
-                    moveSlider(touchedSlider, x, y);
-                    lastDragUpdate = now;
+            const now = Date.now();
+            if (touchedSlider !== null && (phase === 1 || (phase === 2 && now - lastDragUpdate >= 100) || phase === 3)) {
+                if (touchedSlider === 'picker') {
+                    const px = Math.max(PICKER.x, Math.min(PICKER.x + PICKER.w - 1, x));
+                    const py = Math.max(PICKER.y, Math.min(PICKER.y + PICKER.h - 1, y));
+                    const cell = A.pickerCell(px, py, PICKER.x, PICKER.y, PICKER.w, PICKER.h);
+                    updateGrid(cell.hue, cell.saturation);
+                } else if (touchedSlider === 'brightness') {
+                    setBrightness((x - SLIDER_X) * 100 / SLIDER_W);
+                } else {
+                    rgbChannel = touchedSlider;
+                    changeRGB(Math.round((x - SLIDER_X) * 254 / SLIDER_W));
                 }
+                lastDragUpdate = now;
             }
             if (phase === 3) touchedSlider = null;
         });
-        if (typeof ctx.onTap === 'function') ctx.onTap((x, y) => {
-            if (tab === 0) {
-                const hit = A.pickerCell(x, y, PICKER.x, PICKER.y, PICKER.w, PICKER.h);
-                if (hit) {
-                    updateRGB(A.hsvToRgb(hit.hue, hit.saturation));
-                    return;
-                }
-                const channel = RGB_SLIDERS.findIndex(s => x >= SLIDER_X && x <= SLIDER_X + SLIDER_W &&
-                    y >= s.y - 8 && y < s.y + 29);
-                if (channel >= 0) {
-                    rgbChannel = channel;
-                    const rgb = RGB_SLIDERS.map(s => Number(ctx.settings.get(s.key)));
-                    rgb[channel] = Math.max(0, Math.min(254,
-                        Math.round((x - SLIDER_X) * 254 / SLIDER_W)));
-                    updateRGB(rgb);
-                    return;
-                }
-                if (x >= SLIDER_X && x <= SLIDER_X + SLIDER_W &&
-                    y >= BRIGHTNESS_Y - 8 && y < BRIGHTNESS_Y + 29) {
-                    setBrightness((x - SLIDER_X) * 100 / SLIDER_W);
-                    return;
-                }
-                if (y >= 354 && y < 400 && x >= 778 && x < 946)
-                    ctx.settings.set('applyTarget', 'temporary');
-                else if (y >= 354 && y < 400 && x >= 948 && x < 1115)
-                    ctx.settings.set('applyTarget', 'bdc');
-                else if (y >= 354 && y < 400 && x >= 1117 && x < 1283)
-                    ctx.settings.set('applyTarget', 'slot11');
-                else if (y >= 354 && y < 400 && x >= 1288 && x < 1535)
-                    applyChoice().catch(e => { actionNotice = 'Apply error: ' + e.message; });
-                else if (y >= 414 && y < 459 && x >= 778 && x < 1110)
-                    prepareOriginal();
-            } else if (tab === 1) {
-                if (x >= 52 && x < 780 && y >= 122 && y < 122 + 7 * 46) {
-                    const index = zoneScroll + Math.floor((y - 122) / 46);
-                    if (index < bdc.modules.length) zoneSelected = index;
-                } else if (x >= 52 && x < 270 && y >= 450 && y < 499) {
-                    zoneScroll = Math.max(0, zoneScroll - 7);
-                } else if (x >= 280 && x < 498 && y >= 450 && y < 499) {
-                    zoneScroll = Math.min(Math.max(0, bdc.modules.length - 7), zoneScroll + 7);
-                } else if (x >= 930 && x < 1108 && y >= 248 && y < 298) changeZonePolicy('main');
-                else if (x >= 1116 && x < 1294 && y >= 248 && y < 298) changeZonePolicy('own');
-                else if (x >= 1302 && x < 1480 && y >= 248 && y < 298) changeZonePolicy('car');
-                else if (x >= 930 && x < 1207 && y >= 334 && y < 383)
-                    bdc.scan().catch(e => { bdc.info = 'Scan: ' + e.message; });
-                else if (x >= 1212 && x < 1510 && y >= 334 && y < 383) {
-                    if (ctx.settings.get('applyTarget') !== 'bdc')
-                        ctx.settings.set('applyTarget', 'bdc');
-                    bdc.apply(currentSnapshot(), Number(ctx.settings.get('duration')), false)
-                        .then(() => { actionNotice = bdc.info; })
-                        .catch(e => { actionNotice = 'BDC apply: ' + e.message; });
-                } else if (x >= 930 && x < 1330 && y >= 408 && y < 456)
-                    bdc.apply(currentSnapshot(), 1, true)
-                        .then(() => { actionNotice = bdc.info; })
-                        .catch(e => { actionNotice = 'BDC restore: ' + e.message; });
-            } else if (tab === 2) {
-                if (x >= 45 && x < 1530 && y >= 110 && y < 374) {
-                    const column = Math.floor((x - 45) / 495);
-                    const row = Math.floor((y - 110) / 130);
-                    if (column < 3 && row < 2) selectFavorite(row * 3 + column);
-                } else if (y >= 404 && y < 455) {
-                    if (x >= 310 && x < 610) saveFavorite();
-                    else if (x >= 620 && x < 920) loadFavorite();
-                    else if (x >= 930 && x < 1230) {
-                        profiles.clearFavorite(favoriteSelected);
-                        actionNotice = 'Favorite cleared.';
-                    }
-                }
-            } else if (tab === 3) {
-                if (x >= 54 && x < 790 && y >= 130 && y < 434)
-                    modeSelected = Math.min(3, Math.max(0, Math.floor((y - 130) / 76)));
-                else if (x >= 900 && x < 1190 && y >= 252 && y < 302) saveDriveMode();
-                else if (x >= 1204 && x < 1510 && y >= 252 && y < 302) {
-                    if (loadSnapshot(profiles.mode(activeModeName())))
-                        actionNotice = 'Mode look loaded. APPLY manually for BDC output.';
-                } else if (x >= 900 && x < 1202 && y >= 326 && y < 375) {
-                    profiles.clearMode(activeModeName());
-                    actionNotice = 'Mode profile deleted.';
-                } else if (x >= 1210 && x < 1510 && y >= 326 && y < 375) {
-                    const follow = profiles.toggleFollow();
-                    actionNotice = follow ? 'Mode following is preview-only; no automatic BDC writes.' :
-                        'Mode following disabled.';
-                }
-            } else if (tab === 4) {
-                if (x >= 835 && x < 1150 && y >= 410 && y < 460)
-                    bdc.scan().catch(e => { bdc.info = 'Scan: ' + e.message; });
-            }
-        });
-        ctx.settings.onChange(() => {
-            ctl.cancel();
-            bdc.cancel();
-            if (pickerSyncing) return;
-            const current = pickerSnapshot();
-            const modified = key => current[trackedKeys.indexOf(key)] !==
-                previousPicker[trackedKeys.indexOf(key)];
-            if (modified('colorMode') || (mode() === 'preset' && modified('presetColor'))) {
-                if (mode() === 'preset') syncPreset();
-                else previousPicker = current;
-            } else if (RGB_SLIDERS.some(s => modified(s.key))) {
-                updateRGB(RGB_SLIDERS.map(s => Number(ctx.settings.get(s.key))));
-            } else if (modified('customHue') || modified('customSat')) {
-                updateFromGrid();
-            } else previousPicker = current;
-        });
-        ctl.init().catch(e => { ctl.info = 'TASU initialization: ' + e; });
-        // Drive mode signal is read-only. In this version mode profiles can be
-        // saved/loaded, but never write to BDC automatically while driving.
+
+        ctl.init().catch(e => { ctl.ramStatus = 'TASU initialization: ' + e; });
         ctx.signals.watch('de.bmw.infotainment.drivingexcitement.FES', '1', {
             statusFESVehicleDynamicSwitchHMI: value => {
                 const next = modeFromSignal(value);
-                if (next && driveMode !== next) {
-                    driveMode = next;
-                    if (profiles.data.follow && profiles.mode(next)) {
-                        loadSnapshot(profiles.mode(next));
-                        actionNotice = next + ' look selected (preview only; press APPLY).';
-                    }
-                    ctx.log.info('[AMBIENT MODE] vehicle=' + next +
-                        '; RGB switching remains manual until BDC output is physically verified');
+                if (driveMode === next) return;
+                driveMode = next;
+                if (next && profiles.data.follow && loadSnapshot(profiles.mode(next))) {
+                    modeNotice = next.toUpperCase() + ' look loaded into the editor.';
                 }
             },
         }, ctx.log, { pollMs: 2500 }).catch(e => ctx.log.warn('FES ambient mode: ' + e));
 
+        let presetGrid = null, gridPreset = null;
         ctx.loop('MAIN', 8, () => {
             const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);
-            const color = selected();
-            const brightness = Number(ctx.settings.get('brightness'));
-            const hex = rgbHex(color.rgb);
-            const closest = A.rgbToGrid(color.rgb);
-            const target = ctx.settings.get('applyTarget');
             G.frame(cv, t, TABS, tab, []);
-            if (tab === 0) {
-                G.panel(cv, t, 24, 62, 701, 445, 'Color picker / RGB sliders');
-                drawPicker(cv, closest.hue, closest.saturation, !!color.on);
-                RGB_SLIDERS.forEach((s, index) =>
-                    drawRgbSlider(cv, t, s, Number(ctx.settings.get(s.key)), index === rgbChannel));
-                drawBrightnessSlider(cv, t, brightness);
-                text(cv, 'Nearest palette: #' + rgbHex(closest.rgb) +
-                    '  |  Exact RGB retained', 56, 481, 19, t.dim);
+            if (tab === COLOR) {
+                const color = selected(), level = brightness();
+                const custom = settings.get('colorMode') === 'custom';
+                if (!custom && gridPreset !== color) {
+                    gridPreset = color;
+                    presetGrid = A.rgbToGrid(color.rgb);
+                }
+                const grid = custom ? { hue: hue(), saturation: saturation() } : presetGrid;
+                G.panel(cv, t, 24, 62, 701, 445, 'Color picker');
+                drawPicker(cv, grid.hue, grid.saturation, color.on === 1);
+                RGB_SLIDERS.forEach((s, i) => drawRgbSlider(cv, t, s, color.rgb[i], i === rgbChannel));
+                drawBrightnessSlider(cv, t, level);
+                text(cv, 'RGB 0–254', 56, 478, 19, t.dim);
 
-                G.panel(cv, t, 746, 62, 830, 445, 'Color preview / Apply');
-                cv.fillRect(778, 120, 760, 106, color.on ? '#' + rgbHex(color.rgb.map(n =>
-                    Math.round(n * brightness / 100))) : '#151923');
-                text(cv, color.name + '  #' + hex, 785, 273, 34, t.text, { font: 'bold' });
-                text(cv, 'RGB ' + color.rgb.join(' / ') + '   |   Brightness ' +
-                    brightness + ' %', 785, 315, 23, t.accent);
-                text(cv, 'Output: ' + (target === 'temporary' ? 'RAM01 temporary test' :
-                    target === 'bdc' ? 'Detected BDC LIN zones' : 'Menu position 11 / FDL preview'),
-                785, 342, 20, t.text);
-                const choice = (x, w, label, active) => {
-                    cv.fillRect(x, 356, w, 42, active ? '#23475b' : '#1d2632');
-                    text(cv, label, x + 14, 385, 21, active ? t.accent : t.text);
-                };
-                choice(778, 166, 'RAM', target === 'temporary');
-                choice(947, 167, 'BDC zones', target === 'bdc');
-                choice(1117, 166, 'Menu 11', target === 'slot11');
-                // Keep the main action stable. The preparation sequence is
-                // explained below instead of relabelling the button itself.
-                cv.fillRect(1288, 356, 249, 42, '#1b5565');
-                text(cv, 'APPLY', 1360, 385, 24, '#ffffff', { font: 'bold' });
-                cv.fillRect(778, 416, 332, 40, '#1d2632');
-                text(cv, 'Prepare factory restore', 793, 445, 20, t.text);
-                text(cv, actionNotice.slice(0, 80), 785, 466, 18, t.warn);
-                text(cv, target === 'slot11'
-                    ? 'Existing menu position 11; no new slot. Isolated RGB coding not yet verified.'
-                    : target === 'bdc' ? bdc.info.slice(0, 77)
-                    : !ctl.verified ? 'Apply: check RAM -> arm -> confirm (parked only).'
-                        : ctl.pending ? 'Ready to send: tap APPLY again within 8 seconds.'
-                            : 'ECU ready: tap APPLY to arm, then confirm.',
-                    785, 497, 18, t.dim);
-            } else if (tab === 1) {
-                G.panel(cv, t, 24, 62, 766, 445, 'Detected BDC LIN zones');
-                G.panel(cv, t, 805, 62, 771, 445, 'Individual colour policy');
-                for (let row = 0; row < 7; row++) {
-                    const index = zoneScroll + row, module = bdc.modules[index];
-                    if (!module) break;
-                    const y = 122 + row * 46, state = profiles.zone(module);
-                    cv.fillRect(52, y, 701, 43, index === zoneSelected ? '#214b5d' : '#222e3c');
-                    text(cv, (index + 1) + '. ' + module.name, 60, y + 29, 21, t.text);
-                    text(cv, state.mode.toUpperCase(), 640, y + 29, 18,
-                        state.mode === 'car' ? t.dim : t.accent);
-                }
-                softButton(cv, t, 52, 452, 218, 'Previous', false);
-                softButton(cv, t, 280, 452, 218, 'Next 7', false);
-                const module = selectedModule(), zone = module && profiles.zone(module);
-                if (module) {
-                    text(cv, module.name, 842, 123, 29, t.text, { font: 'bold' });
-                    text(cv, 'Bus ' + (module.bus + 1) + ' / NAD ' + module.nad +
-                        ' / location 0x' + module.location.toString(16).toUpperCase(),
-                    842, 163, 21, t.dim);
-                    text(cv, 'BDC last read: RGB ' + module.rgb.join('/') +
-                        ', ' + module.brightness + '%' + (module.fault ? '  / fault!' : ''),
-                    842, 198, 20, module.fault ? t.warn : t.text);
-                    text(cv, 'Active policy: ' + zone.mode.toUpperCase(), 842, 234, 24, t.accent);
+                G.panel(cv, t, 746, 62, 830, 445, 'Preview');
+                cv.fillRect(778, 120, 760, 96, '#' + rgbHex(color.rgb.map(n => Math.round(n * level / 100))));
+                text(cv, color.name + '  #' + rgbHex(color.rgb), 785, 253, 34, t.text, { font: 'bold' });
+                text(cv, 'RGB ' + color.rgb.join(' / ') + '    Brightness ' + level + '%', 785, 285, 22, t.dim);
+                const slot = target() === 'slot11';
+                button(cv, t, 778, 309, 235, 'RAM TEST · ' + duration() + ' s', page(COLOR, () => chooseTarget('temporary')), 'ram', !slot);
+                button(cv, t, 1023, 309, 235, 'MENU 11 PLAN', page(COLOR, () => chooseTarget('slot11')), 'slot', slot);
+                button(cv, t, 1268, 309, 269, slot ? 'PREPARE PLAN' : ctl.confirming ? 'CONFIRM APPLY' : 'APPLY',
+                    applyChoice, 'apply', true);
+                if (slot) {
+                    button(cv, t, 778, 365, 260, 'FACTORY PLAN', page(COLOR, planFactory), 'factory');
+                    const planText = menuPlan
+                        ? menuPlan.codingReady === false
+                            ? 'Position 11 (' + menuPlan.oldProfile.join(' / ') + ') · requested #' + rgbHex(menuPlan.desiredRGB) + ' · mapping unverified'
+                            : 'Factory profile 05 / 00 · Lilac #' + rgbHex(menuPlan.factoryLilacRGB)
+                        : 'Preview of existing iDrive color 11.';
+                    status(cv, planText, 785, 439, 745, t.text);
+                    text(cv, 'Offline plan. The vehicle is unchanged.', 785, 491, 19, t.dim);
                 } else {
-                    text(cv, 'No verified modules. Scan while stationary.', 842, 145, 24, t.warn);
+                    const notice = ctl.busy ? 'Diagnostics running…'
+                        : ctl.confirming ? ctl.info
+                            : !ctl.online ? 'TASU unavailable.'
+                                : colorNotice && !colorNotice.startsWith('Press APPLY again') ? colorNotice
+                                    : 'Press APPLY twice at standstill.';
+                    status(cv, notice, 785, 407, 745, t.text);
+                    text(cv, 'Retrofit lights may use a separate controller.', 785, 491, 18, t.dim);
                 }
-                softButton(cv, t, 930, 250, 178, 'Main RGB', !!zone && zone.mode === 'main');
-                softButton(cv, t, 1116, 250, 178, 'Own RGB', !!zone && zone.mode === 'own');
-                softButton(cv, t, 1302, 250, 178, 'BMW original', !!zone && zone.mode === 'car');
-                text(cv, 'Own RGB = current picker colour at selection time.', 842, 323, 18, t.dim);
-                softButton(cv, t, 930, 337, 277, 'SCAN BDC', false);
-                softButton(cv, t, 1212, 337, 298, 'APPLY / confirm', false);
-                softButton(cv, t, 930, 411, 400, 'RETURN TO BMW / confirm', false);
-                text(cv, bdc.info.slice(0, 85), 842, 488, 18, t.warn);
-            } else if (tab === 2) {
-                G.panel(cv, t, 24, 62, 1552, 445, 'Six saved looks (RGB + individual zone settings)');
+            } else if (tab === FAVORITES) {
+                G.panel(cv, t, 24, 62, 1552, 445, 'Saved looks');
                 for (let i = 0; i < 6; i++) {
-                    const x = 44 + (i % 3) * 495, y = 110 + Math.floor(i / 3) * 130;
-                    const f = profiles.loadFavorite(i), active = i === favoriteSelected;
-                    cv.fillRect(x, y, 477, 112, active ? '#204b5b' : '#222e3c');
+                    const x = 44 + (i % 3) * 505, y = 109 + Math.floor(i / 3) * 124;
+                    const look = profiles.loadFavorite(i);
+                    cv.fillRect(x, y, 477, 110, i === favoriteSelected ? '#204b5b' : '#222e3c');
                     text(cv, 'Favorite ' + (i + 1), x + 20, y + 35, 27, t.text, { font: 'bold' });
-                    if (f) {
-                        cv.fillRect(x + 20, y + 52, 75, 38, '#' + rgbHex(f.main.rgb));
-                        text(cv, '#' + rgbHex(f.main.rgb) + '  ' + f.main.brightness + '%',
+                    if (look) {
+                        cv.fillRect(x + 20, y + 52, 75, 38, '#' + rgbHex(look.main.rgb));
+                        text(cv, (look.main.on ? '#' + rgbHex(look.main.rgb) : 'Off') + '   ' + look.main.brightness + '%',
                             x + 112, y + 78, 23, t.text);
-                        text(cv, Object.keys(f.zones).length + ' individual policies', x + 289, y + 103, 17, t.dim);
-                    } else text(cv, 'Empty – select then save', x + 20, y + 81, 21, t.dim);
+                    } else text(cv, 'Empty', x + 20, y + 81, 21, t.dim);
+                    if (cv.own) cv.target(x, y, 477, 110, page(FAVORITES, () => { favoriteSelected = i; favoriteNotice = ''; }), 'favorite-' + i);
                 }
-                softButton(cv, t, 310, 406, 300, 'SAVE selected', false);
-                softButton(cv, t, 620, 406, 300, 'LOAD selected', false);
-                softButton(cv, t, 930, 406, 300, 'DELETE selected', false);
-                text(cv, 'Load edits the picker and zones. ECU colours change only after APPLY.',
-                    67, 483, 20, t.dim);
-            } else if (tab === 3) {
-                G.panel(cv, t, 24, 62, 766, 445, 'Colour looks by driving mode');
+                button(cv, t, 44, 374, 250, 'SAVE', page(FAVORITES, saveFavorite), 'save-fav');
+                button(cv, t, 304, 374, 250, 'LOAD', page(FAVORITES, loadFavorite), 'load-fav');
+                button(cv, t, 564, 374, 250, 'DELETE', page(FAVORITES, deleteFavorite), 'delete-fav');
+                text(cv, favoriteNotice || 'Loading a look updates the editor.', 50, 472, 20, t.dim);
+            } else if (tab === DRIVE_MODES) {
+                G.panel(cv, t, 24, 62, 766, 445, 'Driving-mode looks');
                 G.panel(cv, t, 805, 62, 771, 445, 'Selected mode');
-                text(cv, 'Live BMW mode: ' + (driveMode || 'not available'), 55, 480, 21, t.dim);
                 MODES.forEach((name, i) => {
-                    const y = 130 + i * 76, profile = profiles.mode(name);
-                    cv.fillRect(54, y, 710, 70, i === modeSelected ? '#214b5d' : '#222e3c');
-                    text(cv, name.toUpperCase(), 75, y + 40, 27, t.text, { font: 'bold' });
-                    if (profile) {
-                        cv.fillRect(410, y + 12, 65, 40, '#' + rgbHex(profile.main.rgb));
-                        text(cv, '#' + rgbHex(profile.main.rgb), 492, y + 40, 21, t.text);
-                    } else text(cv, 'No custom look', 492, y + 40, 20, t.dim);
+                    const y = 124 + i * 76, look = profiles.mode(name);
+                    button(cv, t, 54, y, 710, name.toUpperCase(), page(DRIVE_MODES, () => {
+                        modeSelected = i;
+                        modeNotice = '';
+                    }), 'mode-' + name, i === modeSelected);
+                    text(cv, look ? look.main.on ? '#' + rgbHex(look.main.rgb) : 'Off' : 'No look',
+                        492, y + 29, 21, t.text);
                 });
-                text(cv, 'Editing: ' + activeModeName().toUpperCase(), 843, 139, 29, t.text);
-                const savedMode = profiles.mode(activeModeName());
-                if (savedMode) {
-                    cv.fillRect(848, 166, 100, 55, '#' + rgbHex(savedMode.main.rgb));
-                    text(cv, '#' + rgbHex(savedMode.main.rgb) + ' / ' + savedMode.main.brightness + '%',
-                        980, 204, 23, t.text);
-                } else text(cv, 'No RGB snapshot saved', 843, 208, 22, t.dim);
-                softButton(cv, t, 900, 254, 290, 'SAVE current look', false);
-                softButton(cv, t, 1204, 254, 306, 'LOAD into editor', false);
-                softButton(cv, t, 900, 329, 302, 'CLEAR mode', false);
-                softButton(cv, t, 1210, 329, 300, profiles.data.follow ? 'Follow preview ON' : 'Follow preview OFF',
-                    profiles.data.follow);
-                text(cv, 'Mode detection is read-only. Automatic writes remain disabled until',
-                    844, 436, 19, t.warn);
-                text(cv, 'the BDC route and physical output are verified on this G21.',
-                    844, 465, 19, t.warn);
+                text(cv, 'Vehicle mode · ' + (driveMode ? driveMode.toUpperCase() : 'unavailable'), 55, 477, 21, t.dim);
+                text(cv, activeMode().toUpperCase(), 840, 140, 29, t.text, { font: 'bold' });
+                const look = profiles.mode(activeMode());
+                text(cv, look ? (look.main.on ? '#' + rgbHex(look.main.rgb) : 'Off') + '   ' + look.main.brightness + '%' : 'No saved look',
+                    840, 195, 23, t.text);
+                button(cv, t, 840, 226, 297, 'SAVE CURRENT LOOK', page(DRIVE_MODES, saveDriveMode), 'save-mode');
+                button(cv, t, 1150, 226, 340, 'LOAD INTO EDITOR', page(DRIVE_MODES, loadDriveMode), 'load-mode');
+                button(cv, t, 840, 286, 297, 'DELETE LOOK', page(DRIVE_MODES, clearDriveMode), 'delete-mode');
+                button(cv, t, 1150, 286, 340, profiles.data.follow ? 'FOLLOW MODE · ON' : 'FOLLOW MODE · OFF',
+                    page(DRIVE_MODES, followDriveMode), 'follow-mode', profiles.data.follow);
+                text(cv, modeNotice, 840, 397, 20, t.text);
+                text(cv, 'Following the driving mode only changes the editor.', 840, 469, 20, t.dim);
             } else {
-                G.panel(cv, t, 24, 62, 761, 445, 'RAM / Live diagnostics');
-                text(cv, 'Connection', 56, 145, 25, t.dim);
-                text(cv, ctl.online ? 'TASU connected' : 'TASU unavailable',
-                    350, 145, 25, ctl.online ? t.accent : t.warn);
-                text(cv, 'RAM identity (F150)', 56, 205, 25, t.dim);
-                text(cv, ctl.identity === null ? 'Not identified' :
-                    ctl.verified ? 'RAM01 verified (0F2590)' :
-                        'SGBD index ' + ctl.identity + ' (unverified)',
-                350, 205, 25, ctl.verified ? t.accent : t.warn);
-                text(cv, 'Vehicle speed', 56, 265, 25, t.dim);
-                text(cv, ctl.speed === null ? 'Unavailable' : ctl.speed.toFixed(1) + ' km/h',
-                    350, 265, 25, t.text);
-                text(cv, 'Last ECU write', 56, 325, 25, t.dim);
-                text(cv, ctl.lastWriteOk === null ? 'Not requested' :
-                    ctl.lastWriteOk ? 'Acknowledged (not visually verified)' : 'Rejected',
-                350, 325, 23, ctl.lastWriteOk ? t.accent : t.warn);
-                text(cv, 'Press DIAGNOSTICS / ACTION to refresh read-only status.',
-                    56, 422, 22, t.text);
-                G.panel(cv, t, 805, 62, 771, 445, 'BDC 0x40 / LIN discovery');
-                text(cv, 'LIN 1: ' + bdc.readStatus[0], 835, 137, 24, t.text);
-                text(cv, 'LIN 2: ' + bdc.readStatus[1], 835, 184, 24, t.text);
-                text(cv, 'Discovered: ' + bdc.modules.length + ' actual modules',
-                    835, 230, 24, bdc.modules.length ? t.accent : t.warn);
-                text(cv, 'Last write: ' + bdc.lastWrite.slice(0, 61), 835, 276, 19, t.dim);
-                text(cv, 'RAM: ' + ctl.info.slice(0, 65), 835, 321, 18, t.dim);
-                text(cv, bdc.info.slice(0, 65), 835, 370, 18, t.warn);
-                softButton(cv, t, 835, 415, 315, 'SCAN BDC (read only)', false);
-                text(cv, 'No blind addresses; 2x confirmation and parked only.', 1170, 449, 17, t.dim);
+                G.panel(cv, t, 24, 62, 761, 445, 'RAM01 diagnostics');
+                text(cv, ctl.online ? 'TASU connected' : 'TASU unavailable', 56, 139, 24, ctl.online ? t.accent : t.warn);
+                status(cv, '0x37 · 22 F150 · ' + ctl.ramStatus, 56, 186, 690, t.text);
+                text(cv, 'Vehicle speed · ' + (ctl.speedFresh ? ctl.speed.toFixed(1) + ' km/h' : 'unavailable or stale'),
+                    56, 251, 23, t.text);
+                text(cv, 'Last RAM write · 2E E311', 56, 300, 22, t.dim);
+                status(cv, ctl.lastWrite ? ctl.lastWrite.text : 'No write requested', 56, 332, 690,
+                    ctl.lastWrite && !ctl.lastWrite.acknowledged ? t.warn : t.text);
+                button(cv, t, 56, 410, 250, 'READ RAM IDENTITY', page(DIAGNOSTICS, () => ctl.readRam()), 'read-ram');
+
+                G.panel(cv, t, 805, 62, 771, 445, 'BDC diagnostic reads');
+                status(cv, '0x40 · 22 DA5F · ' + ctl.bdcStatus[0], 835, 146, 690, t.text);
+                status(cv, '0x40 · 22 E3D1 · ' + ctl.bdcStatus[1], 835, 217, 690, t.text);
+                text(cv, 'The response shows diagnostic access to the BDC.', 835, 309, 20, t.dim);
+                text(cv, 'Retrofit wiring determines which controller can change the lights.', 835, 342, 19, t.dim);
+                button(cv, t, 835, 410, 250, 'READ BDC STATUS', page(DIAGNOSTICS, () => ctl.readBdc()), 'read-bdc');
             }
             return ctx.ui.image('MAIN_GFX', cv);
         });

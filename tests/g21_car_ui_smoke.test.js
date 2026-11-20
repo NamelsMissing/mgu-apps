@@ -18,13 +18,13 @@ assert(!spec('dpf_monitor').settings.some(s => s.key === 'dde_live' || s.key ===
     'DPF must always read real data and hide both test settings');
 assert(!dpf.includes("settings.get('demo')"), 'DPF must never show synthetic readings');
 assert.deepStrictEqual([...ambient.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
-    ["'Color', 'Zones', 'Favorites', 'Drive modes', 'Diagnostics'"],
-    'Ambient has dedicated zones, favorites, drive-mode and diagnostic pages');
+    ["'Color', 'Favorites', 'Drive modes', 'Diagnostics'"],
+    'Ambient has color, favorites, drive-mode and diagnostic pages');
 assert.deepStrictEqual([...wheel.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
     ["'Comfort', 'Diagnostics', 'Log', 'QR Log'"], 'WheelHeat includes live diagnostics and export logs');
 assert.match(ambient, /ctx\.onTouch\(\(phase, x, y\)/, 'Ambient continuous sliders');
 assert.match(ambient, /phase === 2/, 'Ambient slider must accept move events');
-assert.match(ambient, /actionNotice = ctl\.info/, 'Ambient displays apply result');
+assert.match(ambient, /colorNotice = ctl\.info/, 'Ambient displays apply result');
 assert(!wheel.includes('simTempEnabled'), 'no simulated temperature in live automation');
 assert(!spec('g21_wheelheat').settings.some(s => /^(simTemp|ledAction|manualSeconds)/.test(s.key)));
 assert.equal(spec('g21_wheelheat').mguAppStartType, 'autostart');
@@ -43,7 +43,7 @@ assert(!dpf.includes('cv.roundRect(70, 451, 1450, 6'), 'fake DPF progress bar re
 assert.match(dpf, /\['Overview', 'Details', 'History', 'Regeneration'\]/,
     'DPF keeps live overview, measurements and stored history on separate pages');
 assert(!dpf.includes('No verified activity flag'), 'unverified regeneration badge removed');
-assert.match(ambient, /text\(cv, 'APPLY'/, 'stable Apply button must be visible');
+assert.match(ambient, /'CONFIRM APPLY' : 'APPLY'/, 'stable Apply button must be visible');
 assert.match(ambient, /setMany\(change\)/, 'slider changes must batch persistence');
 
 // The pure planner emits one ON event followed by one OFF event.

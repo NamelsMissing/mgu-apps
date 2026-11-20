@@ -1,8 +1,8 @@
 {
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
-  "description": "Choose ambient-light colors, configure zones, and save presets. Vehicle color control is experimental.",
-  "version": "0.4.0",
+  "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
+  "version": "0.4.1",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",
@@ -72,31 +72,23 @@
         ],
         [
           "BTN_TARGET",
-          "Temporary / Slot 11"
+          "RAM test / Menu 11 plan"
         ],
         [
           "BTN_ACTION",
-          "Apply / Diagnostics"
+          "Apply / Read RAM"
         ],
         [
           "BTN_RESTORE",
-          "Slot 11 factory plan"
+          "Factory menu plan"
         ],
         [
           "BTN_SETTINGS",
           "All settings"
         ],
         [
-          "BTN_BDC_SCAN",
-          "Scan BDC LIN modules"
-        ],
-        [
-          "BTN_ZONE_NEXT",
-          "Next discovered zone"
-        ],
-        [
-          "BTN_ZONE_POLICY",
-          "Zone follows main / own / car"
+          "BTN_BDC_STATUS",
+          "Read BDC status"
         ],
         [
           "BTN_FAV_NEXT",
@@ -117,10 +109,6 @@
         [
           "BTN_MODE_SAVE",
           "Save driving-mode colour"
-        ],
-        [
-          "BTN_BDC_RESET",
-          "Return detected BDC lights to BMW control"
         ]
       ]
     }
@@ -321,10 +309,6 @@
           "RAM01 temporary test"
         ],
         [
-          "bdc",
-          "BDC LIN discovered zones (temporary)"
-        ],
-        [
           "slot11",
           "iDrive menu slot 11 (FDL plan)"
         ]
@@ -352,29 +336,8 @@
       ]
     },
     {
-      "key": "linId",
-      "label": "LED module target (0 = all)",
-      "type": "number",
-      "default": 0,
-      "steps": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12
-      ]
-    },
-    {
       "key": "duration",
-      "label": "Control duration",
+      "label": "RAM test duration",
       "type": "number",
       "unit": "s",
       "default": 5,

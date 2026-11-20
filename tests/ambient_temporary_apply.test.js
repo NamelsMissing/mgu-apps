@@ -1,6 +1,8 @@
 'use strict';
-const assert = require('assert');
-const Module = require('module');
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const Module = require('node:module');
 const originalResolve = Module._resolveFilename;
 Module._resolveFilename = function(request, parent, ...rest) {
     if (request === './kit/diag' && parent && parent.filename.endsWith('/g21_ambient/safe_diag.js'))
@@ -11,72 +13,126 @@ const { SafeDiag } = require('../apps/g21_ambient/safe_diag');
 Module._resolveFilename = originalResolve;
 const { replyTo } = require('../kit/runtime/diag');
 
-async function run() {
-    const target = [0xE3, 0x11];
-    const matchRead = replyTo(0x22, target), matchWrite = replyTo(0x2E, target);
-    assert(matchRead([0x62, 0xE3, 0x11, 0x20]));
-    assert(matchWrite([0x6E, 0xE3, 0x11]));
-    assert(!matchWrite([0x6E, 0xD0, 0x74]));
-    assert(matchWrite([0x7F, 0x2E, 0x31]));
-
-    let writes = 0;
-    const ctx = { settings: { get: () => null }, signals: {}, log: { info() {}, warn() {} } };
-    const ctl = new SafeDiag(ctx, 0x37, 0xF150);
+const ram01 = [0x62, 0xF1, 0x50, 0x0F, 0x25, 0x90];
+const color = { rgb: [32, 100, 254], on: 1 };
+const current = () => true;
+function harness(respond) {
+    const requests = [];
+    const ctl = new SafeDiag({ log: { info() {}, warn() {} }, signals: {} });
     ctl.diag.p = {};
     ctl.diag.available = true;
-    ctl.diag.physical = async (_ecu, sid, data) => {
-        if (sid === 0x22 && data[0] === 0xE3) return [0x7F, 0x22, 0x31];
-        if (sid === 0x22) return [0x62, 0xF1, 0x50, 0x12, 0x34, 0x56];
-        writes++;
-        return [0x6E, 0xE3, 0x11];
+    ctl.diag.physical = async (target, sid, request, timeout, accept, options) => {
+        assert.equal(options.maxRetries, 0);
+        requests.push([target, sid, ...request]);
+        return respond(target, sid, request);
     };
-    ctl.speed = 0;
-    ctl.speedAt = Date.now();
-    await ctl.read(0xE311);
-    assert(!ctl.verified, 'unsupported read E311 does not approve writes');
-    await ctl.read(0xE310);
-    assert(!ctl.verified, 'unsupported E310 must not approve writes');
-    await ctl.read(0xF150);
-    assert(!ctl.verified, 'numeric SGBD index must not be mistaken for a verified RAM01 identity');
-    assert.equal(ctl.identity, '12 34 56');
-    const command = [0xE3, 0x11, 0x01, 0x01, 0x64, 0x20, 0x64, 0xFE, 0x05];
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 0, 'unknown ECU variant prevents writes altogether');
-    assert.match(ctl.info, /Read status first/);
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 0, 'two presses do not bypass the missing ECU verification');
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 0, 'fresh read required for further writes');
-    ctl.diag.physical = async () => [0x62, 0xF1, 0x50, ...Buffer.from('OTHER_ECU')];
-    await ctl.read(0xF150);
-    assert(!ctl.verified, 'an unknown ECU identity must not authorize LIN writes');
-
-    // Actual RAM01 identification observed on the owner's G21 at 0x37:
-    // 62 F1 50 0F 25 90. Writes require both a fresh match and two
-    // deliberate APPLY presses at confirmed standstill.
-    ctl.diag.physical = async (_ecu, sid, request) => {
-        if (sid === 0x22) return [0x62, 0xF1, 0x50, 0x0F, 0x25, 0x90];
-        writes++;
-        return [0x6E, request[0], request[1]];
-    };
-    ctl.speedAt = Date.now();
-    await ctl.read(0xF150);
-    assert.equal(ctl.identity, '0F 25 90');
-    assert.equal(ctl.verified, true, 'known RAM01 SGBD index must verify');
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 0, 'first APPLY only arms confirmation');
-    assert.match(ctl.info, /Press SEND AGAIN/);
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 1, 'second APPLY sends guarded 2E E311 once');
-    assert.equal(ctl.verified, false, 'next write requires a fresh RAM read');
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 1, 'no third write without fresh identity');
-
-    await ctl.read(0xF150);
-    ctl.speed = 20;
-    ctl.speedAt = Date.now();
-    await ctl.write(command, 'custom RGB');
-    assert.equal(writes, 1, 'moving vehicle blocks LIN write');
-    console.log('OK: RAM01 0F2590 gated two-press apply; unknown ECU and moving writes blocked');
+    ctl.updateSpeed(0);
+    return { ctl, requests, apply: () => ctl.apply(color, 100, 5, current) };
 }
-run().catch(e => { console.error(e); process.exitCode = 1; });
+
+test('only matching diagnostic frames can satisfy the existing transport filter', () => {
+    const request = [0xE3, 0x11];
+    assert(replyTo(0x22, request)([0x62, 0xE3, 0x11, 0x20]));
+    const accept = replyTo(0x2E, request);
+    assert(accept([0x6E, 0xE3, 0x11]));
+    assert(accept([0x7F, 0x2E, 0x31]));
+    assert(!accept([0x6E, 0xD0, 0x74]));
+    assert(!accept([0x7F, 0x22, 0x31]));
+});
+
+test('first press probes and arms, second sends one global RAM frame and keeps the NRC visible', async () => {
+    const { ctl, apply, requests } = harness((_target, sid) => sid === 0x22 ? ram01 : [0x7F, 0x2E, 0x31]);
+    await apply();
+    assert.deepEqual(requests, [[0x37, 0x22, 0xF1, 0x50]]);
+    assert.equal(ctl.confirming, true);
+    await apply();
+    assert.equal(ctl.confirming, false);
+    assert.deepEqual(requests[1], [0x37, 0x2E, 0xE3, 0x11, 0, 1, 100, 32, 100, 254, 5]);
+    assert.match(ctl.lastWrite.text, /7F 2E 31.*out of range/);
+    assert.equal(ctl.lastWrite.acknowledged, false);
+    await ctl.readRam();
+    assert.match(ctl.ramStatus, /RAM01 identified/);
+    assert.match(ctl.lastWrite.text, /7F 2E 31/);
+    await apply();
+    assert.equal(requests.filter(req => req[1] === 0x2E).length, 1);
+});
+
+test('unknown, malformed, unavailable or mismatched RAM identities block writes', async () => {
+    for (const reply of [null, [0x7F, 0x22, 0x31], [0x62, 0xF1, 0x50, 0x0F, 0x25],
+        [0x62, 0xF1, 0x50, 0x12, 0x34, 0x56], [0x62, 0xE3, 0x11, 0x0F, 0x25, 0x90],
+        [...ram01, 0]]) {
+        const { ctl, apply, requests } = harness(() => reply);
+        await apply();
+        await apply();
+        assert.equal(ctl.confirming, false);
+        assert.equal(ctl.verified, false);
+        assert(requests.every(req => req[1] === 0x22));
+    }
+});
+
+test('an acknowledgment requires fresh verification before another temporary test', async () => {
+    const { ctl, apply, requests } = harness((_target, sid) => sid === 0x22 ? ram01 : [0x6E, 0xE3, 0x11]);
+    await apply();
+    await apply();
+    assert.equal(ctl.lastWrite.acknowledged, true);
+    assert.match(ctl.lastWrite.text, /Check the lights/);
+    assert.equal(ctl.verified, false);
+    ctl.lastWriteAt -= 3000;
+    ctl.updateSpeed(0);
+    await apply();
+    assert.deepEqual(requests.map(req => req[1]), [0x22, 0x2E, 0x22]);
+});
+
+test('an expired confirmation, a changed color or stale speed cannot send the previous request', async () => {
+    const { ctl, apply, requests } = harness(() => ram01);
+    await apply();
+    ctl.pending.until = Date.now() - 1;
+    await apply();
+    assert.equal(ctl.confirming, true);
+    await ctl.apply({ rgb: [1, 2, 3], on: 1 }, 100, 5, current);
+    assert.equal(ctl.confirming, true);
+    ctl.updateSpeed(1);
+    await apply();
+    assert.match(ctl.info, /standstill/);
+    ctl.updateSpeed(0);
+    await apply();
+    ctl.updateSpeed(65535);
+    assert.equal(ctl.confirming, false);
+    await apply();
+    ctl.updateSpeed(0);
+    await apply();
+    ctl.speedAt -= 5000;
+    assert.equal(ctl.confirming, false);
+    await apply();
+    assert.equal(ctl.pending, null);
+    assert(requests.every(req => req[1] === 0x22));
+});
+
+test('editing while the identity probe runs prevents arming the old selection', async () => {
+    let finish, edited = false;
+    const { ctl, requests } = harness(() => new Promise(resolve => { finish = resolve; }));
+    const inFlight = ctl.apply(color, 100, 5, () => !edited);
+    edited = true;
+    finish(ram01);
+    await inFlight;
+    assert.equal(ctl.confirming, false);
+    assert.equal(requests.length, 1);
+});
+
+test('BDC diagnostics retry a busy read once and share the transport lock with RAM', async () => {
+    let firstAttempts = 0;
+    const { ctl, apply, requests } = harness((target, sid, request) => {
+        assert.equal(target, 0x40);
+        assert.equal(sid, 0x22);
+        if (request[0] === 0xDA && ++firstAttempts === 2) return [0x62, 0xDA, 0x5F, 0xFF];
+        if (request[0] === 0xDA) return [0x7F, 0x22, 0x21];
+        return [0x7F, 0x22, 0x31];
+    });
+    const reading = ctl.readBdc();
+    await apply();
+    await ctl.readRam();
+    assert.match(ctl.info, /busy/);
+    await reading;
+    assert.deepEqual(requests, [[0x40, 0x22, 0xDA, 0x5F], [0x40, 0x22, 0xDA, 0x5F], [0x40, 0x22, 0xE3, 0xD1]]);
+    assert.deepEqual(ctl.bdcStatus, ['Positive reply · data length 1', '7F 22 31 · out of range']);
+});
