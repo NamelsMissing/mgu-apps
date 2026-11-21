@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -360,6 +360,11 @@
         ],
         [
           "button",
+          "BTN_LOGS",
+          "Diagnostic Logs"
+        ],
+        [
+          "button",
           "BTN_SAVE",
           "Save diagnostic report"
         ],
@@ -371,6 +376,83 @@
         [
           "button",
           "BTN_BACK",
+          "Back"
+        ]
+      ]
+    },
+    {
+      "name": "LOGS",
+      "kind": "menu",
+      "title": "Diagnostic Logs",
+      "items": [
+        [
+          "text3",
+          "LOG_STATE",
+          "Lever status"
+        ],
+        [
+          "text3",
+          "LOG_PATH",
+          "Storage folder"
+        ],
+        [
+          "text3",
+          "LOG_FILES",
+          "JSON files"
+        ],
+        [
+          "text3",
+          "LOG_POSITION",
+          "Recent entries"
+        ],
+        [
+          "text3",
+          "LOG_ROW_0",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_1",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_2",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_3",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_4",
+          " "
+        ],
+        [
+          "button",
+          "BTN_LOG_OLDER",
+          "Older entries"
+        ],
+        [
+          "button",
+          "BTN_LOG_NEWER",
+          "Newer entries"
+        ],
+        [
+          "button",
+          "BTN_LOG_REFRESH",
+          "Refresh"
+        ],
+        [
+          "button",
+          "BTN_LOG_SAVE",
+          "Export diagnostic report (JSON)"
+        ],
+        [
+          "button",
+          "BTN_LOG_BACK",
           "Back"
         ]
       ]
