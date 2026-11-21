@@ -1,4 +1,4 @@
-# G21 Ambient Lighting 0.4.2
+# G21 Ambient Lighting 0.4.3
 
 An iDrive 7 MGU app with a single RGB color and brightness control, six favorites, driving-mode previews, and vehicle diagnostics.
 
@@ -15,6 +15,8 @@ With renderer touch routing, use the on-screen tabs and controls. In the native 
 **READ RAM IDENTITY** checks RAM01 at address `0x37` with `22 F150`. The last result of the temporary test (`2E E311`) stays visible when the identity is refreshed. `6E E3 11` means the ECU acknowledged the request. `7F 2E 31` means the ECU rejected it as out of range.
 
 **READ BDC STATUS** sends read-only queries for `DA5F` and `E3D1` to `0x40`. The app retries each busy response (`7F 22 21`) once and displays the final reply status. A positive reply establishes diagnostic access to that data identifier. The BDC queries have no effect on the lights.
+
+When both replies hold 261 data bytes, the app can compare the BDC_G05 LIN records. Read once, change the ambient color in the BMW menu, let the lights settle, then read again. The summary counts matching LIN records whose reported RGBW or brightness bytes changed. Check whether the physical retrofit lights followed the same menu change.
 
 **Menu 11 plan** in Diagnostics previews the requested color or factory values for existing iDrive color position 11. Both previews are offline.
 

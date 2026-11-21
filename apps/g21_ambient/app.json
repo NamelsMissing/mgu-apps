@@ -2,7 +2,7 @@
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
   "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",

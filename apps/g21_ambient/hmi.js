@@ -162,7 +162,8 @@ function drawDiagnostics(cv, t, m, control) {
     } else {
         status(cv, '0x40 · 22 DA5F · ' + diag.bdcStatus[0], 835, 148, 690, t.text);
         status(cv, '0x40 · 22 E3D1 · ' + diag.bdcStatus[1], 835, 227, 690, t.text);
-        text(cv, 'Retrofit lights may use a separate controller.', 835, 312, 21, t.dim);
+        status(cv, diag.bdcComparison || 'Read both LIN buses to capture a reference.', 835, 296, 690, t.text);
+        text(cv, 'Change color in the BMW menu, then read BDC again.', 835, 372, 21, t.dim);
         button(cv, t, 835, 415, 273, 50, 'Read BDC status', false);
         control(835, 415, 273, 50, 'read-bdc', m.readBdc);
     }

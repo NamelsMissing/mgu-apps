@@ -6,6 +6,11 @@ const { ECU, DID, PROBE_DID, fromPreset } = require('./logic');
 const READ_OPTIONS = { maxRetries: 0, callTimeoutMs: 3000, pendingTimeoutMs: 4000, hardTimeoutMs: 7000 };
 const BDC = 0x40;
 const BDC_DIDS = [0xDA5F, 0xE3D1];
+const BDC_RECORDS = 26;
+const BDC_RECORD_SIZE = 10;
+// BDC_G05 returns 26 NAD records, then one auto-addressing method byte.
+const BDC_DATA_SIZE = BDC_RECORDS * BDC_RECORD_SIZE + 1;
+const BDC_COLOR_FIELDS = [1, 2, 3, 5]; // blue, green, red, white
 const writeDID = [DID >> 8, DID & 255];
 const probeDID = [PROBE_DID >> 8, PROBE_DID & 255];
 
@@ -18,6 +23,23 @@ function resultText(reply) {
     return 'Unexpected reply: ' + bytes(reply.slice(0, 8));
 }
 
+function compareBdc(before, after) {
+    let matched = 0, color = 0, brightness = 0;
+    for (let bus = 0; bus < BDC_DIDS.length; bus++) {
+        const previous = before[bus], current = after[bus];
+        for (let i = 0; i < BDC_RECORDS * BDC_RECORD_SIZE; i += BDC_RECORD_SIZE) {
+            const location = current[i];
+            const known = (location >= 1 && location <= 101) || (location >= 113 && location <= 116);
+            if (!known || location !== previous[i]) continue;
+            matched++;
+            if (BDC_COLOR_FIELDS.some(offset => current[i + offset] !== previous[i + offset])) color++;
+            if (current[i + 4] !== previous[i + 4]) brightness++;
+        }
+    }
+    return matched ? 'RGBW changed: ' + color + '/' + matched + ' · Brightness changed: ' + brightness + '/' + matched
+        : 'No matching LIN records to compare.';
+}
+
 class SafeDiag {
     constructor(ctx) {
         this.ctx = ctx;
@@ -28,6 +50,8 @@ class SafeDiag {
         this.identity = null;
         this.ramStatus = 'Identity not read';
         this.bdcStatus = BDC_DIDS.map(() => 'Not checked');
+        this.bdcSample = null;
+        this.bdcComparison = '';
         this.lastWrite = null;
         this.lastWriteAt = null;
         this.pending = null;
@@ -46,6 +70,8 @@ class SafeDiag {
                 this.readAt = null;
                 this.identity = null;
                 this.ramStatus = 'TASU connection interrupted';
+                this.bdcSample = null;
+                this.bdcComparison = '';
             }
         });
         await this.diag.init();
@@ -107,9 +133,17 @@ class SafeDiag {
     async readBdc() {
         this.cancel();
         if (this.busy) return;
-        if (!this.online) { this.bdcStatus = BDC_DIDS.map(() => 'TASU unavailable'); return; }
+        if (!this.online) {
+            this.bdcStatus = BDC_DIDS.map(() => 'TASU unavailable');
+            this.bdcSample = null;
+            this.bdcComparison = '';
+            return;
+        }
         this.busy = true;
         this.bdcStatus = BDC_DIDS.map(() => 'Waiting…');
+        this.bdcComparison = '';
+        const sample = BDC_DIDS.map(() => null);
+        const revision = this.connectionRevision;
         try {
             for (let i = 0; i < BDC_DIDS.length; i++) {
                 const did = BDC_DIDS[i];
@@ -124,11 +158,23 @@ class SafeDiag {
                     const positive = reply && reply[0] === 0x62 && reply[1] === (did >> 8) &&
                         reply[2] === (did & 255) && reply.length > 3;
                     if (!this.online) this.bdcStatus[i] = 'TASU unavailable';
-                    else if (positive) this.bdcStatus[i] = 'Positive reply · data length ' + (reply.length - 3);
+                    else if (positive) {
+                        const length = reply.length - 3;
+                        this.bdcStatus[i] = 'Positive reply · data length ' + length;
+                        if (length === BDC_DATA_SIZE) sample[i] = reply.slice(3);
+                    }
                     else this.bdcStatus[i] = resultText(reply);
                 } catch (e) { this.bdcStatus[i] = 'Read failed: ' + String(e.message || e); }
                 this.ctx.log.info('[AMBIENT BDC ' + hex(did, 4) + '] ' + this.bdcStatus[i]);
             }
+            if (this.connectionRevision === revision && this.online && sample.every(Boolean)) {
+                this.bdcComparison = this.bdcSample ? compareBdc(this.bdcSample, sample) : 'Reference captured for both LIN buses.';
+                this.bdcSample = sample;
+            } else {
+                this.bdcSample = null;
+                this.bdcComparison = 'Comparison needs 261 data bytes from both buses.';
+            }
+            this.ctx.log.info('[AMBIENT BDC COMPARE] ' + this.bdcComparison);
         } finally { this.busy = false; }
     }
     async apply(color, brightness, seconds, isCurrent) {

@@ -136,3 +136,49 @@ test('BDC diagnostics retry a busy read once and share the transport lock with R
     assert.deepEqual(requests, [[0x40, 0x22, 0xDA, 0x5F], [0x40, 0x22, 0xDA, 0x5F], [0x40, 0x22, 0xE3, 0xD1]]);
     assert.deepEqual(ctl.bdcStatus, ['Positive reply · data length 1', '7F 22 31 · out of range']);
 });
+
+function bdcReply(did, records, method = 1) {
+    const data = Array(261).fill(0xFF);
+    data[260] = method;
+    records.forEach((fields, index) => data.splice(index * 10, fields.length, ...fields));
+    return [0x62, ...did, ...data];
+}
+
+test('BDC compares RGBW and brightness only across matching records from two complete reads', async () => {
+    let second = false;
+    const { ctl, requests } = harness((_target, _sid, did) => {
+        const firstBus = did[0] === 0xDA;
+        if (firstBus) {
+            const records = [[5, 7, 10, 20, 45, second ? 30 : 0], [27, 1, 2, 3, second ? 60 : 50, 0],
+                [second ? 34 : 35, 4, 5, 6, 70, 0], [0, 0, 0, 0, 0, 0]];
+            return bdcReply(did, records, second ? 2 : 1);
+        }
+        const records = [[116, 1, 2, 3, 50, 0, second ? 1 : 0]];
+        return bdcReply(did, records);
+    });
+
+    await ctl.readBdc();
+    assert.equal(ctl.bdcComparison, 'Reference captured for both LIN buses.');
+    second = true;
+    await ctl.readBdc();
+    assert.equal(ctl.bdcComparison, 'RGBW changed: 1/3 · Brightness changed: 1/3');
+    await ctl.readBdc();
+    assert.equal(ctl.bdcComparison, 'RGBW changed: 0/4 · Brightness changed: 0/4');
+    assert(requests.every(req => req[0] === 0x40 && req[1] === 0x22));
+});
+
+test('a failed or wrong-size BDC read invalidates the reference for both buses', async () => {
+    let reading = 'full';
+    const { ctl } = harness((_target, _sid, did) => {
+        const reply = bdcReply(did, [[5, 5, 5, 5, 50, 0]]);
+        return reading === 'full' || did[0] === 0xDA ? reply : reply.slice(0, -1);
+    });
+    await ctl.readBdc();
+    reading = 'short';
+    await ctl.readBdc();
+    assert.match(ctl.bdcStatus[1], /data length 260/);
+    assert.match(ctl.bdcComparison, /needs 261 data bytes/);
+    reading = 'full';
+    await ctl.readBdc();
+    assert.equal(ctl.bdcComparison, 'Reference captured for both LIN buses.');
+});
