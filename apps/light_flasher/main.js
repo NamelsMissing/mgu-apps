@@ -158,8 +158,13 @@ mgu.run({async start(ctx){
    const signalEvents=monitor.snapshot().events.map(event=>({...event,text:formatEvent(event,'OEM beam '+event.combinedSignal)}));
    const reports=[];
    try{
-     const files=fs.readdirSync(ctx.dataDir).filter(name=>/^light-flasher-run-v[\d.]+-\d+-\d+-\d+\.json$/.test(name)).sort().reverse().slice(0,10);
-     for(const name of files){
+     const runReport=/^light-flasher-run-v[\d.]+-(\d+)-\d+-\d+\.json$/;
+     const files=fs.readdirSync(ctx.dataDir)
+       .map(name=>({name,match:runReport.exec(name)}))
+       .filter(file=>file.match)
+       .sort((a,b)=>b.match[1].localeCompare(a.match[1]))
+       .slice(0,10);
+     for(const {name} of files){
        try{
          const {flashAttempt:attempt}=JSON.parse(fs.readFileSync(path.join(ctx.dataDir,name),'utf8'));
          const at=attempt.endedAt||attempt.at;
