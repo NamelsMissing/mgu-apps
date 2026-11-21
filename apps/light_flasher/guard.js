@@ -44,7 +44,10 @@ class Guard {
         this.changed();
     }
     reason() {
-        return this.recoveryReason();
+        //if (!this.speedSub || !this.speedSub.available || this.speed === null || this.now() - this.speedAt > 2500) return 'Waiting for current vehicle speed';
+        //if (this.speed > 0.1) return 'Vehicle must be stationary';
+        //if (!this.gearSub || !this.gearSub.available || this.stage !== 'P') return 'Select P (Park)';
+        return null;
     }
     recoveryReason() {
         if (!this.speedSub || !this.speedSub.available || this.speed === null || this.now() - this.speedAt > 2500) return 'Waiting for current vehicle speed';
