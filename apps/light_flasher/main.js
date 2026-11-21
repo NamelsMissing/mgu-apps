@@ -8,8 +8,8 @@ const {config}=require('./flash-config');
 const Monitor=require('./background-monitor');
 const Release=require('./release-status');
 const Timing=require('./timing');
-const {LeverTrigger}=require('./lever-trigger');
-const VERSION='0.1.21';
+const {LeverTrigger,LeverObservation}=require('./lever-trigger');
+const VERSION='0.1.22';
 mgu.run({async start(ctx){
  const {ui,settings,log}=ctx, capture=new Capture(),reader=new Reader(ctx.signals,log);
  const monitor=new Monitor(Date.now,ctx.app&&ctx.app.startReason);
@@ -20,6 +20,7 @@ mgu.run({async start(ctx){
  const feedback=[];let feedbackStatus='No FLM samples recorded';
  let flashExport='',flashExportError='',flashAttempt=0;
  // Sub-100 ms selections are now supported only in the experimental fast mode.
+ const leverObservation=new LeverObservation();
  const lever=new LeverTrigger(Date.now);const syncLever=()=>{lever.setRange(settings.get('leverMinMs'),settings.get('leverMaxMs'));lever.setEnabled(settings.get('leverTrigger')===true);};syncLever();
  const bgFile=path.join(ctx.dataDir,'light-flasher-background.json');let lastBg='',bgError='';
  // Keep the most recent lever decisions available after the app restarts.
@@ -41,6 +42,7 @@ mgu.run({async start(ctx){
  // Passive observation only, independent of the parked actuator guard.
  const lightProviderAvailable=()=>!!(guard.speedSub&&guard.speedSub.available);
  const observeBackground=()=>{monitor.observe(Date.now()-lastLightAt<=2500?{statusMainBeam_headlightFlasher:lastCombined}:null,lightProviderAvailable(),ui.isVisible('MAIN'));persistBackground();};
+ const leverSignal=()=>leverObservation.snapshot(Date.now(),lightProviderAvailable());
  const serviceVisible=()=>ui.isVisible('DIAGNOSTICS')||ui.isVisible('ADVANCED')||ui.isVisible('LOGS');
  const menuVisible=()=>serviceVisible()||ui.isVisible('OPTIONS');
  const update=()=>{
@@ -54,6 +56,11 @@ mgu.run({async start(ctx){
    }
    if(ui.isVisible('OPTIONS'))ui.text('LEVER_RANGE_STATUS',lever.rangeValid?'Lever hold: '+lever.opts.minOnMs+' - '+lever.opts.maxOnMs+' ms':'Invalid lever range: minimum must not exceed maximum');
    if(ui.isVisible('DIAGNOSTICS')){
+     const signal=leverSignal();
+     const live=signal.status==='EIN'?(signal.holdMs===null?'OEM beam ON | Start unknown':'Pull detected | '+signal.holdMs+' ms'):
+       signal.status==='AUS'?'Released / OEM beam OFF':'No current OEM beam signal';
+     const previous=signal.lastHoldMs===null?'No complete pull measured':'Last measured pull: '+signal.lastHoldMs+' ms';
+     ui.text('DIAG_LEVER',live+' | '+previous);
      const timing=Timing.summarize(flash.trace),gaps=timing.startDispatchGaps;
      const release=Release.summarize(flash.trace,flash.cleanupUnconfirmed);
      ui.text('DIAG_STATE',(locked?'Locked - restore normal lights on main menu':reader.diag.available?'Connection available':'Connection unavailable')+(guard.recoveryReason()?' | Park in P for service':' | Parked'));
@@ -225,7 +232,7 @@ mgu.run({async start(ctx){
    return {app:'light_flasher',version:VERSION,at:new Date().toISOString(),guard:guard.snapshot(),
      bdcIndex:reader.index,identityReply:reader.identityReply,connectionState,lastError,
      tasuAvailable:reader.diag.available,tasuError:reader.diag.error||null,trace:reader.trace.slice(),
-     physicalActuation:flash.trace.some(x=>x.tx.startsWith('3101')),manualFlash:{status:flash.status,trace:flash.trace.slice(),cleanupUnconfirmed:flash.cleanupUnconfirmed,config:flash.config,fastTest:flash.fast,stepsCompleted:flash.stepsCompleted,cyclesCompleted:flash.config?Math.floor(flash.stepsCompleted/flash.config.steps.length):0,elapsedMs:flash.elapsedMs,timing:Timing.summarize(flash.trace),release:Release.summarize(flash.trace,flash.cleanupUnconfirmed)},combinedSignal:lastCombined,capture:capture.snapshot(),flmFeedback:feedback.slice(),decodedFeedback:feedback.map(Feedback.sampleState),overrideReadiness:Feedback.limits,backgroundMonitor:monitor.snapshot(),leverTrigger:lever.snapshot(),feedbackStatus};
+     physicalActuation:flash.trace.some(x=>x.tx.startsWith('3101')),manualFlash:{status:flash.status,trace:flash.trace.slice(),cleanupUnconfirmed:flash.cleanupUnconfirmed,config:flash.config,fastTest:flash.fast,stepsCompleted:flash.stepsCompleted,cyclesCompleted:flash.config?Math.floor(flash.stepsCompleted/flash.config.steps.length):0,elapsedMs:flash.elapsedMs,timing:Timing.summarize(flash.trace),release:Release.summarize(flash.trace,flash.cleanupUnconfirmed)},combinedSignal:lastCombined,capture:capture.snapshot(),flmFeedback:feedback.slice(),decodedFeedback:feedback.map(Feedback.sampleState),overrideReadiness:Feedback.limits,backgroundMonitor:monitor.snapshot(),leverTrigger:lever.snapshot(),leverObservation:leverSignal(),feedbackStatus};
  }
  function writeReport(file,report){
    fs.writeFileSync(file+'.tmp',JSON.stringify(report,null,2));fs.renameSync(file+'.tmp',file);
@@ -276,7 +283,7 @@ mgu.run({async start(ctx){
  ui.onVisible(()=>{if(ui.isVisible('MAIN'))monitor.seeMain();else if(runNeedsMain||menuVisible())flash.cancel();persistBackground();if((capture.active||pending&&!flash.running)&&!ui.isVisible('ADVANCED'))stop('Left advanced tests');update()});
  if(ctx.app&&ctx.app.on)ctx.app.on('shutdown',()=>{closing=true;flash.cancel();stop('Shutdown')});
  process.on('SIGTERM',()=>{closing=true;flash.cancel();stop('Shutdown');if(flashTask){const timer=setTimeout(()=>process.exit(1),10000);flashTask.catch(()=>{}).then(()=>{clearTimeout(timer);process.exit(0)});}else process.exit(0)});
- guard.init(ctx.signals,log,v=>{lastCombined=v&&v.statusMainBeam_headlightFlasher;lastLightAt=Date.now();observeBackground();capture.status(v);feedLever()}).catch(e=>log.warn(String(e)));
+ guard.init(ctx.signals,log,v=>{lastCombined=v&&v.statusMainBeam_headlightFlasher;lastLightAt=Date.now();leverObservation.observe(lastCombined,lastLightAt);observeBackground();capture.status(v);feedLever();if(ui.isVisible('DIAGNOSTICS'))update()}).catch(e=>log.warn(String(e)));
  reader.init().catch(e=>log.warn(String(e)));
  setInterval(()=>{tick().catch(e=>log.warn(String(e)))},250);
  update();
