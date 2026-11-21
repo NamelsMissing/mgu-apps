@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -65,19 +65,19 @@
       "options": [
         [
           "20",
-          "20 ms (fast / P only)"
+          "20 ms (fast)"
         ],
         [
           "40",
-          "40 ms (fast / P only)"
+          "40 ms (fast)"
         ],
         [
           "60",
-          "60 ms (fast / P only)"
+          "60 ms (fast)"
         ],
         [
           "80",
-          "80 ms (fast / P only)"
+          "80 ms (fast)"
         ],
         [
           "100",
@@ -181,13 +181,13 @@
     },
     {
       "key": "leverTrigger",
-      "label": "Start via high-beam stalk (P only)",
+      "label": "Start via high-beam stalk",
       "type": "bool",
       "default": false
     },
     {
       "key": "leverBackground",
-      "label": "Stalk trigger in background (P only)",
+      "label": "Stalk trigger in background",
       "type": "bool",
       "default": false
     },
@@ -296,7 +296,7 @@
         [
           "button",
           "BTN_FLASH",
-          "Start flash pattern (P)"
+          "Start flash pattern"
         ],
         [
           "button",

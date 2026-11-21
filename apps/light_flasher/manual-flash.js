@@ -1,5 +1,5 @@
 'use strict';
-// Only a bounded explicit parked test, never automatic, no OEM suppression.
+// Bounded flash patterns and cleanup without OEM suppression.
 const {replyTo}=require('./tasu');
 const {config}=require('./flash-config');
 const Feedback=require('./feedback');
@@ -69,7 +69,7 @@ class ManualFlash {
  async run(requested,allowed,changed=()=>{}){
   if(this.running)throw Error('Flash already running');
   if(this.cleanupUnconfirmed||(this.journal&&this.journal.exists()))throw Error('Previous cleanup unconfirmed: verify normal lights; locked pending service inspection');
-  if(!allowed()||!this.diag.available)throw Error('Enable parked flash, select P and switch OEM high beam OFF');
+  if(!allowed()||!this.diag.available)throw Error('Enable flash control and wait for a current OEM high beam OFF signal');
   const fast=requested.fast===true;
   const cfg=config(requested.pattern,requested.intervalMs,requested.cycleCount!=null?'cycles:'+requested.cycleCount:requested.durationMs,fast);
   this.config={...cfg,mode:fast?'fast-test':'standard'};this.stepsCompleted=0;this.elapsedMs=0;
@@ -78,7 +78,7 @@ class ManualFlash {
   let began=null,deadline=Infinity,marked=false,error=null;
   const touched=[],affected=new Set();
   const targetSteps=cfg.cycleCount===null?null:cfg.cycleCount*cfg.steps.length;
-  const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Cancelled or park/OEM-light guard changed')};
+  const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Cancelled or flash guard changed')};
   const send=async(m,sid,data,cleanup=false)=>{
    if(!cleanup)check();
    const sentAt=this.now();

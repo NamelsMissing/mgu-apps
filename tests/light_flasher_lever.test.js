@@ -103,14 +103,14 @@ test('disabled detector never fires', () => {
 test('main wires lever only through the guarded flash path', () => {
     const src = require('fs').readFileSync(require('path').join(__dirname, '../apps/light_flasher/main.js'), 'utf8');
     const allowed = src.match(/const leverAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', '!guard.parkedReason()', '!flash.running', '!isLocked()'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', 'lightProviderAvailable()', '!flash.running', '!isLocked()'])
         assert.ok(allowed.includes(term), 'leverAllowed lacks ' + term);
     assert.match(src, /startFlash\('lever'\)/);
     assert.match(src, /flash\.run\(\{\.\.\.cfg,fast:settings\.get\('fastTest'\)===true\},runAllowed,update\)/);
     assert.match(src, /const runAllowed=source==='lever'\?/);
-    // Background runs keep the full P/stationary/OEM-off guard, but never with diagnostics open.
+    // Background runs keep the fresh OEM beam OFF requirement, but never with diagnostics open.
     const bg = src.match(/const backgroundRunAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", '!guard.parkedReason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", 'lightProviderAvailable()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
         assert.ok(bg.includes(term), 'backgroundRunAllowed lacks ' + term);
     const screen = src.match(/const leverScreenOk=\(\)=>([^;]+);/)[1];
     assert.equal(screen, "ui.isVisible('MAIN')||(leverBackground()&&!menuVisible())");
@@ -218,7 +218,6 @@ test('diagnostic display, exports and automatic recovery use current signals', a
                 if (name === './kit/mgu') return {run: app => { started = app.start(ctx); }};
                 if (name === './guard') return class {
                     async init(signals, log, receive) { this.speedSub = {available: true}; receiveLight = receive; }
-                    parkedReason() { return 'Select P (Park)'; }
                     recoveryReason() { return null; }
                     snapshot() { return {}; }
                 };
