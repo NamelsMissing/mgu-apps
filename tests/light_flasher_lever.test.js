@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { LeverTrigger } = require('../apps/light_flasher/lever-trigger');
+const { LeverTrigger, LeverObservation } = require('../apps/light_flasher/lever-trigger');
 
 // Simulated clock; feed(status) means a fresh signal arrived now.
 function rig(opts) {
@@ -196,7 +196,7 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         const clicks = new Map();
         const labels = new Map();
         let visible = 'DIAGNOSTICS';
-        let onVisible;
+        let onVisible, receiveLight;
         const ui = {
             isVisible: name => name === visible,
             onClick: (id, callback) => clicks.set(id, callback),
@@ -216,13 +216,13 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
             require: name => {
                 if (name === './kit/mgu') return {run: app => { started = app.start(ctx); }};
                 if (name === './guard') return class {
-                    async init() {}
+                    async init(signals, log, receive) { this.speedSub = {available: true}; receiveLight = receive; }
                     recoveryReason() { return 'Select P (Park)'; }
                     snapshot() { return {}; }
                 };
                 if (name === './probe') return {
                     Reader: class { constructor() { this.diag = {}; this.trace = []; } async init() {} },
-                    Capture: class { stop() {} snapshot() { return {}; } },
+                    Capture: class { status() {} stop() {} snapshot() { return {}; } },
                 };
                 return name.startsWith('./') ? require(path.join(appDir, name)) : require(name);
             },
@@ -247,7 +247,42 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         assert.equal(report.leverTrigger.events.length, 6);
         await clicks.get('BTN_LOG_BACK')();
         assert.equal(visible, 'DIAGNOSTICS');
+        const light = status => receiveLight({statusMainBeam_headlightFlasher: status});
+        light('AUS');
+        light('EIN');
+        assert.match(labels.get('DIAG_LEVER'), /Pull detected/);
+        light('AUS');
+        assert.match(labels.get('DIAG_LEVER'), /Released.*Last measured pull: [0-9]+ ms/);
     } finally {
         fs.rmSync(dataDir, {recursive: true, force: true});
     }
+});
+
+test('live measurement ignores repeated samples and requires both fresh edges', () => {
+    const signal = new LeverObservation();
+    signal.observe('EIN', 100);
+    assert.equal(signal.snapshot(200, true).holdMs, null);
+    signal.observe('AUS', 300);
+    signal.observe('EIN', 500);
+    signal.observe('EIN', 700);
+    assert.equal(signal.snapshot(800, true).holdMs, 300);
+    signal.observe('AUS', 1000);
+    assert.equal(signal.snapshot(1000, true).lastHoldMs, 500);
+    signal.observe('EIN', 1100);
+    assert.equal(signal.snapshot(1200, false).status, null);
+    signal.observe('AUS', 4000);
+    assert.equal(signal.snapshot(4000, true).lastHoldMs, 500);
+});
+
+test('trigger accepts a pull just after stable OFF even before the next timer tick', () => {
+    let now = 1000;
+    const trigger = new LeverTrigger(() => now);
+    trigger.setEnabled(true);
+    trigger.update('AUS', now, true);
+    now += 1001;
+    assert.equal(trigger.update('EIN', now, true), false);
+    now += 500;
+    assert.equal(trigger.update('AUS', now, true), false);
+    now += 400;
+    assert.equal(trigger.update('AUS', now - 400, true), true);
 });
