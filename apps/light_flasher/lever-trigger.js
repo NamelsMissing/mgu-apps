@@ -1,5 +1,5 @@
 'use strict';
-// Parked lever trigger: detects a short OEM flash pull (AUS -> EIN -> AUS) on the
+// Lever trigger: detects a short OEM flash pull (AUS -> EIN -> AUS) on the
 // combined Vehicle2 signal statusMainBeam_headlightFlasher and requests ONE run of
 // the existing guarded manual pattern after the lever is released.
 //
@@ -70,13 +70,13 @@ class LeverTrigger {
  // Start of a run (lever or button): ignore everything until cooldown after it ends.
  runStarted(){this.reset('Flash running');this.cooldownUntil=Infinity;}
  runEnded(){this.cooldownUntil=this.now()+this.opts.cooldownMs;this.reset('Cooldown after flash');}
- // status: 'EIN' | 'AUS' | other; statusAt: receive time; allowed: parked guard ok
+ // status: 'EIN' | 'AUS' | other; statusAt: receive time; allowed: trigger permitted
  // and nothing else running. Returns true exactly once per accepted pulse.
  update(status,statusAt,allowed){
   const t=this.now(),o=this.opts;
   if(!this.enabled){this.state='disabled';return false;}
   if(!this.rangeValid){this.reset('Invalid lever pulse range');return false;}
-  if(!allowed){this.reset('Blocked: parked guard, setting or another operation');return false;}
+  if(!allowed){this.reset('Blocked: setting, screen, signal provider or another operation');return false;}
   if(t<this.cooldownUntil){this.reset('Cooldown after flash');return false;}
   if(!currentLightStatus(status,statusAt,t,o.staleMs)){this.reset('OEM light status unknown or stale');return false;}
   switch(this.state){
@@ -120,6 +120,6 @@ class LeverTrigger {
  }
  snapshot(){return {enabled:this.enabled,state:this.state,reason:this.lastReason,triggers:this.triggers,rejected:this.rejected,lastPulseMs:this.lastPulseMs,
    cooldownRemainingMs:Number.isFinite(this.cooldownUntil)?Math.max(0,this.cooldownUntil-this.now()):null,limits:{...this.opts},rangeValid:this.rangeValid,
-   scope:'P, stationary, manual flash enabled; foreground or explicitly enabled background; short pull only',events:this.events.slice()};}
+   scope:'manual flash enabled; foreground or explicitly enabled background; short pull only',events:this.events.slice()};}
 }
 module.exports={LeverTrigger,LeverObservation,DEFAULTS,MIN_CHOICES,MAX_CHOICES,pulseRange};

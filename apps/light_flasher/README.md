@@ -1,4 +1,6 @@
-# Light Flasher 0.1.21
+# Light Flasher 0.1.23
+
+The app no longer requires a stationary speed signal or gear position P for the lever trigger, fast intervals, cycle mode, or Advanced tests. Live flash still requires the configured trigger, a current OEM high beam OFF signal and diagnostic access. Cleanup and the cleanup lock continue to apply.
 
 ## 0.1.21 – Lever timing and Diagnostic Logs
 
