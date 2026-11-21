@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { LeverTrigger } = require('../apps/light_flasher/lever-trigger');
+const { LeverTrigger, LeverObservation } = require('../apps/light_flasher/lever-trigger');
 
 // Simulated clock; feed(status) means a fresh signal arrived now.
 function rig(opts) {
@@ -103,14 +103,14 @@ test('disabled detector never fires', () => {
 test('main wires lever only through the guarded flash path', () => {
     const src = require('fs').readFileSync(require('path').join(__dirname, '../apps/light_flasher/main.js'), 'utf8');
     const allowed = src.match(/const leverAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', '!guard.recoveryReason()', '!flash.running', '!flash.cleanupUnconfirmed'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', '!guard.parkedReason()', '!flash.running', '!isLocked()'])
         assert.ok(allowed.includes(term), 'leverAllowed lacks ' + term);
     assert.match(src, /startFlash\('lever'\)/);
     assert.match(src, /flash\.run\(\{\.\.\.cfg,fast:settings\.get\('fastTest'\)===true\},runAllowed,update\)/);
     assert.match(src, /const runAllowed=source==='lever'\?/);
     // Background runs keep the full P/stationary/OEM-off guard, but never with diagnostics open.
     const bg = src.match(/const backgroundRunAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", '!guard.recoveryReason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", '!guard.parkedReason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
         assert.ok(bg.includes(term), 'backgroundRunAllowed lacks ' + term);
     const screen = src.match(/const leverScreenOk=\(\)=>([^;]+);/)[1];
     assert.equal(screen, "ui.isVisible('MAIN')||(leverBackground()&&!menuVisible())");
@@ -173,7 +173,7 @@ test('a long hold still logs its actual release duration', () => {
     assert.deepEqual(r.lt.snapshot().events.map(e => e.kind), ['pull', 'release', 'rejected']);
 });
 
-test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', async () => {
+test('diagnostic display, exports and automatic recovery use current signals', async () => {
     const fs = require('node:fs');
     const os = require('node:os');
     const path = require('node:path');
@@ -196,7 +196,8 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         const clicks = new Map();
         const labels = new Map();
         let visible = 'DIAGNOSTICS';
-        let onVisible;
+        let onVisible, receiveLight, runTick;
+        let recoveryCalls = 0, failRecovery = true;
         const ui = {
             isVisible: name => name === visible,
             onClick: (id, callback) => clicks.set(id, callback),
@@ -216,18 +217,31 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
             require: name => {
                 if (name === './kit/mgu') return {run: app => { started = app.start(ctx); }};
                 if (name === './guard') return class {
-                    async init() {}
-                    recoveryReason() { return 'Select P (Park)'; }
+                    async init(signals, log, receive) { this.speedSub = {available: true}; receiveLight = receive; }
+                    parkedReason() { return 'Select P (Park)'; }
+                    recoveryReason() { return null; }
                     snapshot() { return {}; }
                 };
                 if (name === './probe') return {
-                    Reader: class { constructor() { this.diag = {}; this.trace = []; } async init() {} },
-                    Capture: class { stop() {} snapshot() { return {}; } },
+                    Reader: class { constructor() { this.diag = {available: true}; this.trace = []; } async init() {} },
+                    Capture: class { status() {} stop() {} snapshot() { return {}; } },
                 };
+                if (name === './manual-flash') {
+                    const ManualFlash = require(path.join(appDir, name));
+                    return class extends ManualFlash {
+                        async recover(allowed) {
+                            assert.equal(allowed(), true);
+                            recoveryCalls++;
+                            if (failRecovery) throw Error('STOP not confirmed');
+                            this.journal.clear();
+                            this.cleanupUnconfirmed = false;
+                        }
+                    };
+                }
                 return name.startsWith('./') ? require(path.join(appDir, name)) : require(name);
             },
             process: {pid: 1, on() {}},
-            setInterval() {},
+            setInterval(callback) { runTick = callback; },
         });
         await started;
         assert.ok(app.screens.find(screen => screen.name === 'DIAGNOSTICS').items.some(item => item[1] === 'BTN_LOGS'));
@@ -247,7 +261,62 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         assert.equal(report.leverTrigger.events.length, 6);
         await clicks.get('BTN_LOG_BACK')();
         assert.equal(visible, 'DIAGNOSTICS');
+        const light = status => receiveLight({statusMainBeam_headlightFlasher: status});
+        light('AUS');
+        light('EIN');
+        assert.match(labels.get('DIAG_LEVER'), /Pull detected/);
+        light('AUS');
+        assert.match(labels.get('DIAG_LEVER'), /Released.*Last measured pull: [0-9]+ ms/);
+        const lock = path.join(dataDir, 'manual-flash-pending.json');
+        const tick = async () => { runTick(); await new Promise(resolve => setImmediate(resolve)); };
+        fs.writeFileSync(lock, '{}');
+        light('EIN');
+        await tick();
+        assert.equal(recoveryCalls, 0);
+        light('AUS');
+        await tick();
+        await tick();
+        assert.equal(recoveryCalls, 1);
+        assert.ok(fs.existsSync(lock));
+        ui.open('MAIN');
+        failRecovery = false;
+        await clicks.get('BTN_RECOVER')();
+        assert.equal(recoveryCalls, 2);
+        assert.ok(!fs.existsSync(lock));
+        fs.writeFileSync(lock, '{}');
+        await tick();
+        assert.equal(recoveryCalls, 3);
+        assert.ok(!fs.existsSync(lock));
     } finally {
         fs.rmSync(dataDir, {recursive: true, force: true});
     }
+});
+
+test('live measurement ignores repeated samples and requires both fresh edges', () => {
+    const signal = new LeverObservation();
+    signal.observe('EIN', 100);
+    assert.equal(signal.snapshot(200, true).holdMs, null);
+    signal.observe('AUS', 300);
+    signal.observe('EIN', 500);
+    signal.observe('EIN', 700);
+    assert.equal(signal.snapshot(800, true).holdMs, 300);
+    signal.observe('AUS', 1000);
+    assert.equal(signal.snapshot(1000, true).lastHoldMs, 500);
+    signal.observe('EIN', 1100);
+    assert.equal(signal.snapshot(1200, false).status, null);
+    signal.observe('AUS', 4000);
+    assert.equal(signal.snapshot(4000, true).lastHoldMs, 500);
+});
+
+test('trigger accepts a pull just after stable OFF even before the next timer tick', () => {
+    let now = 1000;
+    const trigger = new LeverTrigger(() => now);
+    trigger.setEnabled(true);
+    trigger.update('AUS', now, true);
+    now += 1001;
+    assert.equal(trigger.update('EIN', now, true), false);
+    now += 500;
+    assert.equal(trigger.update('AUS', now, true), false);
+    now += 400;
+    assert.equal(trigger.update('AUS', now - 400, true), true);
 });

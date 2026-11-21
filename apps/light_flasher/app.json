@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
-  "version": "0.1.21",
+  "version": "0.1.22",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -311,7 +311,7 @@
         [
           "button",
           "BTN_RECOVER",
-          "Restore normal lights (P)"
+          "Restore normal lights"
         ],
         [
           "button",
@@ -357,6 +357,11 @@
           "text3",
           "DIAG_RESULT",
           "Last operation"
+        ],
+        [
+          "text3",
+          "DIAG_LEVER",
+          "Lever signal and hold time"
         ],
         [
           "button",
