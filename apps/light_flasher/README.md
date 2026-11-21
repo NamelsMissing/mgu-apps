@@ -1,4 +1,10 @@
-# Light Flasher 0.1.14
+# Light Flasher 0.1.21
+
+## 0.1.21 – Lever timing and Diagnostic Logs
+
+The selected minimum and maximum are inclusive. Equal values such as 500–500 ms require that exact measured pulse duration. Hands-on tests are easier with a range such as 250–750 ms. A pulse is measured from the received OEM ON signal to the received OFF signal. The trigger still waits for OFF to settle and requires the parked guard throughout. The combined OEM signal cannot distinguish a lever pull from a change to the high-beam state, and notification or polling latency can affect the measured duration.
+
+**Settings → Service / diagnostics → Diagnostic Logs** shows recent OEM transitions, lever decisions, and the ten most recent automatic run reports. Use **Older entries** and **Newer entries** to browse, or **Refresh** to reload. Trigger a test from the main menu and then open the logs to see its result. The logs screen displays the app data directory on the MGU. Copy `light-flasher-background.json`, `light-flasher-run-*.json`, or the snapshot saved with **Export diagnostic report (JSON)** (`light-flasher-diagnostics.json`) from that directory over SSH/SCP.
 
 ## 0.1.20 – Repeat by cycle count
 
