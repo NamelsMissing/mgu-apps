@@ -133,8 +133,8 @@
     {
       "id": "mgu-cluster-net",
       "kind": "tool",
-      "title": "Custom Cluster Phone Port",
-      "version": "0.1.0",
+      "title": "Blitzer Status Phone Port",
+      "version": "0.1.1",
       "path": "native/cluster-net",
       "mguHmi": [
         "ID7"
@@ -174,15 +174,36 @@
       "id": "custom_cluster",
       "kind": "app",
       "title": "Custom Cluster",
-      "version": "0.6.10",
+      "version": "0.6.11",
       "path": "apps/custom_cluster",
       "icon": "icon.png",
       "mguHmi": [
         "ID7"
       ],
       "requires": {
+        "cluster-render": "0.4.0"
+      },
+      "build": {
+        "python": "tools/build_store_app.py",
+        "args": [
+          "{id}"
+        ],
+        "sdk": "oap-sdk",
+        "output": "dist/{id}@{version}.tgz"
+      }
+    },
+    {
+      "id": "blitzer_status",
+      "kind": "app",
+      "title": "Blitzer Status",
+      "version": "0.1.0",
+      "path": "apps/blitzer_status",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
         "cluster-render": "0.4.0",
-        "mgu-cluster-net": "0.1.0"
+        "mgu-cluster-net": "0.1.1"
       },
       "build": {
         "python": "tools/build_store_app.py",

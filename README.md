@@ -67,7 +67,8 @@ You don't have to type on the car at all:
 | App | Status | What it's for |
 | --- | --- | --- |
 | [**GIF Home**](apps/gif_home/README.md) | Stable | Shows an animated GIF in the large tile on the iDrive home screen. Use the built-in animations or send your own GIF from your phone with a QR code. |
-| [**Custom Cluster**](apps/custom_cluster/README.md) | Experimental | Alternative designs for the digital instrument cluster, inspired by other BMW models, plus the Waze map and a phone status line in the cluster. |
+| [**Custom Cluster**](apps/custom_cluster/README.md) | Experimental | Alternative designs for the digital instrument cluster, inspired by other BMW models, plus Waze map control in the cluster. |
+| [**Blitzer Status**](apps/blitzer_status/README.md) | Experimental | Starts with iDrive and shows the last Blitzer.de open or close event reported by iPhone Shortcuts. The optional status line sits in the cluster map window. |
 | [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | Experimental | Shows the lyrics of the song playing on your Spotify, on the iDrive screen and optionally in the instrument cluster. Needs internet in the car; not yet tested in a vehicle. |
 
 ### Entertainment (while parked)

@@ -1,9 +1,9 @@
 {
   "id": "mgu-cluster-net",
   "kind": "tool",
-  "version": "0.1.0",
-  "title": "Custom Cluster Phone Port",
-  "description": "Opens TCP 18977 on wlan_bridge for the Custom Cluster phone status link, only while that link is listening",
+  "version": "0.1.1",
+  "title": "Blitzer Status Phone Port",
+  "description": "Opens TCP 18977 on wlan_bridge for the Blitzer Status iPhone link, only while that link is listening",
   "mguHmi": ["ID7"],
   "files": [
     {"path": "mgu-cluster-net", "mode": "0755"},

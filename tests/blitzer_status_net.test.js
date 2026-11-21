@@ -5,7 +5,7 @@ const http = require('http');
 const path = require('path');
 const {makeFirewall, TAG, PORT} = require('../native/cluster-net/firewall');
 const {makeNetwork, probeCluster} = require('../native/cluster-net/server');
-const {PhoneBridge, PORT: APP_PORT, NET_STATUS_PORT} = require('../apps/custom_cluster/phone_bridge');
+const {PhoneBridge, PORT: APP_PORT, NET_STATUS_PORT} = require('../apps/blitzer_status/phone_bridge');
 const {STATUS_PORT} = require('../native/cluster-net/server');
 
 function fakeNft() {
@@ -77,7 +77,7 @@ async function checkService() {
 // the real app health endpoint is what the tool probes
 async function checkProbe() {
     const port = 39000 + (process.pid % 900);
-    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'cc-net-'));
+    const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'blitzer-net-'));
     const bridge = new PhoneBridge(dir, {info() {}, warn() {}}, null, {port, address: '127.0.0.2', netStatusPort: 0});
     assert.strictEqual(await probeCluster(port), false, 'nothing running');
     bridge.setEnabled(true);
@@ -96,14 +96,16 @@ async function checkProbe() {
 function checkManifest() {
     const root = path.resolve(__dirname, '..');
     const catalog = JSON.parse(fs.readFileSync(path.join(root, 'mgu-repo.json'), 'utf8'));
-    const app = JSON.parse(fs.readFileSync(path.join(root, 'apps/custom_cluster/app.json'), 'utf8'));
+    const app = JSON.parse(fs.readFileSync(path.join(root, 'apps/blitzer_status/app.json'), 'utf8'));
     const tool = JSON.parse(fs.readFileSync(path.join(root, 'native/cluster-net/component.json'), 'utf8'));
     const toolEntry = catalog.components.find(c => c.id === tool.id);
     const appEntry = catalog.components.find(c => c.id === app.id);
     assert.ok(toolEntry && toolEntry.kind === 'tool' && toolEntry.path === 'native/cluster-net');
     assert.strictEqual(toolEntry.version, tool.version);
     assert.strictEqual(appEntry.version, app.version);
-    assert.strictEqual(appEntry.requires[tool.id], tool.version, 'Custom Cluster installs the firewall tool');
+    const customCluster = catalog.components.find(c => c.id === 'custom_cluster');
+    assert.ok(!Object.prototype.hasOwnProperty.call(customCluster.requires, tool.id));
+    assert.strictEqual(appEntry.requires[tool.id], tool.version, 'Blitzer Status installs the firewall tool');
     for (const f of tool.files) assert.ok(fs.existsSync(path.join(root, 'native/cluster-net', f.path)));
     for (const u of tool.units) {
         const text = fs.readFileSync(path.join(root, 'native/cluster-net', u.from || u.name), 'utf8');
@@ -112,5 +114,5 @@ function checkManifest() {
 }
 
 checkFirewall().then(checkService).then(checkProbe).then(checkManifest).then(
-    () => console.log('custom-cluster phone port tool tests passed: scoped firewall, health probe, manifest'),
+    () => console.log('Blitzer Status phone port tool tests passed: scoped firewall, health probe, manifest'),
     e => { console.error(e.stack || e); process.exitCode = 1; });

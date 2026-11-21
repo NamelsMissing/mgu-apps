@@ -62,9 +62,7 @@ class AutostartPackageTests(unittest.TestCase):
         builder.patch_artifacts(self.repo, "autostart")
         self.check_package(self.mgu, "source/package.json", "autostart")
 
-    def test_light_flasher_autostart_is_scoped(self):
-        app_id = "light_flasher"
-        version = "0.1.6"
+    def check_app_autostart_is_scoped(self, app_id, version):
         app = self.repo / "apps" / app_id
         app.mkdir(parents=True)
         (app / "app.json").write_text(json.dumps({"id": app_id, "version": version,
@@ -88,6 +86,13 @@ class AutostartPackageTests(unittest.TestCase):
         self.assertEqual(old_heat, self.npm.read_bytes())
         with self.assertRaises(builder.BuildError):
             builder.patch_artifacts(self.repo, "autostart", app_id="other")
+
+    def test_app_autostart_is_scoped(self):
+        for app_id in ("light_flasher", "blitzer_status"):
+            with self.subTest(app_id=app_id):
+                spec_dir = SCRIPT.parents[1] / "apps" / app_id
+                version = builder._read_json(spec_dir / "app.json")["version"]
+                self.check_app_autostart_is_scoped(app_id, version)
 
     def test_wrong_version_fails_before_overwriting_archives(self):
         old_tar = self.npm.read_bytes()

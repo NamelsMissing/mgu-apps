@@ -5,7 +5,7 @@ module.exports = `#version 100
 precision highp float;
 varying vec2 v_uv;
 uniform vec4 u_values;  // speed km/h, rpm, oil C, coolant C
-uniform vec4 u_style;   // layout (1 sport, 2 classic, 3 minimal), live, badge, spare
+uniform vec4 u_style;   // layout (1 sport, 2 classic, 3 minimal), live, spare, spare
 uniform vec4 u_accent;
 
 float box(vec2 p, vec2 c, vec2 h) {
@@ -98,14 +98,6 @@ void main() {
   float decoA=clamp(deco,0.0,1.0);
   outc.rgb=mix(outc.rgb,accent,decoA);
   outc.a=max(outc.a,decoA);
-  // Tiny, neutral phone-app-event dot. No speed camera locations or warning data.
-  if(u_style.z>0.5) {
-    float b=disk(p,vec2(1043.0,54.0),22.0);
-    float inner=disk(p,vec2(1043.0,54.0),9.0);
-    outc.rgb=mix(outc.rgb,vec3(0.02,0.30,0.19),b);
-    outc.rgb=mix(outc.rgb,vec3(0.38,1.0,0.65),inner);
-    outc.a=max(outc.a,b);
-  }
   // Keep the native map's 504x368 guidance-safe area fully unobstructed.
   // This applies to Sport, Classic and Minimal, regardless of accent colour.
   float mapSafe=box(p,vec2(538.0,256.0),vec2(252.0,184.0));

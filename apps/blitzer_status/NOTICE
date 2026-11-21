@@ -1,0 +1,13 @@
+This app incorporates cluster_render_client.js from:
+  https://github.com/robertnisipeanu/idrive-apps
+Copyright (C) 2026 Robert Nisipeanu
+SPDX-License-Identifier: MPL-2.0
+The full Mozilla Public License 2.0 is included as LICENSE.
+
+qr_vendor.js includes QR Code Generator for JavaScript by Kazuhiko Arase
+(Copyright (c) 2009, MIT License), reused from the same repository's
+Heating Comfort app.
+https://github.com/kazuhikoarase/qrcode-generator
+
+All BMW names and marks belong to their respective owners.
+Unofficial prototype; neither BMW nor upstream project authors endorse it.

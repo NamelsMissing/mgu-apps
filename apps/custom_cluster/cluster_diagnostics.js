@@ -1,7 +1,7 @@
 'use strict';
 /*
  * Offline diagnostics inspired by the Cluster Layouts QR log workflow.
- * No phone network, remote commands, BMW ECU writes or daemon patching.
+ * No remote commands, BMW ECU writes or daemon patching.
  * Multi-page QR codes contain a zlib-compressed diagnostic text; the matching
  * tools/decode_custom_cluster_logs.py reassembles scanned CCLOG1 strings.
  */
@@ -86,7 +86,7 @@ function startJournal(ctx) {
     return journal;
 }
 
-function snapshot(ctx, cluster, wazeStatus, phoneStatus, hmiEvents) {
+function snapshot(ctx, cluster, wazeStatus, hmiEvents) {
     const data = [
         'CUSTOM CLUSTER DIAGNOSTICS v1',
         'Created: ' + new Date().toISOString(),
@@ -98,9 +98,6 @@ function snapshot(ctx, cluster, wazeStatus, phoneStatus, hmiEvents) {
         '',
         '=== WAZE CONTROL ===',
         String(wazeStatus || ''),
-        '',
-        '=== PHONE EVENT ===',
-        String(phoneStatus || ''),
         '',
         '=== HMI NAVIGATION (last 40 events) ===',
         String(hmiEvents || '(no UI events recorded)'),
@@ -176,8 +173,8 @@ function clearSaved(ctx) {
     return result;
 }
 
-function report(ctx, cluster, wazeStatus, phoneStatus, hmiEvents) {
-    const full = snapshot(ctx, cluster, wazeStatus, phoneStatus, hmiEvents);
+function report(ctx, cluster, wazeStatus, hmiEvents) {
+    const full = snapshot(ctx, cluster, wazeStatus, hmiEvents);
     const packed = zlib.deflateSync(Buffer.from(full, 'utf8')).toString('base64');
     const id = crypto.createHash('sha256').update(full).digest('hex').slice(0, 10);
     const count = Math.max(1, Math.ceil(packed.length / CHUNK));

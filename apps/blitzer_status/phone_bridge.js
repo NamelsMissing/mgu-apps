@@ -111,7 +111,7 @@ class PhoneBridge {
         server.listen(this.port, host);
     }
 
-    /* Loopback only: tells the root firewall tool that the link really listens. */
+    /* Keep the legacy health path and header for installed firewall tools. */
     _startHealth() {
         if (this.health || !this.healthPort) return;
         const health = http.createServer((req, res) => {
@@ -154,7 +154,7 @@ class PhoneBridge {
         const route = '/s/' + this.token + '/';
         const pathname = (req.url || '').split('?')[0];
         // A passworded, same-network, write-only signal; no third-party access.
-        if (req.method !== 'GET' || (pathname !== route + 'on' && pathname !== route + 'off')) {
+        if (!this.enabled || req.method !== 'GET' || (pathname !== route + 'on' && pathname !== route + 'off')) {
             res.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
             res.end('Not found');
             return;
@@ -184,6 +184,7 @@ class PhoneBridge {
         this.host = null;
     }
     stop() {
+        this.enabled = false;
         this._stopMain();
         if (this.health) { try { this.health.close(); } catch (e) {} }
         this.health = null;

@@ -17,7 +17,7 @@ class FakeRenderer extends EventEmitter {
 const IDLE = 'target panel: slot 0x203 scene 0x10004f8 1920x720: idle; scene published\nslot 0x203 status 1: 0x10004f8 class 0 map 0';
 const opts = (more) => Object.assign({ layout: 'g80', panelTestMode: 'probe', panelTarget: 'panel', accent: 'm',
     sixwbTheme: 'comfort', sixwbColorSource: 'original', colorMode: 'palette', colorBrightness: 100,
-    wazeMap: 'auto', phoneBadge: false, enablePanelTests: false, kombiAuto: 'parked' }, more || {});
+    wazeMap: 'auto', enablePanelTests: false, kombiAuto: 'parked' }, more || {});
 const real = Date.now;
 let clock = real();
 Date.now = () => clock;

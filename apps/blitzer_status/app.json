@@ -1,0 +1,35 @@
+{
+  "id": "blitzer_status",
+  "title": "Blitzer Status",
+  "description": "Shows when iPhone Shortcuts reports that Blitzer.de was opened or closed.",
+  "version": "0.1.0",
+  "vendor": "custom",
+  "loggingId": "OBZ1",
+  "iconGlyph": "BZ",
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Blitzer Status",
+      "buttons": [
+        ["BTN_LINK", "Show closed link"],
+        ["BTN_SETTINGS", "Settings"]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "phoneBridge",
+      "label": "Enable iPhone Shortcuts bridge at startup",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "phoneBadge",
+      "label": "Show status line in the cluster map window",
+      "type": "bool",
+      "default": false
+    }
+  ],
+  "mguAppStartType": "autostart"
+}

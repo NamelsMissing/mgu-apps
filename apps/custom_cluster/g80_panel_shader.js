@@ -9,7 +9,7 @@ precision highp float;
 varying vec2 v_uv;
 uniform vec4 u_values;    // speed, rpm, oil, coolant
 uniform vec4 u_accent;    // selected tint
-uniform vec4 u_options;   // always-open map window, gear, phone badge, OEM-style variant
+uniform vec4 u_options;   // always-open map window, gear, spare, OEM-style variant
 
 float rect(vec2 p, vec2 c, vec2 halfSize) {
   vec2 d=abs(p-c)-halfSize;
@@ -114,12 +114,5 @@ void main(){
   float edge=rect(p,vec2(960.,347.),vec2(338.,235.))-window;
   color=mix(color,blue,clamp(edge,0.,1.)*.32);
   alpha=max(alpha,clamp(edge,0.,1.));
-  if(u_options.z>0.5){
-    float outer=1.-smoothstep(21.,24.,length(p-vec2(1840.,75.)));
-    float inner=1.-smoothstep(7.,10.,length(p-vec2(1840.,75.)));
-    color=mix(color,vec3(.03,.32,.18),outer);
-    color=mix(color,vec3(.42,1.,.64),inner);
-    alpha=max(alpha,outer);
-  }
   gl_FragColor=vec4(color,clamp(alpha,0.,1.));
 }`;
