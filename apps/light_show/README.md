@@ -1,9 +1,21 @@
-# Light Show 0.4.5
+# Light Show 0.4.6
 
 Exterior light shows for BMW G-series cars with the iDrive 7 head unit (MGU), in the spirit of
 Bimmerlight: pick lights, pick an effect, start, from the BMW screen or from your phone.
 Unofficial, not from BMW. Use only parked in P, standing still, on private ground, with nobody
 in front of the car. Don't look into the headlights.
+
+## Getting started
+
+Add `namelsmissing/mgu-apps` to MGU Store, select `main`, then install Light Show. There is a
+lowercase L after `name`. The public repository is available without GitHub sign-in. See the
+[installation guide](../../README.md#add-this-repository-to-mgu-store).
+
+In P, open **Vehicle** and wait for the scan. Then open **Lights**, test one light at a time and
+confirm what you saw when the test finishes. A module listed in **Vehicle** has returned its
+identity. Whether an individual light turns on depends on the hardware. Add a confirmed light to
+the show and start with **Chase**, which works with a single light. **Wig-Wag** needs a confirmed
+light on each side. There are no preselected channels.
 
 ## What's new compared to 0.3.4 (mgu-apps)
 
@@ -24,7 +36,7 @@ Names and test results from 0.3.x are taken over (same app id, same data folder)
   *Lit, quiet* / *Nothing* / *Noise*. Only lights confirmed "lit, quiet" (and whose release was
   acknowledged) can be added to a show. *Rename* cycles through preset names; any name can be
   typed on the phone.
-- **Vehicle** - the scan (read-only, `22 F1 50` to all control units), the support level of the
+- **Vehicle** - the scan (read-only), the support level of the
   body controller and both headlamp modules, the list of all units, the switch for experimental
   headlamp modules, and the manual "lights checked" confirmation if a recovery file is unreadable.
 - **Phone** - QR code, status of the firewall helper, the server and the phone connection.
@@ -37,10 +49,15 @@ result is saved; after that the app scans again only when you press *Scan again*
 (e.g. after a control unit was replaced).
 
 1. One functional `22 F1 50` to all control units.
-2. Every light address that did not answer is asked once more on its own: gateway 0x10,
+2. Every light address that did not answer is checked on its own: gateway 0x10,
    rear light modules 0x17 / 0x1A / 0x1C / 0x1E, body 0x40, headlamps 0x43 / 0x44, 0x72.
+   If the BDC or a previously identified module still has no reply, it is checked a second time.
 3. The vehicle order (`22 3F 06`) is read from the gateway; option codes such as 5AZ (Laserlight)
    or 552 (Adaptive LED) are shown as a hint.
+
+**Last seen** means the module did not answer in this scan. Light Show keeps the last identity
+and checks it again before any test or show. A scan without any light module identity fails and
+keeps the previous result. If there is no previously saved result, the automatic scan retries.
 
 At the gateway only identity and the vehicle order are read. Rear light modules get control
 telegrams only after they identified as one of the RLM variants below.
@@ -116,7 +133,10 @@ standstill, identities, tested lights). No Internet is needed.
 - Requests go one by one through BMW's diagnostic transport (about 100-500 ms each in the car),
   so shows are slower and less exact than with an OBD adapter.
 
-Acknowledgements are protocol answers, not light measurements.
+An acknowledgement confirms the control unit received the command. Report **Nothing** if you
+didn't see light. A more recent **Nothing** overrides a previous visible result for that light.
+If the test fails, the error points to the ECU address and diagnostic response when available.
+Use those details and the result of the test when reporting a problem.
 
 ## Tests
 

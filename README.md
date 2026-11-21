@@ -22,7 +22,7 @@ Spelled out: **n a m e L s m i s s i n g** / **m g u - a p p s**
 
 1. Park the car and make sure MGU Store has internet, for example your phone's hotspot under **Settings → Wi-Fi**.
 2. In MGU Store, open **Settings** and tap **+ Add source**.
-3. Enter `namelsmissing/mgu-apps`.
+3. Enter `namelsmissing/mgu-apps`. The repository is public and works without GitHub sign-in.
 4. If the name is correct, the Store lists what the repository offers. Choose the branch **main** (marked *Default branch*). There are no releases or tags, and the other branches are old test versions, so don't pick them.
 5. The source now appears under **Settings → Sources** with *Branch main*.
 6. Go to the **Store** tab, choose an app and tap **Install**. If an app needs extra background components, the Store installs them with it.

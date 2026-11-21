@@ -99,7 +99,7 @@ function catalog(profile, names, options) {
     const out = [];
     const why = (support) => !routes ? 'Vehicle not scanned yet: happens by itself once parked in P'
         : support === 'verified' || support === 'prg' ? '' : support === 'experimental' ? (o.allowExperimental ? '' : 'Experimental module: enable in Vehicle')
-        : support === 'blocked' ? 'No supported body controller found' : support === 'absent' ? 'Module not found in this car'
+        : support === 'blocked' ? 'No supported body controller found' : support === 'absent' ? 'No identity returned in the scan'
         : 'Module variant not supported';
     for (const side of ['left', 'right']) {
         const support = routes ? routes.flm[side] : null, s = side === 'left' ? L : R;
@@ -112,7 +112,8 @@ function catalog(profile, names, options) {
                 short: (side === 'left' ? 'L' : 'R') + (c === 0 ? '*' : c), named: !!name,
                 points: c === 0 ? [pt(s, 0.56, 0.72, 2.28), pt(s, 0.66, 0.74, 2.27), pt(s, 0.74, 0.76, 2.24)]
                     : [pt(s, 0.50 + c * 0.017, 0.70 + (c % 3) * 0.022, 2.28 - c * 0.006)],
-                module: fv ? fv.name : F.MODULES[side].name, available: !why(support), why: why(support), support });
+                module: fv ? fv.name : F.MODULES[side].name, index: profile && profile.flm[side].index,
+                available: !why(support), why: why(support), support });
         }
     }
     const fnSupport = routes ? routes.fn : null, fnList = profile && profile.bdc && profile.bdc.functions;
@@ -158,7 +159,7 @@ function rlmLamps(profile, names) {
                 label: (names && names.name(id)) || sideName + ' ' + part + ' tail light ' + what,
                 short: (r.side === 'left' ? 'L' : 'R') + (part === 'outer' ? 'o' : 'i') + (fn ? fn.key : kind === 'grp' ? 'g' + item : item),
                 points: [pt(place[0], place[1] + spread, 0.90 - (fn ? item * 0.01 : 0), -2.30)],
-                module: r.name, available: r.support === 'prg', why: r.support === 'prg' ? '' : 'Rear light module not supported',
+                module: r.name, index: r.index, available: r.support === 'prg', why: r.support === 'prg' ? '' : 'Rear light module not supported',
                 support: r.support });
         }
     }

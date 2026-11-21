@@ -140,6 +140,7 @@ function makeUi(G, colors) {
         paragraph(cv, info, x0 + 2, iy, 16, pl && pl.error ? t.warn : t.dim, w - 4, 2);
         const hint = !m.allowed ? m.lockText : r.recoveryPending && !r.busy ? 'A previous run is not released yet: press STOP.' : r.note;
         footer(cv, t, hint, !m.allowed || r.state === 'ERROR' ? t.crit : null, [
+            sel ? { text: 'Clear lights', w: 185, key: 'CLEAR_LIGHTS', run: a.clearSelection, off: r.busy } : null,
             { text: 'Stop', w: 200, key: 'STOP', run: a.stop, color: t.crit, off: !r.busy && !r.recoveryPending },
             { text: r.busy ? 'Playing...' : 'Start show', w: 260, key: 'START', run: a.start, primary: true,
                 off: r.busy || !m.allowed || !pl || !!pl.error || r.recoveryPending },
@@ -178,12 +179,12 @@ function makeUi(G, colors) {
                 button(cv, t, px + bw + 12, TOP + 292, bw, 46, 'Nothing', () => a.observe('none'), 'OBS_NONE', { size: 16 });
                 button(cv, t, px + 2 * (bw + 12), TOP + 292, bw, 46, 'Noise', () => a.observe('noise'), 'OBS_NOISE', { size: 16, color: t.warn });
             } else {
-                paragraph(cv, l.status === 'visible' ? 'Tested: it lit up without noise. Add it to the show or test again.'
+                paragraph(cv, !l.available ? l.why : l.status === 'visible' ? 'Tested: it lit up without noise. Add it to the show or test again.'
                     : 'Test it once while you watch the car. Only lights that lit up without unusual noise can join a show.', px + 4, TOP + 286, 15, t.dim, panelW - 8, 3);
             }
             const inShow = m.config.selection.indexOf(l.id) >= 0;
-            button(cv, t, px, TOP + 350, bw, 46, 'Test', a.test, 'TEST', { primary: true, off: m.runner.busy || !m.allowed, size: 17 });
-            button(cv, t, px + bw + 12, TOP + 350, bw, 46, inShow ? 'Remove' : 'Add to show', a.toggle, 'TOGGLE', { off: l.status !== 'visible' && !inShow, size: 15, on: inShow });
+            button(cv, t, px, TOP + 350, bw, 46, 'Test', a.test, 'TEST', { primary: true, off: !l.available || m.runner.busy || !m.allowed || m.runner.recoveryPending, size: 17 });
+            button(cv, t, px + bw + 12, TOP + 350, bw, 46, inShow ? 'Remove' : 'Add to show', a.toggle, 'TOGGLE', { off: (!l.available || l.status !== 'visible') && !inShow, size: 15, on: inShow });
             button(cv, t, px + 2 * (bw + 12), TOP + 350, bw, 46, 'Rename', a.rename, 'RENAME', { size: 16 });
         }
         const pages = Math.max(1, Math.ceil(list.length / LIGHTS_PER_PAGE));
@@ -206,25 +207,27 @@ function makeUi(G, colors) {
         else {
             label(cv, p.summary + ' (' + p.method + ')', EDGE + 24, TOP + 62, 15, t.dim, lw - 48);
             const unit = (a) => p.units.find((u) => u.address === a);
-            const gw = unit(0x10), rear = p.units.filter((u) => [0x17, 0x1A, 0x1C, 0x1E].indexOf(u.address) >= 0 && u.name);
+            const gw = unit(0x10), rear = p.rlm || [], stale = p.unconfirmed || [];
             const hints = p.order && p.order.hints.length ? p.order.hints.join(', ') : p.order ? p.order.codes.length + ' option codes read' : (p.orderError || 'vehicle order not read');
             const rows = [
                 ['Gateway (0x10)', gw ? (gw.name || gw.index || '-') : '-', gw ? 'gateway' : 'absent', 'Vehicle order: ' + hints],
                 ['Body controller (0x40)', p.bdc.name || p.bdc.index || '-', p.bdc.support, (p.bdc.functions || []).length + ' light functions' + (p.bdc.outputs ? ' + single outputs (experimental)' : '')],
                 ['Headlamp left (0x43)', p.flm.left.name || p.flm.left.index || '-', p.routes.flm.left, 'LED channels of the left headlamp'],
                 ['Headlamp right (0x44)', p.flm.right.name || p.flm.right.index || '-', p.routes.flm.right, 'LED channels of the right headlamp'],
-                ['Rear light modules', rear.length ? rear.map((u) => u.name).join(', ') : 'none',
-                    !rear.length ? 'absent' : (p.rlm || []).some((r) => r.support === 'prg') ? 'prg' : 'unsupported',
-                    rear.length ? 'Tail light functions (RLM2) or LED channels (RLM_1)' : 'Rear lights run through the body controller'],
+                ['Rear light modules', rear.length ? rear.map((u) => u.name || u.index).join(', ') : '-',
+                    !rear.length ? 'absent' : rear.some((r) => r.support === 'prg') ? 'prg' : rear[0].support,
+                    rear.length ? 'Tail light functions and LED channels depend on the module' : 'Check the BDC light functions under Lights'],
             ];
             rows.forEach((r, i) => {
                 const y = TOP + 74 + i * 60;
                 card(cv, EDGE + 18, y, lw - 36, 54);
                 label(cv, r[0], EDGE + 36, y + 23, 17, t.text, 280, { font: 'bold' });
                 label(cv, r[1], EDGE + 320, y + 23, 17, t.text, 250);
-                label(cv, r[3], EDGE + 36, y + 44, 13.5, t.dim, lw - 90);
-                const c = r[2] === 'verified' || r[2] === 'gateway' ? (t.ok || t.accent) : r[2] === 'prg' || r[2] === 'experimental' || r[2] === 'detected' ? t.warn : t.crit;
-                const txt = m.supportText(r[2]);
+                const addresses = [[0x10], [0x40], [0x43], [0x44], rear.map((u) => u.address)][i];
+                const unconfirmed = addresses.filter((address) => stale.indexOf(address) >= 0).map((address) => unit(address).addressHex);
+                label(cv, unconfirmed.length ? 'No reply this scan: ' + unconfirmed.join(', ') + '. Last identity shown.' : r[3], EDGE + 36, y + 44, 13.5, t.dim, lw - 90);
+                const c = unconfirmed.length ? t.warn : r[2] === 'verified' || r[2] === 'gateway' ? (t.ok || t.accent) : r[2] === 'prg' || r[2] === 'experimental' || r[2] === 'detected' ? t.warn : t.crit;
+                const txt = unconfirmed.length ? 'Last seen' : m.supportText(r[2]);
                 const cw = cv.textWidth(ascii(txt).toUpperCase(), 12, { font: 'bold', spacing: 1, literal: true }) + 18;
                 chip(cv, EDGE + lw - 36 - cw, y + 8, txt, c, 12);
             });
@@ -244,11 +247,11 @@ function makeUi(G, colors) {
         paragraph(cv, 'Test option (like BimmerLight, 28 02 01): during a show the headlamp modules ignore the car\'s own light requests; normal communication returns at the end. SUPPORTED = tested in a car, FROM BMW DATA = from the BMW PRG.',
             rx + 24, TOP + 330, 13.5, t.dim, rw - 48, 3);
         const pages = Math.max(1, Math.ceil(units.length / per));
-        footer(cv, t, m.notice || (m.recoveryUnreadable ? 'Recovery file unreadable: check every normal light with the car\'s own switches, then confirm.' : 'Only identities are read. The result decides which lights the app offers.'),
+        footer(cv, t, m.notice || (m.recoveryUnreadable ? 'Recovery file unreadable: check every normal light with the car\'s own switches, then confirm.' : m.runner.state === 'SCANNING' ? m.runner.note : 'Park in P to scan. The scan only reads identities and vehicle order.'),
             m.recoveryUnreadable ? t.crit : null, [
                 m.recoveryUnreadable ? { text: 'Lights checked', w: 230, key: 'ACK', run: a.acknowledge, color: t.warn } : null,
                 pages > 1 ? { text: 'More units', w: 190, key: 'UNITS', run: a.nextUnits } : null,
-                { text: m.runner.state === 'SCANNING' ? 'Scanning...' : p ? 'Scan again' : 'Scan vehicle', w: 240, key: 'SCAN', run: a.scan, primary: true, off: m.runner.busy },
+                { text: m.runner.state === 'SCANNING' ? 'Scanning...' : p ? 'Scan again' : 'Scan vehicle', w: 240, key: 'SCAN', run: a.scan, primary: true, off: m.runner.busy || m.runner.recoveryPending || !m.allowed },
             ]);
     }
     function card(cv, x, y, w, h) { cv.roundRect(x, y, w, h, 10, withAlpha('#b4bccc', 0.07)); }

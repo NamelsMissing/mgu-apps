@@ -1,7 +1,7 @@
 'use strict';
 // Read-only vehicle analysis: which control units answer, which of them drive exterior
 // lights, and which control route Light Show may use on this particular car.
-// Only 22 F1 50 (identity) is sent; no session change, no lamp or motor request.
+// Only identity and vehicle order are read; no session change or lamp request.
 const fs = require('fs');
 const path = require('path');
 const P = require('./protocol');
@@ -23,12 +23,17 @@ const LIGHT_ROLES = Object.freeze({
     0x43: 'Headlamp module left', 0x44: 'Headlamp module right',
     0x72: 'Footwell / rear module (older body)',
 });
+const LIGHT_ADDRESSES = Object.keys(LIGHT_ROLES).map(Number);
 // Units Light Show recognises but cannot drive yet (no verified telegrams).
 const DETECT_ONLY = Object.freeze([0x10, 0x17, 0x1A, 0x1C, 0x1E, 0x72]);
 
 function unitName(address, index) {
     const key = hex2(address) + ' ' + index;
     return index && Object.prototype.hasOwnProperty.call(INDEX, key) ? INDEX[key] : null;
+}
+
+function hasLightIdentity(ids) {
+    return LIGHT_ADDRESSES.some((address) => address !== 0x10 && ids.get(address));
 }
 
 /**
@@ -86,30 +91,53 @@ function profile(ids, method, now) {
 }
 
 /**
- * Like BimmerLight: all units at once (functional 22 F1 50), then every light address that did
- * not answer is asked once more on its own, then the vehicle order from the gateway.
- * progress(text) reports each step.
+ * Read all units and recheck missing light addresses individually. If a known module
+ * doesn't answer, keep its last identity for display and require a fresh one before control.
  */
-async function scan(link, log, progress) {
+async function scan(link, log, progress, { previous, check = () => {} } = {}) {
     const say = progress || (() => {});
     let ids = new Map(), method = 'functional 22 F1 50', note = null;
+    check();
     say('Scanning for modules...');
     try { ids = await link.scan(); }
     catch (e) { note = 'Functional scan failed: ' + (e.message || e); method = 'physical 22 F1 50'; if (log) log.warn('Light Show scan: ' + note); }
-    const missing = (link.constructor.SCAN_ADDRESSES || [0x10, 0x40, 0x43, 0x44]).filter((a) => !ids.has(a) || !ids.get(a));
-    if (missing.length) method += ' + ' + missing.length + ' single checks';
-    for (const address of missing) {
+    const missing = LIGHT_ADDRESSES.filter((address) => !ids.get(address));
+    if (missing.length) method += ' + individual checks';
+    async function checkAddress(address) {
+        check();
         say('Checking 0x' + hex2(address) + '...');
-        try { ids.set(address, await link.readIdentity(address)); }
-        catch (e) { if (log) log.info('Light Show scan 0x' + hex2(address) + ': ' + (e.message || e)); }
+        try {
+            const index = await link.readIdentity(address);
+            if (index) ids.set(address, index);
+        } catch (e) {
+            if (log) log.info('Light Show scan 0x' + hex2(address) + ': ' + (e.message || e));
+        }
     }
+    for (const address of missing) await checkAddress(address);
+    const known = new Map((previous ? previous.units : []).filter((u) => u.light && u.index).map((u) => [u.address, u.index]));
+    for (const address of missing) {
+        if (!ids.get(address) && (address === P.ADDRESS || known.has(address))) await checkAddress(address);
+    }
+    check();
+    if (!hasLightIdentity(ids))
+        throw new Error('No exterior light module returned an identity. Scan again while parked.');
+    const gatewaySeen = !!ids.get(0x10);
+    const unconfirmed = [];
+    known.forEach((index, address) => {
+        if (ids.get(address)) return;
+        ids.set(address, index);
+        unconfirmed.push(address);
+    });
     const result = profile(ids, method);
+    result.unconfirmed = unconfirmed;
     if (note) result.note = note;
-    if (ids.has(0x10)) {
+    if (gatewaySeen) {
         say('Reading the vehicle order...');
         try { result.order = VehicleOrder.decode(await link.readVehicleOrder()); }
         catch (e) { result.orderError = String(e.message || e); }
     }
+    check();
+    result.units.forEach((u) => { if (unconfirmed.indexOf(u.address) >= 0) u.supportText = 'Last seen'; });
     return result;
 }
 
@@ -129,7 +157,19 @@ function autoScanDue(st) {
 function load(dir) {
     try {
         const v = JSON.parse(fs.readFileSync(path.join(dir, FILE), 'utf8'));
-        return v && Array.isArray(v.units) && v.routes ? v : null;
+        if (!v || !Array.isArray(v.units)) return null;
+        const ids = new Map();
+        for (const u of v.units) {
+            if (u && Number.isInteger(u.address) && u.address >= 0 && u.address <= 0xFF && /^[0-9A-F]{6}$/.test(u.index))
+                ids.set(u.address, u.index);
+        }
+        if (!hasLightIdentity(ids)) return null;
+        const saved = profile(ids, typeof v.method === 'string' ? v.method : 'saved scan', Date.parse(v.at));
+        if (v.order && Array.isArray(v.order.hints) && Array.isArray(v.order.codes)) saved.order = v.order;
+        if (typeof v.orderError === 'string') saved.orderError = v.orderError;
+        saved.unconfirmed = Array.isArray(v.unconfirmed) ? v.unconfirmed.filter((address) => ids.has(address)) : [];
+        saved.units.forEach((u) => { if (saved.unconfirmed.indexOf(u.address) >= 0) u.supportText = 'Last seen'; });
+        return saved;
     } catch (_) { return null; }
 }
 function save(dir, value) {
@@ -141,7 +181,7 @@ function save(dir, value) {
 /** Short human text for a support level. */
 function supportText(s) {
     return { verified: 'Supported', experimental: 'Experimental', unsupported: 'Not supported',
-        absent: 'Not found', blocked: 'Needs a supported BDC', prg: 'From BMW data', detected: 'Found, not mapped yet', gateway: 'Gateway' }[s] || 'Unknown';
+        absent: 'No identity', blocked: 'Needs a supported BDC', prg: 'From BMW data', detected: 'Found, not mapped yet', gateway: 'Gateway' }[s] || 'Unknown';
 }
 
 module.exports = { autoScanDue, AUTO_TRIES, scan, profile, load, save, supportText, unitName, LIGHT_ROLES, DETECT_ONLY, FILE };

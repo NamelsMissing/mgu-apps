@@ -18,7 +18,7 @@ const { WebServer } = require('./web-server');
 const { makeUi, PAGE, LIGHTS_PER_PAGE, W, H } = require('./ui');
 
 const CONFIG_FILE = 'light-show-config.json';
-const DEFAULTS = { selection: [], effect: 'wigwag', stepMs: 500, gapMs: 100, cycles: 3, pwm: 60, allowExperimental: false };
+const DEFAULTS = { selection: [], effect: 'chase', stepMs: 500, gapMs: 100, cycles: 3, pwm: 60, allowExperimental: false };
 const next = (list, v) => list[(list.indexOf(v) + 1) % list.length];
 
 mgu.run({
@@ -47,7 +47,7 @@ mgu.run({
         function sanitize(v) {
             const out = {};
             if (!v || typeof v !== 'object') return out;
-            if (Array.isArray(v.selection)) out.selection = v.selection.filter((id) => Lamps.parse(id)).slice(0, Effects.MAX_LAMPS);
+            if (Array.isArray(v.selection)) out.selection = Array.from(new Set(v.selection.filter((id) => Lamps.parse(id)))).slice(0, Effects.MAX_LAMPS);
             if (Effects.EFFECTS.some((e) => e.id === v.effect)) out.effect = v.effect;
             if (Effects.STEP_MS.indexOf(v.stepMs) >= 0) out.stepMs = v.stepMs;
             if (Effects.GAP_MS.indexOf(v.gapMs) >= 0) out.gapMs = v.gapMs;
@@ -58,7 +58,6 @@ mgu.run({
         }
         function saveConfig(patch) {
             const n = Object.assign({}, config, sanitize(patch));
-            n.selection = Array.from(new Set(n.selection));
             const file = path.join(ctx.dataDir, CONFIG_FILE);
             fs.writeFileSync(file + '.tmp', JSON.stringify(n));
             fs.renameSync(file + '.tmp', file);
@@ -68,61 +67,92 @@ mgu.run({
         /** Catalog with test status; show-eligible = available and confirmed visible. */
         function lamps() {
             return Lamps.catalog(profile, names, { allowExperimental: config.allowExperimental }).map((l) => {
-                const status = observations.status(l.id);
+                const index = l.index || (profile && profile.bdc.index);
+                const status = observations.status(l.id, index);
                 return Object.assign(l, { status, statusText: statusText(status) });
             });
         }
         function byId(list) { const m = {}; list.forEach((l) => { m[l.id] = l; }); return m; }
         function currentPlan(list) {
-            const usable = list.filter((l) => l.available && l.status === 'visible');
-            const sel = config.selection.filter((id) => usable.some((l) => l.id === id));
-            if (!sel.length) return null;
-            try { return Effects.plan(sel, usable, config); }
-            catch (e) { return { error: e.message, notes: [], steps: [], estimateMs: 0 }; }
+            if (!config.selection.length) return null;
+            const map = byId(list);
+            try {
+                for (const id of config.selection) {
+                    const l = map[id];
+                    if (!l || !l.available || l.status !== 'visible')
+                        throw new Error((l ? l.label : id) + ' needs a successful test. Test it under Lights or remove it from the show.');
+                }
+                const plan = Effects.plan(config.selection, list, config);
+                plan.bodyIndex = profile.bdc.index;
+                return plan;
+            } catch (e) { return { error: e.message, notes: [], steps: [], estimateMs: 0 }; }
+        }
+        function requireIdle() {
+            if (runner.status().busy) throw new Error('Another diagnostic operation is running');
+        }
+        function checkParked() {
+            const reason = guard.reason() || (runner.cancel && runner.stopReason);
+            if (reason) throw new Error(reason);
         }
 
         /* ---------- actions (car screen and phone share them) ---------- */
         const actions = {
             start() {
+                requireIdle();
                 const list = lamps(), plan = currentPlan(list);
                 if (!plan) throw new Error('Pick tested lights for the show first');
                 if (plan.error) throw new Error(plan.error);
-                runner.play(plan, byId(list)).then((r) => { if (r && !r.ok && r.error) say(r.error); });
+                runner.play(plan, byId(list)).then((r) => { if (r.error) say(r.error); });
                 return { ok: true };
             },
             stop() { runner.stop('STOP pressed'); return { ok: true }; },
             test(id, opts) {
+                requireIdle();
                 const l = byId(lamps())[id];
                 if (!l) throw new Error('Unknown light');
                 if (!l.available) throw new Error(l.why || 'Light not available');
-                lastTested = id; selectedLamp = id;
-                runner.test(l, { pwm: config.pwm, ms: opts && opts.ms }).then((r) => { if (r && !r.ok && r.error) say(r.error); });
+                const settings = { pwm: config.pwm, commOff: commOff(), moduleIndex: l.index || profile.bdc.index };
+                lastTested = null; selectedLamp = id;
+                runner.test(l, { pwm: settings.pwm, ms: opts && opts.ms, bodyIndex: profile.bdc.index }).then((r) => {
+                    if (r.ok && !r.error && r.sent === 1) {
+                        lastTested = { id, settings };
+                        say('Test command acknowledged. Confirm what you saw under Lights.');
+                    } else if (r.error) say(r.error);
+                });
                 return { ok: true };
             },
             observe(id, result) {
-                const cleanup = runner.cleanup;
-                const clean = !!cleanup && !cleanup.errors.length;
-                observations.record(id, result, clean, { pwm: config.pwm, commOff: commOff() });
-                if (result !== 'visible' && config.selection.indexOf(id) >= 0) saveConfig({ selection: config.selection.filter((x) => x !== id) });
-                if (result === 'visible' && !clean) say('Saved, but the release was not confirmed: the light stays out of shows.');
+                requireIdle();
+                if (!lastTested || lastTested.id !== id) throw new Error('Complete a test of this light first');
+                observations.record(id, result, true, lastTested.settings);
                 lastTested = null; changed();
+                if (result !== 'visible' && config.selection.indexOf(id) >= 0) saveConfig({ selection: config.selection.filter((x) => x !== id) });
                 return { ok: true };
             },
             toggle(id) {
                 const sel = config.selection.slice(), i = sel.indexOf(id);
                 if (i >= 0) sel.splice(i, 1);
                 else {
-                    if (observations.status(id) !== 'visible') throw new Error('Test the light first: it must light up without noise');
+                    if (!lamps().some((l) => l.id === id && l.available && l.status === 'visible'))
+                        throw new Error('Test an available light first: it must light up without noise');
+                    if (sel.length >= Effects.MAX_LAMPS) throw new Error('At most ' + Effects.MAX_LAMPS + ' lamps per show');
                     sel.push(id);
                 }
                 saveConfig({ selection: sel });
                 return { ok: true };
             },
             async scan() {
+                requireIdle();
+                if (runner.status().recoveryPending) throw new Error('Press STOP to release the previous run before scanning');
+                const generation = link.generation;
+                const check = () => {
+                    checkParked();
+                    if (!link.available || link.generation !== generation) throw new Error('Diagnostic connection unavailable');
+                };
                 await runner.exclusive('SCANNING', 'Reading the identity of every control unit', async () => {
-                    const p = await Scan.scan(link, log, (text) => runner.update('SCANNING', text));
+                    const p = await Scan.scan(link, log, (text) => runner.update('SCANNING', text), { previous: profile, check });
                     Scan.save(ctx.dataDir, p);
-                    profile = p;
+                    profile = p; lastTested = null; lightsPage = 0; unitsPage = 0;
                     runner.update('IDLE', 'Scan finished: ' + p.summary);
                 }).catch((e) => { runner.update('ERROR', 'Scan failed: ' + (e.message || e)); throw e; });
                 return { ok: true };
@@ -141,7 +171,7 @@ mgu.run({
                 const list = lamps(), plan = currentPlan(list), r = runner.status();
                 return {
                     version: ctx.spec && ctx.spec.version, guard: { ok: !guard.reason(), reason: guard.reason() || 'Parked' },
-                    runner: r, profile, allowExperimental: config.allowExperimental, commOff: commOff(),
+                    runner: r, profile, lastTested: lastTested && lastTested.id, allowExperimental: config.allowExperimental, commOff: commOff(),
                     lamps: list.map((l) => ({ id: l.id, label: l.label, short: l.short, route: l.route, group: l.group, side: l.side,
                         hex: l.hex, points: l.points, available: l.available, why: l.why, status: l.status, statusText: l.statusText,
                         experimental: !!l.experimental || l.support === 'experimental', module: l.module })),
@@ -151,8 +181,9 @@ mgu.run({
                 };
             },
             save(b) { saveConfig(b); return { ok: true }; },
-            show(b) { saveConfig(b); return actions.start(); },
+            show(b) { if (Object.keys(b).length) saveConfig(b); return actions.start(); },
             test(b) { return actions.test(String(b.lamp), { ms: Number(b.ms) || 1000 }); },
+            toggle(b) { return actions.toggle(String(b.lamp)); },
             observe(b) { return actions.observe(String(b.lamp), String(b.result)); },
             name(b) { names.set(String(b.lamp), typeof b.name === 'string' ? b.name.trim() : ''); changed(); return { ok: true }; },
             stop() { return actions.stop(); },
@@ -173,10 +204,11 @@ mgu.run({
             nextPwm: run(() => saveConfig({ pwm: next(Effects.PWM, config.pwm) })),
             start: run(() => actions.start()),
             stop: run(() => actions.stop()),
-            pickLamp: (id) => { selectedLamp = id; if (lastTested !== id) lastTested = null; changed(); },
+            pickLamp: (id) => { selectedLamp = id; changed(); },
             test: run(() => actions.test(selectedLamp)),
             observe: (r) => run(() => actions.observe(selectedLamp, r))(),
             toggle: run(() => actions.toggle(selectedLamp)),
+            clearSelection: run(() => saveConfig({ selection: [] })),
             rename: run(() => { const n = names.cycle(selectedLamp); say(n ? 'Name: ' + n : 'Default name restored'); }),
             toggleAll: run(() => { showAll = !showAll; lightsPage = 0; }),
             nextGroup: run(() => { groupFilter = next([null, 'front', 'side', 'rear'], groupFilter); lightsPage = 0; }),
@@ -206,7 +238,7 @@ mgu.run({
                 runner: r, config, effects: Effects.EFFECTS, plan: currentPlan(list), profile, notice,
                 allowExperimental: config.allowExperimental, supportText: Scan.supportText, commOff: commOff(),
                 recoveryUnreadable: journal.pending() && !journal.control(),
-                lightList: shown, lightsPage, unitsPage, selectedLamp, lastTested, showAll, groupFilter,
+                lightList: shown, lightsPage, unitsPage, selectedLamp, lastTested: lastTested && lastTested.id, showAll, groupFilter,
                 carLamps: list.filter((l) => l.available && (sel.has(l.id) || act.has(l.id)))
                     .map((l) => ({ points: l.points, hex: l.hex, on: act.has(l.id), dim: !act.has(l.id) })),
                 phone: { link: server.url(), ready: server.listening, listening: server.listening, error: server.error,

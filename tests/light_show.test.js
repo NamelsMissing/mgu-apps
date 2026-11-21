@@ -14,6 +14,9 @@ const { Names, Observations, migrateKey } = require(APP + '/store');
 const Journal = require(APP + '/journal');
 const Runner = require(APP + '/runner');
 const F = require(APP + '/flm-control');
+const Guard = require(APP + '/guard');
+const Link = require(APP + '/link');
+const { Diag } = require(APP + '/tasu');
 const Car3D = require(APP + '/car3d');
 const { WebServer, privateAddress } = require(APP + '/web-server');
 const page = require(APP + '/web-page');
@@ -149,6 +152,11 @@ const base = { stepMs: 500, gapMs: 100, cycles: 2, pwm: 60 };
     assert.strictEqual(obs.status('flm:left:3'), 'visible');
     assert.strictEqual(obs.status('flm:left:4'), 'untested', 'unconfirmed release never counts as visible');
     assert.strictEqual(obs.status('flm:right:2'), 'noise', 'noise wins');
+    obs.record('flm:left:3', 'none', true);
+    assert.strictEqual(obs.status('flm:left:3'), 'not-visible', 'a newer no-effect report supersedes a visible one');
+    obs.record('flm:left:3', 'visible', true, { moduleIndex: '0F26C0' });
+    assert.strictEqual(obs.status('flm:left:3', '0F26C0'), 'visible');
+    assert.strictEqual(obs.status('flm:left:3', '0F26C8'), 'not-visible');
     names.set('fn:high', 'Fernlicht');
     assert.strictEqual(new Names(dir).name('fn:high'), 'Fernlicht');
     assert.throws(() => names.set('fn:high', '<script>'), /Name must/);
@@ -163,6 +171,21 @@ const base = { stepMs: 500, gapMs: 100, cycles: 2, pwm: 60 };
     fs.writeFileSync(path.join(dir, 'light-show-recovery.json'), '{broken');
     assert.strictEqual(new Journal(dir).control(), null, 'unreadable marker needs the manual light check');
     console.log('ok: 0.3.x names, observations and recovery markers are taken over safely');
+}
+
+{
+    const guard = new Guard(() => 10000);
+    guard.speedSub = guard.gearSub = { available: true };
+    guard.feedSpeed({ speedVehicleCentreOfGravity: 0 });
+    guard.feedSelection({ statusGearSelectionDrive: 'P' });
+    assert.strictEqual(guard.reason(), null);
+    guard.feedStage({ statusActualStageDrive: 'D' });
+    guard.feedSelection({ statusGearSelectionDrive: 'P' });
+    assert.match(guard.reason(), /Park/);
+    guard.feedStage({ statusActualStageDrive: 'P' });
+    assert.strictEqual(guard.reason(), null);
+    guard.feedSelection({ statusGearSelectionDrive: 'NP' });
+    assert.match(guard.reason(), /Park/);
 }
 
 /* ---------- runner ---------- */
@@ -198,6 +221,59 @@ function runnerWith(link, guardReason, commOff) {
 const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
 (async () => {
     {
+        const log = { warn() {}, info() {} };
+        const diag = new Diag({}, log);
+        diag.send = async () => {
+            diag.emit('frame', { ecu: 0x43, uds: [0x7F, 0x22, 0x78] });
+            diag.emit('frame', { ecu: 0x40, uds: [0x62, 0xF1, 0x50, 0x0F, 0x26, 0x80] });
+            diag.emit('frame', { ecu: 0x40, uds: [0x62, 0xF1, 0x90, 0x01, 0x02, 0x03] });
+            diag.emit('frame', { ecu: 0x40, uds: [0x7F, 0x22, 0x31] });
+            setTimeout(() => diag.emit('frame', { ecu: 0x43, uds: [0x62, 0xF1, 0x50, 0x0F, 0x26, 0xC8] }), 30);
+            return 'NO_ERROR';
+        };
+        const replies = await diag.functional(0x22, [0xF1, 0x50], { idleMs: 10, pendingMs: 300, maxMs: 500 });
+        assert.deepStrictEqual(Array.from(replies), [
+            [0x40, [0x62, 0xF1, 0x50, 0x0F, 0x26, 0x80]], [0x43, [0x62, 0xF1, 0x50, 0x0F, 0x26, 0xC8]],
+        ]);
+        assert.strictEqual(diag.listenerCount('frame'), 0);
+        const previous = Scan.profile(ids([[0x40, '0F2680'], [0x17, '0F2C10'], [0x43, '0F26C0']]), 'old');
+        const attempts = [];
+        const link = {
+            scan: async () => ids([[0x40, '0F2680']]),
+            readIdentity: async (address) => {
+                const retried = attempts.indexOf(address) >= 0;
+                attempts.push(address);
+                if (retried && address === 0x43) return '0F26C8';
+                throw new Error('No reply');
+            },
+        };
+        const scan = await Scan.scan(link, log, null, { previous });
+        assert.deepStrictEqual(scan.unconfirmed, [0x17]);
+        assert.strictEqual(scan.rlm[0].index, '0F2C10');
+        assert.strictEqual(scan.units.find((u) => u.address === 0x17).supportText, 'Last seen');
+        assert.strictEqual(scan.flm.left.index, '0F26C8');
+        assert.strictEqual(attempts.filter((a) => a === 0x43).length, 2);
+        const dir = tmp();
+        Scan.save(dir, scan);
+        assert.deepStrictEqual(Scan.load(dir).unconfirmed, [0x17]);
+        Scan.save(dir, Scan.profile(ids([[0x10, '0F1310']]), 'empty'));
+        assert.strictEqual(Scan.load(dir), null, 'an old empty scan cannot suppress automatic discovery');
+        link.scan = async () => ids([[0x10, '0F1310']]);
+        link.readIdentity = async () => { throw new Error('No reply'); };
+        await assert.rejects(Scan.scan(link, log, null, { previous }), /No exterior light module/);
+        let checks = 0;
+        await assert.rejects(Scan.scan(link, log, null, { check() { if (++checks > 1) throw new Error('Park'); } }), /Park/);
+        const live = new Link({}, log);
+        live.available = true;
+        live.diag.physical = async (address, sid, data, timeout) => {
+            assert.ok(timeout >= 1000, 'identity reads have a separate timeout');
+            return [0x62, 0xF1, 0x50, 0x0F, 0x26, 0xC8];
+        };
+        await assert.rejects(live.identifyFlm('left', '0F26C0'), /changed.*Scan the vehicle/);
+        await assert.rejects(live.flmStart('left', 3), /not identified/);
+        console.log('ok: pending identity, scan retry, incomplete scans and module changes');
+    }
+    {
         const link = new FakeLink(), { r, journal } = runnerWith(link);
         const plan = Effects.plan(['flm:left:1', 'flm:right:1', 'fn:high', 'out:24'], g21Lamps, Object.assign({ effect: 'chase' }, base, { cycles: 1 }));
         const res = await r.play(plan, byId);
@@ -207,7 +283,8 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         assert.ok(l.indexOf('left:start1') > l.indexOf('left:03'), 'session before control');
         assert.ok(l.indexOf('left:stop') > l.indexOf('left:start1'));
         assert.ok(l.indexOf('out:24:0') > l.indexOf('out:24:1'));
-        assert.deepStrictEqual(l.slice(-7), ['left:stop', 'right:stop', 'fn:high:0', 'out:24:0', 'left:01', 'right:01', 'bdc:01'], 'full release at the end');
+        assert.deepStrictEqual(l.slice(-3), ['left:01', 'right:01', 'bdc:01'], 'default sessions after confirmed OFF commands');
+        assert.strictEqual(l.filter((x) => x === 'left:stop').length, 1, 'no second STOP on an idle routine');
         assert.ok(!journal.pending());
         assert.strictEqual(r.status().state, 'IDLE');
         console.log('ok: a mixed show identifies, controls, switches off and releases every unit');
@@ -224,7 +301,7 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         const plan = Effects.plan(['flm:left:1', 'flm:right:1'], g21Lamps, Object.assign({ effect: 'wigwag' }, base, { cycles: 10 }));
         const res = await r.play(plan, byId);
         assert.ok(res.ok && /stationary/.test(res.error), 'guard loss ends the show');
-        assert.deepStrictEqual(link.log.slice(-4), ['left:stop', 'right:stop', 'left:01', 'right:01']);
+        assert.deepStrictEqual(link.log.slice(-2), ['left:01', 'right:01']);
         assert.ok(!journal.pending());
         console.log('ok: leaving P stops the show and still releases everything');
     }
@@ -237,6 +314,27 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         await r.stop();
         assert.ok(!journal.pending(), 'STOP releases what is left');
         console.log('ok: a failed release keeps the recovery marker until STOP succeeds');
+    }
+    {
+        const link = new FakeLink(), { r, journal } = runnerWith(link);
+        journal.mark('0F2680', { flmSides: ['left'], rlm: [{ address: 0x17, kind: 'grp', items: [1] }] });
+        link.o.failOn = 'id:rlm17';
+        await r.stop();
+        assert.ok(link.log.includes('left:01'), 'release a reachable module even when another module has no identity');
+        assert.ok(!link.log.includes('rlm17:grp0:off') && journal.pending());
+        assert.match(r.status().note, /rear light 0x17 identity/);
+    }
+    {
+        const link = new FakeLink(), w = runnerWith(link);
+        link.flmSession = async () => {
+            await link.rec('left:03');
+            w.setReason('Vehicle must be stationary');
+        };
+        const plan = Effects.plan(['flm:left:1', 'flm:right:1'], g21Lamps, Object.assign({ effect: 'wigwag' }, base));
+        const res = await w.r.play(plan, byId);
+        assert.match(res.error, /stationary/);
+        assert.ok(!link.log.includes('right:03') && !link.log.includes('left:start1'));
+        assert.ok(link.log.includes('left:01') && !w.journal.pending());
     }
     {
         const link = new FakeLink({ flm: '0F2E30' }), { r, journal } = runnerWith(link);
@@ -254,7 +352,9 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         assert.ok(res.ok, JSON.stringify(res));
         const l = link.log;
         assert.ok(l.indexOf('id:rlm17') < l.indexOf('rlm17:03') && l.indexOf('rlm17:03') < l.indexOf('rlm17:fn2:on'));
-        assert.deepStrictEqual(l.slice(-7), ['fn:indLeft:0', 'fn:indRight:0', 'rlm17:fn2:off', 'rlm1a:fn2:off', 'rlm17:01', 'rlm1a:01', 'bdc:01']);
+        assert.deepStrictEqual(l.slice(-3), ['rlm17:01', 'rlm1a:01', 'bdc:01']);
+        assert.ok(l.indexOf('rlm17:fn2:off') > l.indexOf('rlm17:fn2:on'));
+        assert.strictEqual(l.filter((x) => x === 'rlm17:fn2:off').length, 1);
         assert.ok(!journal.pending());
         console.log('ok: rear light modules and BDC indicator functions play and are released');
         const link2 = new FakeLink(), w = runnerWith(link2);
@@ -262,8 +362,9 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         assert.ok(seq.steps.every((st) => st.on.filter((id) => /:g/.test(id)).length <= 1), 'one segment group per module and step');
         const res2 = await w.r.play(seq, m);
         assert.ok(res2.ok, JSON.stringify(res2));
-        assert.ok(link2.log.indexOf('rlm17:grp0:off') > 0 && link2.log.filter((x) => x === 'rlm17:01').length === 1);
-        console.log('ok: RLM2 segment groups play one per module and are stopped once per module');
+        assert.ok(link2.log.indexOf('rlm17:grp1:off') > 0 && link2.log.filter((x) => x === 'rlm17:01').length === 1);
+        assert.ok(link2.log.indexOf('rlm17:grp0:off') < 0);
+        console.log('ok: RLM2 segment groups play one per module with no redundant final stop');
     }
     {
         const link = new FakeLink(), { r, journal } = runnerWith(link, null, true);
@@ -301,6 +402,8 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         { x: 0, y: 0, w: 600, h: 300, yaw: 0.8, pitch: -0.3 }, [{ points: [[0.6, 0.74, 2.3]], hex: '#ffffff', on: true }]);
     assert.ok(polys > 10 && dots >= 3);
     assert.ok(page.indexOf('Car3D') > 0 && page.indexOf('/api/state') > 0);
+    const htmlIds = Array.from(page.matchAll(/\bid="([a-z-]+)"/g), (m) => m[1]);
+    assert.strictEqual(htmlIds.length, new Set(htmlIds).size, 'car preview and Car tab need distinct DOM ids');
     console.log('ok: 3D car renders and the phone page embeds it');
 
     /* ---------- phone server ---------- */

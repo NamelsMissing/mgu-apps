@@ -83,7 +83,7 @@ class Observations {
     }
     record(lamp, resultKey, cleanupConfirmed, extra) {
         if (!Lamps.parse(lamp)) throw new Error('Unknown lamp');
-        if (!RESULTS[resultKey]) throw new Error('Unknown observation');
+        if (!Object.prototype.hasOwnProperty.call(RESULTS, resultKey)) throw new Error('Unknown observation');
         const row = Object.assign({ at: new Date().toISOString(), lamp, result: RESULTS[resultKey],
             cleanupConfirmed: cleanupConfirmed === true }, extra || {});
         const next = this.list.concat([row]).slice(-300);
@@ -92,11 +92,15 @@ class Observations {
         return row;
     }
     /** visible | noise | not-visible | untested (a noise report always wins). */
-    status(lamp) {
-        const rows = this.list.filter((x) => x.lamp === lamp);
+    status(lamp, moduleIndex) {
+        const rows = this.list.filter((x) => x.lamp === lamp && (!moduleIndex || !x.moduleIndex || x.moduleIndex === moduleIndex));
         if (rows.some((x) => x.result === RESULTS.noise || x.result === RESULTS.silentNoise)) return 'noise';
-        if (rows.some((x) => x.result === RESULTS.visible && x.cleanupConfirmed === true)) return 'visible';
-        return rows.some((x) => x.result === RESULTS.none) ? 'not-visible' : 'untested';
+        for (let i = rows.length - 1; i >= 0; i--) {
+            const row = rows[i];
+            if (row.result === RESULTS.none) return 'not-visible';
+            if (row.result === RESULTS.visible && row.cleanupConfirmed === true) return 'visible';
+        }
+        return 'untested';
     }
     /** Only lamps confirmed visible without noise may take part in a show. */
     allowed(lamp) { return this.status(lamp) === 'visible'; }

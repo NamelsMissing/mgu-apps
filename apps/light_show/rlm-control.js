@@ -64,7 +64,7 @@ function moduleAt(address) {
 /** {name, kinds: ['fn', 'grp'] (RLM2) | ['ch'] (RLM_1)} or null */
 function variant(address, index) {
     moduleAt(address);
-    const name = VARIANTS[address][index];
+    const name = Object.prototype.hasOwnProperty.call(VARIANTS[address], index) && VARIANTS[address][index];
     if (!name) return null;
     return { name, kinds: name.indexOf('RLM2_') === 0 ? ['fn', 'grp'] : ['ch'] };
 }
@@ -85,12 +85,12 @@ function telegram(kind, item, ms, pwm) {
     throw new Error('Unknown rear light route');
 }
 /** Is this 2E request one of ours (for the link whitelist)? */
-function permitted(data) {
-    if (!Array.isArray(data)) return false;
-    if (data.length === 4 && data[0] === 0xA8 && data[1] === 0x3B)
-        return Object.prototype.hasOwnProperty.call(FUNCTIONS, data[2]) && data[3] <= 5;
-    if (data.length === 5 && data[0] === 0xD6 && data[1] === 0xDA)
-        return data[2] >= 1 && data[2] <= CHANNELS_RLM1 && data[3] <= 5 && PWM.indexOf(data[4]) >= 0;
+function permitted(data, kinds = ['fn', 'ch']) {
+    if (!Array.isArray(data) || !Number.isInteger(data[3]) || data[3] < 0 || data[3] > 5) return false;
+    if (kinds.indexOf('fn') >= 0 && data.length === 4 && data[0] === 0xA8 && data[1] === 0x3B)
+        return Object.prototype.hasOwnProperty.call(FUNCTIONS, data[2]);
+    if (kinds.indexOf('ch') >= 0 && data.length === 5 && data[0] === 0xD6 && data[1] === 0xDA)
+        return Number.isInteger(data[2]) && data[2] >= 1 && data[2] <= CHANNELS_RLM1 && PWM.indexOf(data[4]) >= 0;
     return false;
 }
 

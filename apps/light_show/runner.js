@@ -13,6 +13,7 @@ const P = require('./protocol');
 const R = require('./rlm-control');
 
 const KEEPALIVE_MS = 2000;
+const MIN_ACKNOWLEDGED_STEP_MS = 150;
 
 class Runner {
     constructor(o) {
@@ -57,7 +58,7 @@ class Runner {
         const o = opts || {};
         const ms = [500, 1000, 2000].indexOf(o.ms) >= 0 ? o.ms : 1000;
         const pwm = F.PWM_OPTIONS.indexOf(o.pwm) >= 0 ? o.pwm : F.DEFAULT_PWM;
-        return this.play({ name: 'Test: ' + lamp.label, steps: [{ on: [lamp.id], ms }], gapMs: 0, cycles: 1, pwm, test: true },
+        return this.play({ name: 'Test: ' + lamp.label, steps: [{ on: [lamp.id], ms }], gapMs: 0, cycles: 1, pwm, bodyIndex: o.bodyIndex },
             { [lamp.id]: lamp });
     }
 
@@ -124,26 +125,27 @@ class Runner {
         const touched = Runner.touched(lamps);
         touched.commOff = this.commOff() ? touched.flmSides.slice() : [];
         touched.bdcSession = touched.fns.length > 0 || touched.outputs.length > 0;
+        const pendingOff = new Set();
         let dirty = false, fault = null;
         try {
-            await this.link.identify();
+            await this.link.identify(plan.bodyIndex);
             if (!this.allowed()) return this._finish(false, null);
             for (const side of touched.flmSides) {
-                await this.link.identifyFlm(side);
+                await this.link.identifyFlm(side, lamps.find((l) => l.route === 'flm' && l.side === side).index);
                 if (!this.allowed()) return this._finish(false, null);
             }
             for (const address of Runner.rlmAddresses(touched)) {
-                const v = await this.link.identifyRlm(address);
+                const v = await this.link.identifyRlm(address, lamps.find((l) => l.route === 'rlm' && l.address === address).index);
                 touched.rlm.filter((r) => r.address === address).forEach((r) => {
                     if (v.kinds.indexOf(r.kind) < 0) throw new Error(v.name + ' does not offer this kind of light');
                 });
                 if (!this.allowed()) return this._finish(false, null);
             }
             this.journal.mark(this.link.index, touched); dirty = true;
-            if (touched.bdcSession) await this.link.session();
-            for (const side of touched.flmSides) await this.link.flmSession(side);
-            for (const side of touched.commOff) await this.link.flmCommunication(side, false);
-            for (const address of Runner.rlmAddresses(touched)) await this.link.rlmSession(address);
+            if (touched.bdcSession && this.allowed()) await this.link.session();
+            for (const side of touched.flmSides) if (this.allowed()) await this.link.flmSession(side);
+            for (const side of touched.commOff) if (this.allowed()) await this.link.flmCommunication(side, false);
+            for (const address of Runner.rlmAddresses(touched)) if (this.allowed()) await this.link.rlmSession(address);
             const last = {};
             const touch = (k) => { last[k] = this.now(); };
             if (touched.bdcSession) touch('bdc');
@@ -165,15 +167,16 @@ class Runner {
                         for (const l of on) {
                             if (!this.allowed()) break;
                             started.push(l);            // record before sending: the ECU may act even if the reply is lost
+                            pendingOff.add(l);
                             await this._on(l, step.ms, plan.pwm);
                             this.sent++; this.active.add(l.id); this.changed();
                             touch(this.unitKey(l));
                         }
-                        if (started.length) await this.wait(Math.max(0, step.ms - (this.now() - begin)));
-                        else await this.wait(step.ms);
+                        const hold = started.length ? Math.max(step.ms - (this.now() - begin), Math.min(step.ms, MIN_ACKNOWLEDGED_STEP_MS)) : step.ms;
+                        await this.wait(hold);
                     } catch (e) { failure = e; }
                     for (const l of started) {
-                        try { await this._off(l); touch(this.unitKey(l)); }
+                        try { await this._off(l); pendingOff.delete(l); touch(this.unitKey(l)); }
                         catch (e) { failure = failure || e; }
                         this.active.delete(l.id);
                     }
@@ -192,7 +195,10 @@ class Runner {
         } catch (e) { fault = String(e.message || e); this.lastError = fault; this.log.warn('Light Show run: ' + fault); }
         finally {
             this.active.clear();
-            if (dirty) await this._release(touched);
+            if (dirty) {
+                const remaining = Runner.touched(Array.from(pendingOff));
+                await this._release(touched, remaining);
+            }
         }
         return this._finish(dirty, fault);
     }
@@ -203,7 +209,7 @@ class Runner {
         else this.update('IDLE', this.stopReason ? 'Stopped: ' + this.stopReason
             : dirty ? (this.title + ' finished - all units released') : 'Nothing was switched');
         this.progress = null; this.changed();
-        return { ok, error: fault || this.stopReason || null };
+        return { ok, error: fault || this.stopReason || (this.journal.pending() ? this.note : null), sent: this.sent };
     }
     unitKey(l) { return l.route === 'flm' ? l.side : l.route === 'rlm' ? 'rlm' + l.address : 'bdc'; }
     async _on(l, ms, pwm) {
@@ -218,24 +224,24 @@ class Runner {
         if (l.route === 'fn') return this.link.timed(l.key, 0);
         return this.link.set(l.output, 0);
     }
-    /** Stop everything the marker lists, then default sessions. */
-    async _release(control) {
+    /** Retry unfinished OFF requests, then restore every session. After restart, release the full marker. */
+    async _release(control, remaining = control, errors = []) {
         this.update('STOPPING', 'Switching off and releasing the control units');
-        const errors = [], done = { flmStop: {}, fn: {}, out: {}, flmDefault: {}, bdcDefault: null };
-        for (const side of control.flmSides) {
+        const done = { flmStop: {}, fn: {}, out: {}, flmDefault: {}, bdcDefault: null };
+        for (const side of remaining.flmSides) {
             try { await this.link.flmStop(side); done.flmStop[side] = true; }
             catch (e) { done.flmStop[side] = false; errors.push(side + ' headlamp STOP: ' + (e.message || e)); }
         }
-        for (const k of control.fns) {
+        for (const k of remaining.fns) {
             try { await this.link.timed(k, 0); done.fn[k] = true; }
             catch (e) { done.fn[k] = false; errors.push('function ' + k + ' off: ' + (e.message || e)); }
         }
-        for (const id of control.outputs) {
+        for (const id of remaining.outputs) {
             try { await this.link.set(id, 0); done.out[id] = true; }
             catch (e) { done.out[id] = false; errors.push('output 0x' + id.toString(16) + ' off: ' + (e.message || e)); }
         }
         done.rlm = {};
-        for (const r of control.rlm || []) {
+        for (const r of remaining.rlm || []) {
             // a segment-group routine is stopped once per module; functions / channels one by one
             for (const item of r.kind === 'grp' ? [0] : r.items) {
                 try { await this.link.rlmSet(r.address, r.kind, item, 0, 60); }
@@ -283,12 +289,22 @@ class Runner {
     async _recover() {
         const control = this.journal.control();
         if (!control) { this.update('ERROR', 'Recovery file unreadable: check the normal lights, then confirm it in Vehicle'); return; }
-        try {
-            await this.link.identify();
-            for (const side of control.flmSides) await this.link.identifyFlm(side);
-            for (const address of Runner.rlmAddresses(control)) await this.link.identifyRlm(address);
-        } catch (e) { this.update('ERROR', 'Release pending: ' + (e.message || e)); return; }
-        if (await this._release(control)) this.update('IDLE', 'Previous run released');
+        try { await this.link.identify(); }
+        catch (e) { this.update('ERROR', 'Release pending: ' + (e.message || e)); return; }
+        const errors = [], flmSides = [], rearAddresses = new Set();
+        for (const side of control.flmSides) {
+            try { await this.link.identifyFlm(side); flmSides.push(side); }
+            catch (e) { errors.push(side + ' headlamp identity: ' + (e.message || e)); }
+        }
+        for (const address of Runner.rlmAddresses(control)) {
+            try { await this.link.identifyRlm(address); rearAddresses.add(address); }
+            catch (e) { errors.push('rear light 0x' + address.toString(16) + ' identity: ' + (e.message || e)); }
+        }
+        const reachable = Object.assign({}, control, { flmSides,
+            commOff: control.commOff.filter((side) => flmSides.indexOf(side) >= 0),
+            rlm: control.rlm.filter((r) => rearAddresses.has(r.address)),
+        });
+        if (await this._release(reachable, reachable, errors)) this.update('IDLE', 'Previous run released');
     }
     /** After the user checked all normal lights with the car's own switches. */
     acknowledgeNormalLights() {
