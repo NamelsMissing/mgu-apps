@@ -188,6 +188,11 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         fs.writeFileSync(path.join(dataDir, 'light-flasher-background.json'), JSON.stringify({lever: {events}}));
         fs.writeFileSync(path.join(dataDir, 'light-flasher-run-v0.1.20-20260101000000000-1-1.json'),
             JSON.stringify({flashAttempt: {endedAt: events[0].at, source: 'button', outcome: 'finished'}}));
+        // A lexicographic sort by filename ranks v0.1.9 above v0.1.20.
+        for (let i = 0; i < 10; i++) {
+            fs.writeFileSync(path.join(dataDir, 'light-flasher-run-v0.1.9-2025123123595900' + i + '-1-1.json'),
+                JSON.stringify({flashAttempt: {endedAt: '2025-12-31T23:59:59.000Z', source: 'lever', outcome: 'finished'}}));
+        }
         const clicks = new Map();
         const labels = new Map();
         let visible = 'DIAGNOSTICS';
@@ -229,13 +234,13 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         await clicks.get('BTN_LOGS')();
         assert.equal(visible, 'LOGS');
         assert.equal(labels.get('LOG_PATH'), dataDir);
-        assert.equal(labels.get('LOG_POSITION'), 'Page 1 / 2');
+        assert.equal(labels.get('LOG_POSITION'), 'Page 1 / 4');
         assert.match(labels.get('LOG_ROW_0'), /Lever release \| 505 ms/);
         await clicks.get('BTN_LOG_OLDER')();
-        assert.equal(labels.get('LOG_POSITION'), 'Page 2 / 2');
+        assert.equal(labels.get('LOG_POSITION'), 'Page 2 / 4');
         assert.match(labels.get('LOG_ROW_1'), /button \| finished .*light-flasher-run-/);
         await clicks.get('BTN_LOG_NEWER')();
-        assert.equal(labels.get('LOG_POSITION'), 'Page 1 / 2');
+        assert.equal(labels.get('LOG_POSITION'), 'Page 1 / 4');
         await clicks.get('BTN_LOG_SAVE')();
         assert.match(labels.get('LOG_FILES'), /Export saved/);
         const report = JSON.parse(fs.readFileSync(path.join(dataDir, 'light-flasher-diagnostics.json'), 'utf8'));
