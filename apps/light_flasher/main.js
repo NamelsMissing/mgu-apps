@@ -38,6 +38,9 @@ mgu.run({async start(ctx){
  const marker=path.join(ctx.dataDir,'manual-flash-pending.json');
  const journal={exists:()=>fs.existsSync(marker),mark:()=>fs.writeFileSync(marker,JSON.stringify({at:new Date().toISOString()}),{flag:'wx'}),clear:()=>fs.unlinkSync(marker)};
  const flash=new ManualFlash(reader.diag,log,undefined,Date.now,journal);let lastLightAt=0,flashTask=null;
+ const isLocked=()=>flash.cleanupUnconfirmed||(journal.exists()&&!flash.running);
+ let autoRecoveryAttempted=false;
+ const recoveryReady=()=>!closing&&!guard.recoveryReason()&&reader.diag.available&&lightProviderAvailable()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
  const stop=(why)=>{generation++;capture.stop(why);};
  // Passive observation only, independent of the parked actuator guard.
  const lightProviderAvailable=()=>!!(guard.speedSub&&guard.speedSub.available);
@@ -46,11 +49,12 @@ mgu.run({async start(ctx){
  const serviceVisible=()=>ui.isVisible('DIAGNOSTICS')||ui.isVisible('ADVANCED')||ui.isVisible('LOGS');
  const menuVisible=()=>serviceVisible()||ui.isVisible('OPTIONS');
  const update=()=>{
-   const locked=flash.cleanupUnconfirmed||journal.exists()&&!flash.running;
+   const locked=isLocked();
+   const lockStatus=autoRecoveryAttempted?"Locked - use Restore normal lights":"Locked - waiting for automatic recovery";
    if(ui.isVisible('MAIN')){
      let cfgText;try{const cfg=getConfig();cfgText=cfg.label+' | '+cfg.intervalMs+' ms | '+(cfg.cycleCount===null?cfg.durationMs/1000+' s':cfg.cycleCount+' cycles')+(settings.get('fastTest')===true?' | Fast':'')}catch(e){cfgText=String(e.message||e)}
      ui.text('FLASH_CONFIG',cfgText);
-     let status=flash.running?(flash.config&&flash.config.cycleCount?'Cycles '+Math.floor(flash.stepsCompleted/flash.config.steps.length)+'/'+flash.config.cycleCount:'Working...'):locked?'Locked - restore normal lights (P)':lastError?'Error - '+lastError:settings.get('manualFlash')!==true?'Flash control disabled':!reader.diag.available?'Waiting for connection':flash.status.startsWith('Time limit')?flash.status.split('; verify')[0]:flash.status.startsWith('Pattern finished')?(flash.config&&flash.config.cycleCount?'Finished - '+flash.config.cycleCount+' cycles':'Finished'):flash.status.startsWith('Recovery acknowledged')?'Lights released':'Ready';
+     let status=flash.running?(flash.config&&flash.config.cycleCount?'Cycles '+Math.floor(flash.stepsCompleted/flash.config.steps.length)+'/'+flash.config.cycleCount:'Working...'):locked?lockStatus:lastError?'Error - '+lastError:settings.get('manualFlash')!==true?'Flash control disabled':!reader.diag.available?'Waiting for connection':flash.status.startsWith('Time limit')?flash.status.split('; verify')[0]:flash.status.startsWith('Pattern finished')?(flash.config&&flash.config.cycleCount?'Finished - '+flash.config.cycleCount+' cycles':'Finished'):flash.status.startsWith('Recovery acknowledged')?'Lights released':'Ready';
      if(flashExportError)status+=' | Report save failed';
      ui.text('FLASH_STATUS',status);
    }
@@ -63,7 +67,7 @@ mgu.run({async start(ctx){
      ui.text('DIAG_LEVER',live+' | '+previous);
      const timing=Timing.summarize(flash.trace),gaps=timing.startDispatchGaps;
      const release=Release.summarize(flash.trace,flash.cleanupUnconfirmed);
-     ui.text('DIAG_STATE',(locked?'Locked - restore normal lights on main menu':reader.diag.available?'Connection available':'Connection unavailable')+(guard.recoveryReason()?' | Park in P for service':' | Parked'));
+     ui.text('DIAG_STATE',(locked?lockStatus:reader.diag.available?'Connection available':'Connection unavailable')+(guard.parkedReason()?' | Park in P for service':' | Parked'));
      ui.text('DIAG_RESULT',(lastError?'Error: '+lastError:release.acknowledged?'Cleanup acknowledged':flash.status)+(gaps?' | Actual START gap '+gaps.meanMs+' ms':'')+(flashExportError?' | Report save failed':exported?' | Report saved':flashExport?' | Auto report saved':'')+(bgError?' | Background log save failed':''));
    }
    if(ui.isVisible('LOGS'))updateLogs();
@@ -72,11 +76,14 @@ mgu.run({async start(ctx){
      ui.text('DIAG_CAPTURE',connectionState+' | '+c.reason+' | Reads '+c.rawCount+' | Errors '+c.failures+' | '+feedbackStatus+(lastError?' | '+lastError:''));
    }
  };
- const safe=()=>!closing&&!guard.recoveryReason();
+ const safe=()=>!closing&&!guard.parkedReason();
  const valid=()=>safe()&&ui.isVisible('ADVANCED');
  const validFeedback=()=>valid();
  const tick=async()=>{
-   observeBackground();feedLever();
+   observeBackground();
+   if(!isLocked())autoRecoveryAttempted=false;
+   else if(!autoRecoveryAttempted&&!pending&&!capture.active&&!flash.running&&recoveryReady())await recoverLights('recovery-auto');
+   feedLever();
    if(capture.active&&(!valid()||Date.now()-capture.started>=60000))stop('Capture ended: state change or time limit');
    if(capture.active&&!pending&&Date.now()-lastRead>=750){
       const id=generation;pending=true;lastRead=Date.now();
@@ -91,14 +98,14 @@ mgu.run({async start(ctx){
    update();
  };
  const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()}));
- const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!(sub100()||runSub100)||(settings.get('fastTest')===true&&!guard.recoveryReason()&&lightProviderAvailable()))&&(!(cycleSelected()||runCycles)||(!guard.recoveryReason()&&lightProviderAvailable()));
+ const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!(sub100()||runSub100)||(settings.get('fastTest')===true&&!guard.parkedReason()&&lightProviderAvailable()))&&(!(cycleSelected()||runCycles)||(!guard.parkedReason()&&lightProviderAvailable()));
  // Background lever mode: same P/stationary/OEM-off guard, but no visible menu needed.
  // Never while the diagnostics page is open (shared TASU, read-only tests).
  const leverBackground=()=>settings.get('leverBackground')===true;
  const leverScreenOk=()=>ui.isVisible('MAIN')||(leverBackground()&&!menuVisible());
- const backgroundRunAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!menuVisible()&&!guard.recoveryReason()&&lightProviderAvailable()&&lever.rangeValid&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
+ const backgroundRunAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!menuVisible()&&!guard.parkedReason()&&lightProviderAvailable()&&lever.rangeValid&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
  let runNeedsMain=true,runSub100=false,runCycles=false;
- const leverAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&!guard.recoveryReason()&&lightProviderAvailable()&&lever.rangeValid&&!pending&&!capture.active&&!flash.running&&!flash.cleanupUnconfirmed;
+ const leverAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&!guard.parkedReason()&&lightProviderAvailable()&&lever.rangeValid&&!pending&&!capture.active&&!flash.running&&!isLocked();
  const feedLever=()=>{const fired=lever.update(lastCombined,lastLightAt,leverAllowed());persistBackground();if(fired)startFlash('lever').catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()});};
  async function startFlash(source){
    if(pending||capture.active||flash.running){if(source==='lever')lever.runEnded();throw Error('Another operation in progress');}
@@ -115,7 +122,7 @@ mgu.run({async start(ctx){
      if(cfg.intervalMs<100&&source!=='button')throw Error('Sub-100 ms tests require an explicit button press while parked');
      runSub100=cfg.intervalMs<100;runCycles=cfg.cycleCount!==null;
      const background=source==='lever'&&leverBackground();attempt.background=background;
-     const runAllowed=source==='lever'?()=>lever.rangeValid&&settings.get('leverTrigger')===true&&!guard.recoveryReason()&&lightProviderAvailable()&&(background?backgroundRunAllowed():flashAllowed()):flashAllowed;runNeedsMain=!background;
+     const runAllowed=source==='lever'?()=>lever.rangeValid&&settings.get('leverTrigger')===true&&!guard.parkedReason()&&lightProviderAvailable()&&(background?backgroundRunAllowed():flashAllowed()):flashAllowed;runNeedsMain=!background;
      if(!runAllowed())throw Error('Park securely in P, enable manual flash and switch OEM high beam OFF');
      attempt.outcome='started';
      task=flash.run({...cfg,fast:settings.get('fastTest')===true},runAllowed,update);
@@ -132,23 +139,26 @@ mgu.run({async start(ctx){
  }
  handler('BTN_FLASH',()=>startFlash('button'));
  handler('BTN_FLASH_STOP',()=>{flash.cancel();update()});
- handler('BTN_RECOVER',async()=>{
+ async function recoverLights(source){
    if(pending||capture.active||flash.running)throw Error('Stop other operations and wait for cleanup');
-   if(!flash.cleanupUnconfirmed&&!journal.exists()){lastError='';flash.status='Already unlocked; no recovery needed';update();return;}
-   const allowed=()=>!closing&&ui.isVisible('MAIN')&&!guard.recoveryReason()&&lightProviderAvailable()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
-   if(!allowed())throw Error('Park securely in P, switch OEM high beam OFF and wait for fresh signals');
-   pending=true;runNeedsMain=true;lever.runStarted();lastError='';flashExport='';flashExportError='';
-   const attempt={id:++flashAttempt,source:'recovery',at:new Date().toISOString(),requested:null,outcome:'not started',error:null};
+   if(!isLocked()){lastError='';flash.status='Already unlocked; no recovery needed';update();return;}
+   const automatic=source==='recovery-auto';
+   const allowed=()=>recoveryReady()&&(automatic||ui.isVisible('MAIN'));
+   if(!allowed())throw Error('Switch OEM high beam OFF and wait for fresh signals and TASU');
+   autoRecoveryAttempted=true;
+   pending=true;runNeedsMain=!automatic;lever.runStarted();lastError='';flashExport='';flashExportError='';
+   const attempt={id:++flashAttempt,source,at:new Date().toISOString(),requested:null,outcome:'not started',error:null};
    const previousTrace=flash.trace;let finishAttempt;
    flashTask=new Promise(resolve=>{finishAttempt=resolve});
-   try{await flash.recover(allowed,update);attempt.outcome='recovery acknowledged'}
+   try{await flash.recover(allowed,update);attempt.outcome='recovery acknowledged';autoRecoveryAttempted=false}
    catch(e){attempt.error=String(e.message||e);lastError=attempt.error;attempt.outcome='recovery failed';log.warn(lastError)}
    finally{
      attempt.endedAt=new Date().toISOString();attempt.newTrace=flash.trace!==previousTrace;
      try{flashExport=saveFlashAttempt(attempt)}catch(e){flashExportError=String(e.message||e);log.warn('Recovery autosave: '+flashExportError)}
      flashTask=null;pending=false;lever.runEnded();finishAttempt();update();
    }
- });
+ }
+ handler('BTN_RECOVER',()=>recoverLights('recovery'));
  const openMenu=name=>{if(flash.running||pending)throw Error('Wait for the current operation to finish');lastError='';return ui.open(name)};
  handler('BTN_OPTIONS',()=>openMenu('OPTIONS'));
  handler('BTN_OPTIONS_BACK',()=>openMenu('MAIN'));
@@ -187,7 +197,7 @@ mgu.run({async start(ctx){
    const pages=Math.max(1,Math.ceil(logEntries.length/logPageSize));
    const rows=logEntries.slice(logPage*logPageSize,(logPage+1)*logPageSize);
    const values={
-     LOG_STATE:lever.lastReason+' | '+(guard.recoveryReason()||'Parked')+(lastError?' | '+lastError:''),
+     LOG_STATE:lever.lastReason+' | '+(guard.parkedReason()||'Parked')+(lastError?' | '+lastError:''),
      LOG_PATH:ctx.dataDir,
      LOG_POSITION:logLoadError||(logEntries.length?'Page '+(logPage+1)+' / '+pages:'No diagnostic events yet'),
      LOG_FILES:(exported?'Export saved | ':'')+'Lever: light-flasher-background.json | Export: light-flasher-diagnostics.json',
@@ -209,7 +219,7 @@ mgu.run({async start(ctx){
  handler('BTN_LOG_BACK',()=>openMenu('DIAGNOSTICS'));
  handler('BTN_ADVANCED_BACK',()=>{stop('Left advanced tests');return ui.open('DIAGNOSTICS')});
  async function checkConnection(startCapture){
-   if(!valid())throw Error('Park securely in P and open Advanced tests: '+(guard.recoveryReason()||'advanced page not open'));
+   if(!valid())throw Error('Park securely in P and open Advanced tests: '+(guard.parkedReason()||'advanced page not open'));
    if(pending||capture.active)throw Error('Stop previous recording or wait for current read');
    lastError='';exported='';
    if(!reader.diag.available){connectionState='TASU unavailable';throw Error(reader.diag.error||'TASU provider unavailable; no BDC request sent')}
