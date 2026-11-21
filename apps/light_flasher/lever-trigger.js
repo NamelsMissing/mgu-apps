@@ -21,10 +21,37 @@ function pulseRange(min,max){
  const a=Number(min),b=Number(max);
  return min!==null&&min!==undefined&&min!==''&&max!==null&&max!==undefined&&max!==''&&MIN_CHOICES.includes(a)&&MAX_CHOICES.includes(b)&&a<=b?{minOnMs:a,maxOnMs:b}:null;
 }
+function currentLightStatus(status,statusAt,now,staleMs=DEFAULTS.staleMs){
+ return (status==='EIN'||status==='AUS')&&Number.isFinite(statusAt)&&statusAt<=now&&now-statusAt<=staleMs;
+}
+
+// Passive measurement for Diagnostics, independent of actuation eligibility.
+class LeverObservation {
+ constructor(){
+  this.status=null;this.statusAt=null;this.pulledAt=null;this.lastHoldMs=null;
+ }
+ observe(status,at){
+  if(!currentLightStatus(status,at,at)){
+   this.status=null;this.statusAt=null;this.pulledAt=null;
+   return;
+  }
+  const previous=currentLightStatus(this.status,this.statusAt,at)?this.status:null;
+  if(status==='EIN'&&previous!=='EIN')this.pulledAt=previous==='AUS'?at:null;
+  if(status==='AUS'){
+   if(previous==='EIN'&&this.pulledAt!==null)this.lastHoldMs=at-this.pulledAt;
+   this.pulledAt=null;
+  }
+  this.status=status;this.statusAt=at;
+ }
+ snapshot(now,available){
+  const status=available&&currentLightStatus(this.status,this.statusAt,now)?this.status:null;
+  return {status,holdMs:status==='EIN'&&this.pulledAt!==null?now-this.pulledAt:null,lastHoldMs:this.lastHoldMs};
+ }
+}
 class LeverTrigger {
  constructor(now=Date.now,opts={}){
   this.now=now;this.opts={...DEFAULTS,...opts};this.rangeValid=true;
-  this.enabled=false;this.state='disabled';this.offSince=null;this.onSince=null;this.releasedAt=null;
+  this.enabled=false;this.state='disabled';this.offSince=null;this.lastOffAt=null;this.onSince=null;this.releasedAt=null;
   this.cooldownUntil=0;this.lastPulseMs=null;this.events=[];this.triggers=0;this.rejected=0;this.lastReason='Lever trigger off';
  }
  setRange(min,max){
@@ -38,7 +65,7 @@ class LeverTrigger {
  setEnabled(on){on=on===true;if(on!==this.enabled){this.enabled=on;this.reset(on?'Armed after stable OEM beam OFF':'Lever trigger off');}}
  reset(reason,recordCancellation=true){
   if(recordCancellation&&(this.state==='on'||this.state==='released'))this.record('cancelled',{why:reason});
-  this.state=this.enabled?'waitOff':'disabled';this.offSince=null;this.onSince=null;this.releasedAt=null;this.lastReason=reason;}
+  this.state=this.enabled?'waitOff':'disabled';this.offSince=null;this.lastOffAt=null;this.onSince=null;this.releasedAt=null;this.lastReason=reason;}
  record(kind,extra){this.events.push({at:new Date(this.now()).toISOString(),kind,...extra});if(this.events.length>30)this.events.shift();}
  // Start of a run (lever or button): ignore everything until cooldown after it ends.
  runStarted(){this.reset('Flash running');this.cooldownUntil=Infinity;}
@@ -51,12 +78,20 @@ class LeverTrigger {
   if(!this.rangeValid){this.reset('Invalid lever pulse range');return false;}
   if(!allowed){this.reset('Blocked: parked guard, setting or another operation');return false;}
   if(t<this.cooldownUntil){this.reset('Cooldown after flash');return false;}
-  if((status!=='EIN'&&status!=='AUS')||!Number.isFinite(statusAt)||statusAt>t||t-statusAt>o.staleMs){this.reset('OEM light status unknown or stale');return false;}
+  if(!currentLightStatus(status,statusAt,t,o.staleMs)){this.reset('OEM light status unknown or stale');return false;}
   switch(this.state){
    case 'waitOff':
-    if(status==='AUS'){if(this.offSince===null)this.offSince=t;if(t-this.offSince>=o.armOffMs){this.state='armed';this.lastReason='Armed: pull lever briefly';}}
-    else{this.offSince=null;this.lastReason='Waiting for OEM beam OFF';}
-    return false;
+    if(status==='AUS'){
+     if(this.offSince===null||statusAt-this.lastOffAt>o.staleMs)this.offSince=t;
+     this.lastOffAt=statusAt;
+     if(t-this.offSince>=o.armOffMs){this.state='armed';this.lastReason='Armed: pull lever briefly';}
+     return false;
+    }
+    if(this.offSince===null||statusAt-this.lastOffAt>o.staleMs||statusAt-this.offSince<o.armOffMs){
+     this.offSince=null;this.lastReason='Waiting for OEM beam OFF';return false;
+    }
+    // A pull can arrive between the end of the stable OFF period and the next tick.
+    // Fall through to start timing at the received ON edge.
    case 'armed':
     if(status==='EIN'){this.state='on';this.onSince=statusAt;this.record('pull',{signalAt:new Date(statusAt).toISOString()});this.lastReason='Lever pulse seen';}
     return false;
@@ -87,4 +122,4 @@ class LeverTrigger {
    cooldownRemainingMs:Number.isFinite(this.cooldownUntil)?Math.max(0,this.cooldownUntil-this.now()):null,limits:{...this.opts},rangeValid:this.rangeValid,
    scope:'P, stationary, manual flash enabled; foreground or explicitly enabled background; short pull only',events:this.events.slice()};}
 }
-module.exports={LeverTrigger,DEFAULTS,MIN_CHOICES,MAX_CHOICES,pulseRange};
+module.exports={LeverTrigger,LeverObservation,DEFAULTS,MIN_CHOICES,MAX_CHOICES,pulseRange};
