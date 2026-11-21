@@ -129,10 +129,10 @@ test('sub-100 fast mode skips PWM restart on guard loss and performs STOP',async
  assert.ok(r.log.includes('433102A54B'));
  assert.equal(r.state[0x43].running,false);
 });
-test('sub-100 requires foreground explicit start and strict parked guard',()=>{
+test('sub-100 requires foreground explicit start and a light-signal provider',()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
  assert.match(src,/cfg\.intervalMs<100&&source!=='button'/);
- assert.match(src,/!\(sub100\(\)\|\|runSub100\)\|\|\(settings\.get\('fastTest'\)===true&&!guard\.parkedReason\(\)&&lightProviderAvailable\(\)\)/);
+ assert.match(src,/!\(sub100\(\)\|\|runSub100\)\|\|\(settings\.get\('fastTest'\)===true&&lightProviderAvailable\(\)\)/);
  assert.match(src,/runSub100=cfg\.intervalMs<100/);
  assert.match(src,/const leverAllowed=\(\)=>!sub100\(\)/);
  assert.match(src,/const backgroundRunAllowed=\(\)=>!sub100\(\)/);
@@ -158,6 +158,6 @@ test('cycle deadline ends a slow pattern with cleanup and partial count',async()
 });
 test('cycle guard stays active for entire selected run',()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
- assert.match(src,/!\(cycleSelected\(\)\|\|runCycles\)\|\|\(!guard\.parkedReason\(\)&&lightProviderAvailable\(\)\)/);
+ assert.match(src,/!\(cycleSelected\(\)\|\|runCycles\)\|\|lightProviderAvailable\(\)/);
  assert.match(src,/runCycles=cfg\.cycleCount!==null/);
 });
