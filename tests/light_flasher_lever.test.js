@@ -103,14 +103,14 @@ test('disabled detector never fires', () => {
 test('main wires lever only through the guarded flash path', () => {
     const src = require('fs').readFileSync(require('path').join(__dirname, '../apps/light_flasher/main.js'), 'utf8');
     const allowed = src.match(/const leverAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', '!guard.recoveryReason()', '!flash.running', '!flash.cleanupUnconfirmed'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', '!guard.parkedReason()', '!flash.running', '!isLocked()'])
         assert.ok(allowed.includes(term), 'leverAllowed lacks ' + term);
     assert.match(src, /startFlash\('lever'\)/);
     assert.match(src, /flash\.run\(\{\.\.\.cfg,fast:settings\.get\('fastTest'\)===true\},runAllowed,update\)/);
     assert.match(src, /const runAllowed=source==='lever'\?/);
     // Background runs keep the full P/stationary/OEM-off guard, but never with diagnostics open.
     const bg = src.match(/const backgroundRunAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", '!guard.recoveryReason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
+    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", '!guard.parkedReason()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
         assert.ok(bg.includes(term), 'backgroundRunAllowed lacks ' + term);
     const screen = src.match(/const leverScreenOk=\(\)=>([^;]+);/)[1];
     assert.equal(screen, "ui.isVisible('MAIN')||(leverBackground()&&!menuVisible())");
@@ -173,7 +173,7 @@ test('a long hold still logs its actual release duration', () => {
     assert.deepEqual(r.lt.snapshot().events.map(e => e.kind), ['pull', 'release', 'rejected']);
 });
 
-test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', async () => {
+test('diagnostic display, exports and automatic recovery use current signals', async () => {
     const fs = require('node:fs');
     const os = require('node:os');
     const path = require('node:path');
@@ -196,7 +196,8 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         const clicks = new Map();
         const labels = new Map();
         let visible = 'DIAGNOSTICS';
-        let onVisible, receiveLight;
+        let onVisible, receiveLight, runTick;
+        let recoveryCalls = 0, failRecovery = true;
         const ui = {
             isVisible: name => name === visible,
             onClick: (id, callback) => clicks.set(id, callback),
@@ -217,17 +218,30 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
                 if (name === './kit/mgu') return {run: app => { started = app.start(ctx); }};
                 if (name === './guard') return class {
                     async init(signals, log, receive) { this.speedSub = {available: true}; receiveLight = receive; }
-                    recoveryReason() { return 'Select P (Park)'; }
+                    parkedReason() { return 'Select P (Park)'; }
+                    recoveryReason() { return null; }
                     snapshot() { return {}; }
                 };
                 if (name === './probe') return {
-                    Reader: class { constructor() { this.diag = {}; this.trace = []; } async init() {} },
+                    Reader: class { constructor() { this.diag = {available: true}; this.trace = []; } async init() {} },
                     Capture: class { status() {} stop() {} snapshot() { return {}; } },
                 };
+                if (name === './manual-flash') {
+                    const ManualFlash = require(path.join(appDir, name));
+                    return class extends ManualFlash {
+                        async recover(allowed) {
+                            assert.equal(allowed(), true);
+                            recoveryCalls++;
+                            if (failRecovery) throw Error('STOP not confirmed');
+                            this.journal.clear();
+                            this.cleanupUnconfirmed = false;
+                        }
+                    };
+                }
                 return name.startsWith('./') ? require(path.join(appDir, name)) : require(name);
             },
             process: {pid: 1, on() {}},
-            setInterval() {},
+            setInterval(callback) { runTick = callback; },
         });
         await started;
         assert.ok(app.screens.find(screen => screen.name === 'DIAGNOSTICS').items.some(item => item[1] === 'BTN_LOGS'));
@@ -253,6 +267,26 @@ test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', as
         assert.match(labels.get('DIAG_LEVER'), /Pull detected/);
         light('AUS');
         assert.match(labels.get('DIAG_LEVER'), /Released.*Last measured pull: [0-9]+ ms/);
+        const lock = path.join(dataDir, 'manual-flash-pending.json');
+        const tick = async () => { runTick(); await new Promise(resolve => setImmediate(resolve)); };
+        fs.writeFileSync(lock, '{}');
+        light('EIN');
+        await tick();
+        assert.equal(recoveryCalls, 0);
+        light('AUS');
+        await tick();
+        await tick();
+        assert.equal(recoveryCalls, 1);
+        assert.ok(fs.existsSync(lock));
+        ui.open('MAIN');
+        failRecovery = false;
+        await clicks.get('BTN_RECOVER')();
+        assert.equal(recoveryCalls, 2);
+        assert.ok(!fs.existsSync(lock));
+        fs.writeFileSync(lock, '{}');
+        await tick();
+        assert.equal(recoveryCalls, 3);
+        assert.ok(!fs.existsSync(lock));
     } finally {
         fs.rmSync(dataDir, {recursive: true, force: true});
     }
