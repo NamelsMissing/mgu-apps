@@ -138,3 +138,116 @@ test('persisted timing options and passive tracking are wired',()=>{
  assert.ok(src.includes('monitor.setEnabled(true)'));assert.ok(src.includes("lever.setRange(settings.get('leverMinMs'),settings.get('leverMaxMs'))"));
  assert.ok(src.includes('limits:lv.limits,rangeValid:lv.rangeValid'));assert.ok(src.includes("source==='lever'?()=>lever.rangeValid"));
 });
+
+test('equal hold limits require the exact received pulse duration', () => {
+    for (const [pulseMs, expected] of [[499, false], [500, true], [501, false]]) {
+        let now = 1000;
+        const trigger = new LeverTrigger(() => now);
+        assert.equal(trigger.setRange(500, 500), true);
+        trigger.setEnabled(true);
+        trigger.update('AUS', now, true);
+        now += 1000;
+        trigger.update('AUS', now, true);
+        now += 100;
+        const pulledAt = now;
+        trigger.update('EIN', pulledAt, true);
+        now += pulseMs + 15;
+        const releasedAt = pulledAt + pulseMs;
+        assert.equal(trigger.update('AUS', releasedAt, true), false);
+        assert.equal(trigger.snapshot().lastPulseMs, pulseMs);
+        assert.equal(trigger.snapshot().events.find(e => e.kind === 'release').onMs, pulseMs);
+        now = releasedAt + 399;
+        assert.equal(trigger.update('AUS', releasedAt, true), false);
+        now++;
+        assert.equal(trigger.update('AUS', releasedAt, true), expected);
+    }
+});
+
+test('a long hold still logs its actual release duration', () => {
+    const r = rig();
+    r.lt.setRange(250, 750);
+    r.advance(1200, 'AUS');
+    r.advance(1000, 'EIN');
+    assert.equal(r.advance(600, 'AUS'), 0);
+    assert.equal(r.lt.snapshot().lastPulseMs, 1000);
+    assert.deepEqual(r.lt.snapshot().events.map(e => e.kind), ['pull', 'release', 'rejected']);
+});
+
+test('Diagnostic Logs opens persisted events, pages, and exports a snapshot', async () => {
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const vm = require('node:vm');
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flasher-logs-'));
+    try {
+        const appDir = path.join(__dirname, '../apps/light_flasher');
+        const events = Array.from({length: 6}, (_, i) => ({
+            at: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+            kind: 'release', onMs: 500 + i,
+        }));
+        fs.writeFileSync(path.join(dataDir, 'light-flasher-background.json'), JSON.stringify({lever: {events}}));
+        fs.writeFileSync(path.join(dataDir, 'light-flasher-run-v0.1.20-20260101000000000-1-1.json'),
+            JSON.stringify({flashAttempt: {endedAt: events[0].at, source: 'button', outcome: 'finished'}}));
+        // A lexicographic sort by filename ranks v0.1.9 above v0.1.20.
+        for (let i = 0; i < 10; i++) {
+            fs.writeFileSync(path.join(dataDir, 'light-flasher-run-v0.1.9-2025123123595900' + i + '-1-1.json'),
+                JSON.stringify({flashAttempt: {endedAt: '2025-12-31T23:59:59.000Z', source: 'lever', outcome: 'finished'}}));
+        }
+        const clicks = new Map();
+        const labels = new Map();
+        let visible = 'DIAGNOSTICS';
+        let onVisible;
+        const ui = {
+            isVisible: name => name === visible,
+            onClick: (id, callback) => clicks.set(id, callback),
+            text: (id, value) => labels.set(id, value),
+            onVisible: callback => { onVisible = callback; },
+            open: name => { visible = name; onVisible(); },
+        };
+        const app = require('../apps/light_flasher/app.json');
+        const defaults = Object.fromEntries(app.settings.map(setting => [setting.key, setting.default]));
+        const ctx = {
+            dataDir, ui, signals: {},
+            settings: {get: key => defaults[key], onChange() {}},
+            log: {info() {}, warn() {}},
+        };
+        let started;
+        vm.runInNewContext(fs.readFileSync(path.join(appDir, 'main.js'), 'utf8'), {
+            require: name => {
+                if (name === './kit/mgu') return {run: app => { started = app.start(ctx); }};
+                if (name === './guard') return class {
+                    async init() {}
+                    recoveryReason() { return 'Select P (Park)'; }
+                    snapshot() { return {}; }
+                };
+                if (name === './probe') return {
+                    Reader: class { constructor() { this.diag = {}; this.trace = []; } async init() {} },
+                    Capture: class { stop() {} snapshot() { return {}; } },
+                };
+                return name.startsWith('./') ? require(path.join(appDir, name)) : require(name);
+            },
+            process: {pid: 1, on() {}},
+            setInterval() {},
+        });
+        await started;
+        assert.ok(app.screens.find(screen => screen.name === 'DIAGNOSTICS').items.some(item => item[1] === 'BTN_LOGS'));
+        await clicks.get('BTN_LOGS')();
+        assert.equal(visible, 'LOGS');
+        assert.equal(labels.get('LOG_PATH'), dataDir);
+        assert.equal(labels.get('LOG_POSITION'), 'Page 1 / 4');
+        assert.match(labels.get('LOG_ROW_0'), /Lever release \| 505 ms/);
+        await clicks.get('BTN_LOG_OLDER')();
+        assert.equal(labels.get('LOG_POSITION'), 'Page 2 / 4');
+        assert.match(labels.get('LOG_ROW_1'), /button \| finished .*light-flasher-run-/);
+        await clicks.get('BTN_LOG_NEWER')();
+        assert.equal(labels.get('LOG_POSITION'), 'Page 1 / 4');
+        await clicks.get('BTN_LOG_SAVE')();
+        assert.match(labels.get('LOG_FILES'), /Export saved/);
+        const report = JSON.parse(fs.readFileSync(path.join(dataDir, 'light-flasher-diagnostics.json'), 'utf8'));
+        assert.equal(report.leverTrigger.events.length, 6);
+        await clicks.get('BTN_LOG_BACK')();
+        assert.equal(visible, 'DIAGNOSTICS');
+    } finally {
+        fs.rmSync(dataDir, {recursive: true, force: true});
+    }
+});

@@ -9,7 +9,7 @@ const Monitor=require('./background-monitor');
 const Release=require('./release-status');
 const Timing=require('./timing');
 const {LeverTrigger}=require('./lever-trigger');
-const VERSION='0.1.20';
+const VERSION='0.1.21';
 mgu.run({async start(ctx){
  const {ui,settings,log}=ctx, capture=new Capture(),reader=new Reader(ctx.signals,log);
  const monitor=new Monitor(Date.now,ctx.app&&ctx.app.startReason);
@@ -22,6 +22,11 @@ mgu.run({async start(ctx){
  // Sub-100 ms selections are now supported only in the experimental fast mode.
  const lever=new LeverTrigger(Date.now);const syncLever=()=>{lever.setRange(settings.get('leverMinMs'),settings.get('leverMaxMs'));lever.setEnabled(settings.get('leverTrigger')===true);};syncLever();
  const bgFile=path.join(ctx.dataDir,'light-flasher-background.json');let lastBg='',bgError='';
+ // Keep the most recent lever decisions available after the app restarts.
+ try{
+   const previous=JSON.parse(fs.readFileSync(bgFile,'utf8'));
+   if(Array.isArray(previous.lever&&previous.lever.events))lever.events=previous.lever.events.slice(-30);
+ }catch(e){if(e.code!=='ENOENT')log.warn('Background log could not be read: '+e.message)}
  const persistBackground=()=>{try{const lv=lever.snapshot();const bg={...monitor.snapshot(),lever:{enabled:lv.enabled,background:settings.get('leverBackground')===true,state:lv.state,triggers:lv.triggers,rejected:lv.rejected,lastPulseMs:lv.lastPulseMs,limits:lv.limits,rangeValid:lv.rangeValid,reason:lv.reason,events:lv.events}};const raw=JSON.stringify(bg);if(raw!==lastBg){fs.writeFileSync(bgFile+'.tmp',JSON.stringify({...bg,version:VERSION,pid:process.pid,writtenAt:new Date().toISOString()},null,2));fs.renameSync(bgFile+'.tmp',bgFile);lastBg=raw;}bgError='';}catch(e){bgError=String(e.message||e);}};
  persistBackground();
  // Read-only service operations are explicitly initiated from Advanced tests.
@@ -36,7 +41,7 @@ mgu.run({async start(ctx){
  // Passive observation only, independent of the parked actuator guard.
  const lightProviderAvailable=()=>!!(guard.speedSub&&guard.speedSub.available);
  const observeBackground=()=>{monitor.observe(Date.now()-lastLightAt<=2500?{statusMainBeam_headlightFlasher:lastCombined}:null,lightProviderAvailable(),ui.isVisible('MAIN'));persistBackground();};
- const serviceVisible=()=>ui.isVisible('DIAGNOSTICS')||ui.isVisible('ADVANCED');
+ const serviceVisible=()=>ui.isVisible('DIAGNOSTICS')||ui.isVisible('ADVANCED')||ui.isVisible('LOGS');
  const menuVisible=()=>serviceVisible()||ui.isVisible('OPTIONS');
  const update=()=>{
    const locked=flash.cleanupUnconfirmed||journal.exists()&&!flash.running;
@@ -47,13 +52,14 @@ mgu.run({async start(ctx){
      if(flashExportError)status+=' | Report save failed';
      ui.text('FLASH_STATUS',status);
    }
-   if(ui.isVisible('OPTIONS'))ui.text('LEVER_RANGE_STATUS',lever.rangeValid?'Lever hold: '+lever.opts.minOnMs+' - '+lever.opts.maxOnMs+' ms':'Invalid lever range: minimum must be below maximum');
+   if(ui.isVisible('OPTIONS'))ui.text('LEVER_RANGE_STATUS',lever.rangeValid?'Lever hold: '+lever.opts.minOnMs+' - '+lever.opts.maxOnMs+' ms':'Invalid lever range: minimum must not exceed maximum');
    if(ui.isVisible('DIAGNOSTICS')){
      const timing=Timing.summarize(flash.trace),gaps=timing.startDispatchGaps;
      const release=Release.summarize(flash.trace,flash.cleanupUnconfirmed);
      ui.text('DIAG_STATE',(locked?'Locked - restore normal lights on main menu':reader.diag.available?'Connection available':'Connection unavailable')+(guard.recoveryReason()?' | Park in P for service':' | Parked'));
      ui.text('DIAG_RESULT',(lastError?'Error: '+lastError:release.acknowledged?'Cleanup acknowledged':flash.status)+(gaps?' | Actual START gap '+gaps.meanMs+' ms':'')+(flashExportError?' | Report save failed':exported?' | Report saved':flashExport?' | Auto report saved':'')+(bgError?' | Background log save failed':''));
    }
+   if(ui.isVisible('LOGS'))updateLogs();
    if(ui.isVisible('ADVANCED')){
      const c=capture.snapshot();
      ui.text('DIAG_CAPTURE',connectionState+' | '+c.reason+' | Reads '+c.rawCount+' | Errors '+c.failures+' | '+feedbackStatus+(lastError?' | '+lastError:''));
@@ -141,6 +147,59 @@ mgu.run({async start(ctx){
  handler('BTN_OPTIONS_BACK',()=>openMenu('MAIN'));
  handler('BTN_DIAG',()=>openMenu('DIAGNOSTICS'));
  handler('BTN_ADVANCED',()=>openMenu('ADVANCED'));
+ const logPageSize=5;
+ let logPage=0, logEntries=[], logLoadError='';
+ let lastLogFrame='';
+ const formatEvent=(event,label)=>event.at.slice(0,23).replace('T',' ')+' UTC | '+label+
+   (Number.isFinite(event.onMs)?' | '+event.onMs+' ms':'')+(event.why?' | '+event.why:'');
+ function loadLogs(){
+   logLoadError='';
+   const leverEvents=lever.snapshot().events.filter(event=>event&&typeof event.at==='string').map(event=>({...event,text:formatEvent(event,'Lever '+event.kind)}));
+   const signalEvents=monitor.snapshot().events.map(event=>({...event,text:formatEvent(event,'OEM beam '+event.combinedSignal)}));
+   const reports=[];
+   try{
+     const runReport=/^light-flasher-run-v[\d.]+-(\d+)-\d+-\d+\.json$/;
+     const files=fs.readdirSync(ctx.dataDir)
+       .map(name=>({name,match:runReport.exec(name)}))
+       .filter(file=>file.match)
+       .sort((a,b)=>b.match[1].localeCompare(a.match[1]))
+       .slice(0,10);
+     for(const {name} of files){
+       try{
+         const {flashAttempt:attempt}=JSON.parse(fs.readFileSync(path.join(ctx.dataDir,name),'utf8'));
+         const at=attempt.endedAt||attempt.at;
+         const label=attempt.source+' | '+attempt.outcome+(attempt.error?' | '+attempt.error:'');
+         reports.push({at,text:formatEvent({at},label),file:name});
+       }catch(e){reports.push({at:'',text:'Report could not be read',file:name})}
+     }
+   }catch(e){logLoadError='Could not list saved reports: '+e.message}
+   logEntries=[...leverEvents,...signalEvents,...reports].sort((a,b)=>b.at.localeCompare(a.at));
+   logPage=0;
+ }
+ function updateLogs(){
+   const pages=Math.max(1,Math.ceil(logEntries.length/logPageSize));
+   const rows=logEntries.slice(logPage*logPageSize,(logPage+1)*logPageSize);
+   const values={
+     LOG_STATE:lever.lastReason+' | '+(guard.recoveryReason()||'Parked')+(lastError?' | '+lastError:''),
+     LOG_PATH:ctx.dataDir,
+     LOG_POSITION:logLoadError||(logEntries.length?'Page '+(logPage+1)+' / '+pages:'No diagnostic events yet'),
+     LOG_FILES:(exported?'Export saved | ':'')+'Lever: light-flasher-background.json | Export: light-flasher-diagnostics.json',
+   };
+   for(let i=0;i<logPageSize;i++){
+     const row=rows[i];
+     values['LOG_ROW_'+i]=row?row.text+(row.file?' | '+row.file:''):' ';
+   }
+   const frame=JSON.stringify(values);
+   if(frame===lastLogFrame)return;
+   for(const [id,value] of Object.entries(values))ui.text(id,value);
+   lastLogFrame=frame;
+ }
+ handler('BTN_LOGS',()=>{loadLogs();lastLogFrame='';return openMenu('LOGS')});
+ handler('BTN_LOG_OLDER',()=>{logPage=Math.min(logPage+1,Math.max(0,Math.ceil(logEntries.length/logPageSize)-1));update()});
+ handler('BTN_LOG_NEWER',()=>{logPage=Math.max(0,logPage-1);update()});
+ handler('BTN_LOG_REFRESH',()=>{loadLogs();update()});
+ handler('BTN_LOG_SAVE',()=>{saveReport();loadLogs();lastLogFrame='';update()});
+ handler('BTN_LOG_BACK',()=>openMenu('DIAGNOSTICS'));
  handler('BTN_ADVANCED_BACK',()=>{stop('Left advanced tests');return ui.open('DIAGNOSTICS')});
  async function checkConnection(startCapture){
    if(!valid())throw Error('Park securely in P and open Advanced tests: '+(guard.recoveryReason()||'advanced page not open'));
