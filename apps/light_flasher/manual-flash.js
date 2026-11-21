@@ -11,16 +11,16 @@ const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 class ManualFlash {
  constructor(diag,log,sleep=wait,now=Date.now,journal=null){this.diag=diag;this.log=log;this.sleep=sleep;this.now=now;this.journal=journal;this.running=false;this.cancelled=false;this.trace=[];this.status='Idle';this.cleanupUnconfirmed=!!(journal&&journal.exists());this.config=null;this.stepsCompleted=0;this.elapsedMs=0;this.fast=null;}
  cancel(){this.cancelled=true;}
- // Explicit recovery only: never send routine START or PWM commands.
+ // Recovery only: never send routine START or PWM commands.
  async recover(allowed,changed=()=>{}){
   if(this.running)throw Error('Another operation in progress');
   if(!this.cleanupUnconfirmed&&!(this.journal&&this.journal.exists()))return;
   this.cleanupUnconfirmed=true;
-  if(!allowed()||!this.diag.available)throw Error('Park in P, stationary, switch OEM high beam OFF and wait for TASU');
+  if(!allowed()||!this.diag.available)throw Error('Switch OEM high beam OFF and wait for TASU');
   this.running=true;this.cancelled=false;this.trace=[];this.config=null;this.fast=null;this.stepsCompleted=0;this.elapsedMs=0;
   this.status='Recovering normal lamp control';
   const began=this.now(),touched=[],errors=[];
-  const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Recovery cancelled or parked/OEM-light guard changed')};
+  const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Recovery cancelled or OEM-light or connection guard changed')};
   const send=async(m,sid,data,cleanup=false)=>{
    if(!cleanup)check();
    const at=this.now(),rec={at:new Date().toISOString(),side:m.side,tx:hex([sid,...data]),elapsedMs:at-began};this.trace.push(rec);
