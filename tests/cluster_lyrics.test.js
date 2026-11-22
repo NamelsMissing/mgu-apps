@@ -539,9 +539,23 @@ async function testEngine() {
     engine.tick();
     assert.strictEqual(last()[0], 'show');
     assert.strictEqual(engine.frame().current, 'First test line');
+    const rawBefore = engine.rawPosition();
+    const original = engine.timing();
+    assert.strictEqual(original.delayMs, 0);
+    assert.strictEqual(original.trackMs, rawBefore);
+    assert.strictEqual(original.lyricMs, rawBefore);
     engine.configure({ offsetMs: 2000 });
+    assert.strictEqual(engine.timing().trackMs, rawBefore, 'song clock stays unchanged');
+    assert.strictEqual(engine.timing().lyricMs, rawBefore - 2000, 'positive delay shifts lyric clock back');
     assert.strictEqual(engine.frame().gap, true, 'with 2 s delay the first line has not started');
+    engine.configure({ offsetMs: -2000 });
+    assert.strictEqual(engine.timing().trackMs, rawBefore, 'song time unaffected by negative delay');
+    assert.strictEqual(engine.timing().lyricMs, rawBefore + 2000, 'negative delay makes lyrics early');
+    assert.strictEqual(engine.frame().current, 'First test line');
+    engine.configure({ offsetMs: 3000 });
+    assert.strictEqual(engine.position(), rawBefore - 3000, 'max positive delay works');
     engine.configure({ offsetMs: 0 });
+    assert.deepStrictEqual(engine.timing(), original, 'reset restores original timing');
     now += 5000;
     assert.strictEqual(engine.frame().current, 'Second test line');
 
