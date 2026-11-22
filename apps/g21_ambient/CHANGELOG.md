@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.7
+
+- Add original BMW iDrive Ambient color slot control through the MGU ComfortFunctionIuK SOME/IP field setter (FARBAUSWAHL_1..12) and live status observer.
+- Add a **BMW colors** diagnosis page with twelve manual original slots, current slot, optional AmbientLight profile/brightness, separate setter acknowledgement and readback, and clear unavailable/stale messages.
+- Add a direct shortcut to BMW original colors from the Color editor and rename the existing BDC/LIN function to a separate experimental RGB test.
+- Never perform OEM slot writes on app startup or driving-mode changes; block missing status, invalid slot, concurrent or excessively frequent writes.
+- Keep the experimentally gated BDC single-NAD tests and Menu 11 offline plan unchanged; no full-RGB compatibility is claimed for aftermarket LIN hardware.
+- Add automated tests for signal selection, setter rejection, readback, cooldown and MGU navigation.
+
+
 ## 0.4.6
 
 - Correct silent BDC test lockout: clear Guided-test progress, target counts, explicit block reasons, and direct Guided test navigation.
