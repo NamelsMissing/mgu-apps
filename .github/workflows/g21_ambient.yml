@@ -23,3 +23,26 @@ jobs:
       - name: Node syntax check
         run: |
           for f in apps/g21_ambient/*.js; do node --check "$f"; done
+      - name: Build MGU app 0.4.7
+        run: |
+          python3 tools/build_store_app.py g21_ambient
+          python3 - <<'PY'
+          import json, pathlib
+          spec = json.loads(pathlib.Path('dist/g21_ambient/source/manifest.json').read_text())
+          proxy = spec['proxies']['de.bmw.infotainment.misc.ComfortFunctionIuK']['attributes']
+          assert proxy['ambientLightInteriorColour'] == 'w'
+          assert proxy['statusAmbientLightInteriorColour'] == 'rs'
+          root = pathlib.Path('dist/g21_ambient/source/javascript')
+          assert (root / 'bmw_colors.js').is_file()
+          assert pathlib.Path('dist/g21_ambient@0.4.7.tgz').is_file()
+          assert pathlib.Path('dist/g21_ambient@0.4.7.mgu').is_file()
+          print('Packaged OEM BMW color setter and 0.4.7 artifacts verified')
+          PY
+      - name: Upload ambient app packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: g21-ambient-0.4.7
+          path: |
+            dist/g21_ambient@0.4.7.tgz
+            dist/g21_ambient@0.4.7.mgu
+          retention-days: 14
