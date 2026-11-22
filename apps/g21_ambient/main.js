@@ -55,7 +55,11 @@ mgu.run({
             logTouch = null;
             scrollDelta = 0;
         };
-        settings.onChange(resetConfirmation);
+        ctl.setExperimentalLin(settings.get('experimentalLin') === 'on');
+        settings.onChange(() => {
+            resetConfirmation();
+            ctl.setExperimentalLin(settings.get('experimentalLin') === 'on');
+        });
         if (settings.get('colorMode') === 'saved') settings.set('colorMode', 'preset');
         if (Number(settings.get('presetColor')) === 6) settings.set('presetColor', '0');
 
@@ -93,6 +97,12 @@ mgu.run({
             if (tab !== COLOR || fallbackEditor) return;
             const revision = editRevision;
             colorNotice = '';
+            if (!ctl.bdcTestTargets.length || !ctl.bdcSelection && ctl.bdcTestTargets.length > 1) {
+                diagnosticView = 'control';
+                setTab(DIAGNOSTICS);
+                colorNotice = ctl.bdcGuidance;
+                return;
+            }
             await ctl.applyBdc(selected(), brightness(), duration(), () => revision === editRevision);
             if (revision === editRevision) colorNotice = ctl.info;
         };
@@ -212,13 +222,15 @@ mgu.run({
                 }
                 grid = cachedGrid;
             }
-            let notice = 'Use Diagnostics > Guided test to verify a LIN target first.';
+            let notice = ctl.bdcGuidance;
             if (!ctl.online) notice = 'TASU unavailable · preview only.';
             else if (ctl.busy) notice = 'Checking vehicle…';
             else if (ctl.bdcConfirming) notice = 'Confirm BDC test within 8 seconds while stationary.';
-            else if (colorNotice && !colorNotice.startsWith('Press APPLY again')) notice = colorNotice;
+            else if (colorNotice) notice = colorNotice;
             return { color, preset, grid, brightness: brightness(), duration: duration(), notice,
-                confirming: ctl.bdcConfirming, busy: ctl.busy, online: ctl.online, choosePreset, editSlider, apply };
+                confirming: ctl.bdcConfirming, busy: ctl.busy, online: ctl.online,
+                configured: ctl.bdcTestTargets.length > 0, ready: !!ctl.bdcSelection,
+                choosePreset, editSlider, apply };
         };
         const favoritesModel = () => ({
             favorites: Array.from({ length: 6 }, (_, i) => profiles.loadFavorite(i)),
@@ -277,7 +289,7 @@ mgu.run({
         });
         const openExport = format => {
             try {
-                const report = QR.createReport(ctl.report(ctx.spec ? ctx.spec.version : '0.4.5'), format);
+                const report = QR.createReport(ctl.report(ctx.spec ? ctx.spec.version : '0.4.6'), format);
                 logExport = Object.assign(report, {page: 0, matrix: QR.matrix(report.pages[0])});
                 exportError = '';
             } catch (error) {
