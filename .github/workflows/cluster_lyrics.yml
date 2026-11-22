@@ -5,12 +5,14 @@ on:
     paths:
       - 'apps/cluster_lyrics/**'
       - 'tests/cluster_lyrics.test.js'
+      - 'tests/autostart_background.test.js'
       - 'mgu-repo.json'
       - '.github/workflows/cluster_lyrics.yml'
   pull_request:
     paths:
       - 'apps/cluster_lyrics/**'
       - 'tests/cluster_lyrics.test.js'
+      - 'tests/autostart_background.test.js'
       - 'mgu-repo.json'
       - '.github/workflows/cluster_lyrics.yml'
 
@@ -24,5 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
-      - name: Cluster Lyrics unit and renderer socket tests
-        run: node tests/cluster_lyrics.test.js
+      - name: Cluster Lyrics unit, boot and renderer socket tests
+        run: |
+          node tests/cluster_lyrics.test.js
+          node tests/autostart_background.test.js
