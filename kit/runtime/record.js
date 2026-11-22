@@ -233,8 +233,8 @@ class Recorder {
         const s = opts.literal ? String(str) : t(str), family = opts.font || 'label';
         const f = fonts.get(family, size * this.textScale, s);
         if (!f) return 0;
-        const sc = size / f.size, sp = opts.spacing || 0;
-        const w = fonts.measure(f, s) * sc + sp * Math.max(0, s.length - 1);
+        const sc = size / f.size, sp = opts.spacing || 0, cell = opts.cellWidth || 0;
+        const w = cell ? [...s].length * cell : fonts.measure(f, s) * sc + sp * Math.max(0, s.length - 1);
         let pen = opts.align === 'center' ? x - w / 2 : opts.align === 'right' ? x - w : x;
         let cnt = 0;
         const head = this.n;
@@ -246,11 +246,13 @@ class Recorder {
             if (!g) continue;
             const gx = g[0], gy = g[1], gw = g[2], gh = g[3];
             if (gw && gh) {
-                fl[i++] = pen + g[4] * sc; fl[i++] = y + g[5] * sc; fl[i++] = gw * sc; fl[i++] = gh * sc;
+                const sx = cell ? Math.min(sc, cell / Math.max(g[6], gw)) : sc;
+                const inset = cell ? (cell - g[6] * sx) / 2 : 0;
+                fl[i++] = pen + inset + g[4] * sx; fl[i++] = y + g[5] * sc; fl[i++] = gw * sx; fl[i++] = gh * sc;
                 fl[i++] = gx; fl[i++] = gy; fl[i++] = gx + gw; fl[i++] = gy + gh;
                 cnt++;
             }
-            pen += g[6] * sc + sp;
+            pen += cell || g[6] * sc + sp;
         }
         if (cnt) {
             const aid = atlasId(f, f.family || family); this.atlases.add(aid);
@@ -261,6 +263,7 @@ class Recorder {
     }
     textWidth(str, size, opts) {
         const s = opts && opts.literal ? String(str) : t(str), f = fonts.get((opts && opts.font) || 'label', size * this.textScale, s);
+        if (opts && opts.cellWidth) return [...s].length * opts.cellWidth;
         return f ? fonts.measure(f, s) * (size / f.size) + ((opts && opts.spacing) || 0) * Math.max(0, s.length - 1) : 0;
     }
 

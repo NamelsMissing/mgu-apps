@@ -26,7 +26,8 @@ async function screen(initial = {}, own = true) {
     const values = Object.fromEntries(app.settings.map(setting => [setting.key, setting.default]));
     Object.assign(values, initial);
     const actions = {}, feeds = {}, hidden = [];
-    let draw, canvas, tab, touch, onChange, editor, writes = 0;
+    let draw, canvas, tab, touch, scroll, onChange, editor, writes = 0;
+    let drawn = [];
     await start({
         settings: {
             get: key => values[key],
@@ -48,17 +49,21 @@ async function screen(initial = {}, own = true) {
         canvas: (w, h) => {
             canvas = new Recorder(w, h);
             canvas.own = own;
+            drawn = [];
+            const paint = canvas.text.bind(canvas);
+            canvas.text = (value, ...args) => { drawn.push(String(value)); return paint(value, ...args); };
             return canvas;
         },
         theme: () => theme(),
         loop: (_page, _fps, fn) => { draw = fn; },
         onTab: fn => { tab = fn; },
         onTouch: fn => { touch = fn; },
+        ...(initial.useScroll ? {onScroll: fn => { scroll = fn; }} : {}),
         hideButton: id => hidden.push(id),
         sheet: sheet => { if (own) editor = sheet; return own; },
     });
     const targets = () => { draw(); return canvas.targets; };
-    return { actions, feeds, targets, touch, tab, values, hidden, editor: () => editor, saves: () => writes,
+    return { actions, feeds, targets, touch, scroll, tab, values, hidden, drawn() { draw(); return drawn; }, editor: () => editor, saves: () => writes,
         press(key) {
             const target = targets().find(target => target.key === key);
             assert(target, 'missing controller/touch target: ' + key);
@@ -150,19 +155,50 @@ test('favorites and follow-mode recall restore editor values including Off', asy
     assert.equal(ui.values.presetColor, '5');
 });
 
-test('Menu 11 exists only within diagnostics and opens both plans there', async () => {
+test('diagnostic views remain separate and Menu 11 remains offline', async () => {
     const ui = await screen();
     ui.tab(3);
-    assert.deepEqual(ui.targets().map(target => target.key), ['read-ram', 'read-bdc', 'menu-plan']);
+    assert(ui.targets().some(target => target.key === 'diagnostics-start'));
+    await ui.press('diagnostics-start');
+    assert(ui.drawn().some(line => line.includes('TASU unavailable')));
+    ui.press('diag-ram');
     await ui.press('read-ram');
+    ui.press('diag-lin1');
     await ui.press('read-bdc');
-    ui.press('menu-plan');
-    assert.deepEqual(ui.targets().map(target => target.key), ['read-ram', 'current-plan', 'factory-plan', 'menu-plan']);
+    ui.press('lin-raw');
+    assert(ui.drawn().includes('No response captured'));
+    ui.press('diag-plan');
     ui.press('current-plan');
+    assert(ui.drawn().some(line => line.includes('mapping unverified')));
     ui.press('factory-plan');
+    assert(ui.drawn().some(line => line.includes('Factory profile')));
     assert.equal(ui.saves(), 0);
-    ui.press('menu-plan');
-    assert(ui.targets().some(target => target.key === 'read-bdc'));
-    ui.actions.BTN_PAGE();
-    assert(ui.targets().some(target => target.key === 'apply'));
+});
+
+test('live log scrolls by targets, touch and renderer controller hook; QR exports open', async () => {
+    for (const useScroll of [false, true]) {
+        const ui = await screen({useScroll});
+        ui.tab(3);
+        for (let i = 0; i < 12; i++) await ui.press('diagnostics-start');
+        ui.tab(4);
+        const footer = () => ui.drawn().find(line => line.includes('lines') && line.includes('Swipe'));
+        const latest = footer();
+        ui.press('BTN_LOG_UP');
+        const older = footer();
+        assert.notEqual(older, latest);
+        ui.press('BTN_LOG_DOWN');
+        assert.equal(footer(), latest);
+        if (useScroll) ui.scroll(-70);
+        else { ui.touch(1, 900, 245); ui.touch(2, 900, 330); ui.touch(3, 900, 330); }
+        assert.notEqual(footer(), latest);
+        ui.press('BTN_LOG_LATEST');
+        assert.equal(footer(), latest);
+        ui.press('log-export');
+        assert(ui.drawn().some(line => line.includes('QR 1 /')));
+        ui.press('qr-json');
+        assert(ui.drawn().some(line => line.includes('JSON')));
+        ui.press('qr-back');
+        ui.press('log-clear');
+        assert.match(footer(), /0–0 \/ 0/);
+    }
 });

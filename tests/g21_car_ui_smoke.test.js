@@ -19,7 +19,7 @@ assert(!spec('dpf_monitor').settings.some(s => s.key === 'dde_live' || s.key ===
     'DPF must always read real data and hide both test settings');
 assert(!dpf.includes("settings.get('demo')"), 'DPF must never show synthetic readings');
 assert.deepStrictEqual([...ambientHmi.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
-    ["'Color', 'Favorites', 'Drive modes', 'Diagnostics'"],
+    ["'Color', 'Favorites', 'Drive modes', 'Diagnostics', 'Log'"],
     'Ambient has color, favorites, drive-mode and diagnostic pages');
 assert.deepStrictEqual([...wheel.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
     ["'Comfort', 'Diagnostics', 'Log', 'QR Log'"], 'WheelHeat includes live diagnostics and export logs');

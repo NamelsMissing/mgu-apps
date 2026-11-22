@@ -21,8 +21,8 @@ function harness(respond) {
     const ctl = new SafeDiag({ log: { info() {}, warn() {} }, signals: {} });
     ctl.diag.p = {};
     ctl.diag.available = true;
-    ctl.diag.physical = async (target, sid, request, timeout, accept, options) => {
-        assert.equal(options.maxRetries, 0);
+    ctl.diag.physicalTracked = async (target, sid, request, options) => {
+        options.onSend();
         requests.push([target, sid, ...request]);
         return respond(target, sid, request);
     };
@@ -76,6 +76,8 @@ test('an acknowledgment requires fresh verification before another temporary tes
     await apply();
     assert.equal(ctl.lastWrite.acknowledged, true);
     assert.match(ctl.lastWrite.text, /Check the lights/);
+    assert.equal(ctl.lastWrite.physical, 'Not checked');
+    assert.equal(ctl.wizard.physical, 'Not checked');
     assert.equal(ctl.verified, false);
     ctl.lastWriteAt -= 3000;
     ctl.updateSpeed(0);
@@ -134,7 +136,9 @@ test('BDC diagnostics retry a busy read once and share the transport lock with R
     assert.match(ctl.info, /busy/);
     await reading;
     assert.deepEqual(requests, [[0x40, 0x22, 0xDA, 0x5F], [0x40, 0x22, 0xDA, 0x5F], [0x40, 0x22, 0xE3, 0xD1]]);
-    assert.deepEqual(ctl.bdcStatus, ['Positive reply · data length 1', '7F 22 31 · out of range']);
+    assert.equal(ctl.bdc[0].read.decoded, false);
+    assert.equal(ctl.bdc[1].read.nrc, 0x31);
+    assert.equal(ctl.log.export().filter(e => e.kind === 'READ RETRY').length, 1);
 });
 
 function bdcReply(did, records, method = 1) {
@@ -157,28 +161,35 @@ test('BDC compares RGBW and brightness only across matching records from two com
         return bdcReply(did, records);
     });
 
-    await ctl.readBdc();
-    assert.equal(ctl.bdcComparison, 'Reference captured for both LIN buses.');
+    await ctl.captureReference();
+    assert.equal(ctl.reference.records.length, 5);
     second = true;
-    await ctl.readBdc();
-    assert.equal(ctl.bdcComparison, 'RGBW changed: 1/3 · Brightness changed: 1/3');
-    await ctl.readBdc();
-    assert.equal(ctl.bdcComparison, 'RGBW changed: 0/4 · Brightness changed: 0/4');
+    await ctl.compareReference();
+    const rows = ctl.comparison.rows;
+    assert.equal(rows.filter(row => row.color).length, 1);
+    assert.equal(rows.filter(row => row.brightness).length, 1);
+    assert.equal(rows.filter(row => row.status === 'Replaced').length, 1);
+    assert.equal(rows.filter(row => row.status === 'Invalid').length, 1);
+    await ctl.captureReference();
+    await ctl.compareReference();
+    assert.equal(ctl.comparison.rows.filter(row => row.status === 'Unchanged').length, 4);
     assert(requests.every(req => req[0] === 0x40 && req[1] === 0x22));
 });
 
-test('a failed or wrong-size BDC read invalidates the reference for both buses', async () => {
+test('a failed or wrong-size BDC read preserves the last valid reference and marks the latest capture invalid', async () => {
     let reading = 'full';
     const { ctl } = harness((_target, _sid, did) => {
         const reply = bdcReply(did, [[5, 5, 5, 5, 50, 0]]);
         return reading === 'full' || did[0] === 0xDA ? reply : reply.slice(0, -1);
     });
-    await ctl.readBdc();
+    await ctl.captureReference();
+    const reference = ctl.reference;
     reading = 'short';
-    await ctl.readBdc();
-    assert.match(ctl.bdcStatus[1], /data length 260/);
-    assert.match(ctl.bdcComparison, /needs 261 data bytes/);
-    reading = 'full';
-    await ctl.readBdc();
-    assert.equal(ctl.bdcComparison, 'Reference captured for both LIN buses.');
+    assert.equal(await ctl.captureReference(), 'Invalid Response');
+    assert.equal(ctl.bdc[1].read.rx.length - 3, 260);
+    assert.equal(ctl.bdc[1].read.decoded, false);
+    assert.equal(ctl.bdc[1].valid.data.valid, 1);
+    assert.equal(ctl.reference, reference);
+    assert.equal(await ctl.compareReference(), 'Invalid Response');
+    assert.equal(ctl.comparison, null);
 });

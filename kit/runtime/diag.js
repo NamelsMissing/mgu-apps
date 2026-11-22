@@ -166,6 +166,61 @@ class Diag extends EventEmitter {
         if (!done && !t) t = setTimeout(() => finish(null), timeoutMs || 4000); // from when the transport took it
         return got;
     }
+    /** Bounded request for single-flight callers. TASU has no transaction ID. */
+    physicalTracked(target, sid, data, opts) {
+        const accept = replyTo(sid, data);
+        return new Promise((resolve, reject) => {
+            let closed = false, accepted = false, response, idle, hard;
+            const finish = (error, reply) => {
+                if (closed) return;
+                closed = true;
+                clearTimeout(idle); clearTimeout(hard);
+                this.removeListener('frame', onFrame);
+                this.removeListener('available', onAvailable);
+                this.removeListener('tasError', onError);
+                this.removeListener('tasReject', onReject);
+                opts.setCancel(null);
+                if (error) reject(error); else resolve(reply);
+            };
+            const fail = (code, message) => finish(Object.assign(new Error(message), {code}));
+            const timeout = () => finish(null, null);
+            const arm = ms => { clearTimeout(idle); idle = setTimeout(timeout, ms); };
+            const onFrame = f => {
+                if (f.ecu !== target || !accept(f.uds)) return;
+                if (f.uds[0] === 0x7F && f.uds[2] === 0x78) {
+                    opts.onPending(f.uds);
+                    arm(opts.pendingTimeoutMs);
+                    return;
+                }
+                if (response) return;
+                response = f.uds;
+                if (accepted) finish(null, response);
+            };
+            const onAvailable = available => { if (!available) fail('CANCELLED', 'TASU disconnected'); };
+            const onError = detail => fail('TRANSPORT', 'TASU event: ' + detail);
+            const onReject = code => fail('TRANSPORT', 'TASU rejection 0x' + hex(code));
+            if (!this.available) { fail('TRANSPORT', 'TASU unavailable'); return; }
+            if (this.trackedSend) { fail('TRANSPORT', 'Previous TASU send has not settled'); return; }
+            this.on('frame', onFrame);
+            this.on('available', onAvailable);
+            this.on('tasError', onError);
+            this.on('tasReject', onReject);
+            opts.setCancel(() => fail('CANCELLED', 'Cancelled by operator'));
+            hard = setTimeout(timeout, opts.hardTimeoutMs);
+            opts.onSend();
+            const sending = this.trackedSend = this.send(target, sid, data, {maxRetries: 0, callTimeoutMs: opts.callTimeoutMs});
+            const clearSend = () => { if (this.trackedSend === sending) this.trackedSend = null; };
+            sending.then(clearSend, clearSend);
+            sending.then(verdict => {
+                if (closed) return;
+                this._check(verdict);
+                accepted = true;
+                if (response) finish(null, response);
+                else if (!idle) arm(opts.timeoutMs);
+            }).catch(error => { if (!closed) fail('TRANSPORT', String(error && error.message || error)); });
+        });
+    }
+
 }
 
 /**

@@ -2,9 +2,10 @@
 
 const mgu = require('./kit/mgu');
 const A = require('./logic');
+const QR = require('./qr_log');
 const { SafeDiag } = require('./safe_diag');
 const { AmbientProfiles, MODES, modeFromSignal } = require('./ambient_profiles');
-const { TABS, COLOR, FAVORITES, DRIVE_MODES, DIAGNOSTICS, PICKER, TRACK, SLIDERS,
+const { TABS, COLOR, FAVORITES, DRIVE_MODES, DIAGNOSTICS, LOG, PICKER, TRACK, SLIDERS,
     drawPage, valueEditor } = require('./hmi');
 
 const OFF = A.COLORS.length - 1;
@@ -19,7 +20,8 @@ mgu.run({
         const profiles = new AmbientProfiles(settings);
         let tab = COLOR, favoriteSelected = 0, modeSelected = 0;
         let driveMode = null, colorNotice = '', favoriteNotice = '', modeNotice = '';
-        let showingPlan = false, plan = null;
+        let diagnosticView = 'overview', diagnosticPage = 0, diagnosticRaw = false, guidedResult = false, plan = null;
+        let logExport = null, exportError = '', logTouch = null, scrollDelta = 0;
         let touchedSlider = null, lastDragUpdate = 0, editRevision = 0;
         let fallbackControls = [], fallbackFocus = null, fallbackEditor = null;
 
@@ -50,6 +52,8 @@ mgu.run({
             fallbackFocus = null;
             fallbackControls = [];
             tab = index;
+            logTouch = null;
+            scrollDelta = 0;
         };
         settings.onChange(resetConfirmation);
         if (settings.get('colorMode') === 'saved') settings.set('colorMode', 'preset');
@@ -131,7 +135,27 @@ mgu.run({
         if (typeof ctx.hideButton === 'function') {
             ['BTN_PAGE', 'BTN_PREV', 'BTN_NEXT', 'BTN_ACTION'].forEach(id => ctx.hideButton(id));
         }
+        const scrollAvailable = typeof ctx.onScroll === 'function';
+        if (scrollAvailable) ctx.onScroll(dy => {
+            if (tab !== LOG || logExport || !Number.isFinite(dy)) return false;
+            scrollDelta += dy;
+            const rows = Math.trunc(scrollDelta / 22);
+            if (!rows) return true;
+            scrollDelta -= rows * 22;
+            return ctl.log.move(rows);
+        });
         if (typeof ctx.onTouch === 'function') ctx.onTouch((phase, x, y) => {
+            if (tab === LOG && !logExport) {
+                if (!scrollAvailable) {
+                    if (phase === 1) logTouch = x >= 49 && x <= 1540 && y >= 174 && y <= 475 ? y : null;
+                    if (phase === 3 && logTouch !== null) {
+                        const delta = logTouch - y;
+                        if (Math.abs(delta) > 18) ctl.log.move(Math.round(delta / 22));
+                        logTouch = null;
+                    }
+                }
+                return;
+            }
             if (tab !== COLOR || fallbackEditor || !Number.isFinite(x) || !Number.isFinite(y)) {
                 touchedSlider = null;
                 return;
@@ -241,16 +265,39 @@ mgu.run({
             },
         });
         const diagnosticsModel = () => ({
-            diag: ctl,
-            showingPlan,
-            plan,
-            readRam: () => ctl.readRam(),
-            readBdc: () => ctl.readBdc(),
-            togglePlan() { showingPlan = !showingPlan; },
+            diag: ctl, view: diagnosticView, page: diagnosticPage, raw: diagnosticRaw, guidedResult, plan,
+            select(view, result = false) {
+                diagnosticView = view; diagnosticPage = 0; diagnosticRaw = false; guidedResult = result;
+            },
+            setPage(page) { diagnosticPage = page; },
+            toggleRaw() { diagnosticRaw = !diagnosticRaw; diagnosticPage = 0; },
             currentPlan() { plan = A.slot11Plan(selected().rgb); },
             factoryPlan() { plan = A.slot11RestorePlan(); },
         });
-        const models = [colorModel, favoritesModel, modesModel, diagnosticsModel];
+        const openExport = format => {
+            try {
+                const report = QR.createReport(ctl.report(ctx.spec ? ctx.spec.version : '0.4.4'), format);
+                logExport = Object.assign(report, {page: 0, matrix: QR.matrix(report.pages[0])});
+                exportError = '';
+            } catch (error) {
+                logExport = null;
+                exportError = 'QR export unavailable';
+                ctl.log.add('QR ERROR', exportError, 'warning');
+            }
+        };
+        const logModel = () => ({
+            log: ctl.log, export: logExport, error: exportError, openExport,
+            closeExport() { logExport = null; },
+            clear() { ctl.log.clear(); exportError = ''; },
+            qrPage(delta) {
+                if (!logExport) return;
+                const page = Math.max(0, Math.min(logExport.pages.length - 1, logExport.page + delta));
+                if (page === logExport.page) return;
+                logExport.matrix = QR.matrix(logExport.pages[page]);
+                logExport.page = page;
+            },
+        });
+        const models = [colorModel, favoritesModel, modesModel, diagnosticsModel, logModel];
 
         ctx.loop('MAIN', 8, () => {
             const t = ctx.theme(), cv = ctx.canvas(1600, 520).clear(t.bg);

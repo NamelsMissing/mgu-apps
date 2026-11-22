@@ -2,9 +2,10 @@
 
 const G = require('./kit/gauges');
 const A = require('./logic');
+const {drawDiagnostics, drawLog} = require('./diag_view');
 
-const TABS = ['Color', 'Favorites', 'Drive modes', 'Diagnostics'];
-const COLOR = 0, FAVORITES = 1, DRIVE_MODES = 2, DIAGNOSTICS = 3;
+const TABS = ['Color', 'Favorites', 'Drive modes', 'Diagnostics', 'Log'];
+const COLOR = 0, FAVORITES = 1, DRIVE_MODES = 2, DIAGNOSTICS = 3, LOG = 4;
 const PICKER = { x: 56, y: 168, w: 632, h: 124 };
 const TRACK = { x: 155, w: 445 };
 const SLIDERS = [
@@ -135,42 +136,6 @@ function drawModes(cv, t, m, control) {
     text(cv, 'Follows the vehicle mode in the editor.', 797, 472, 21, t.dim);
 }
 
-function drawDiagnostics(cv, t, m, control) {
-    const { diag, showingPlan, plan } = m;
-    G.panel(cv, t, 24, 62, 761, 445, 'RAM01 diagnostics');
-    text(cv, diag.online ? 'TASU connected' : 'TASU unavailable', 54, 139, 24, diag.online ? t.accent : t.warn);
-    status(cv, '0x37 · 22 F150 · ' + diag.ramStatus, 54, 188, 690, t.text);
-    text(cv, 'Vehicle speed · ' + (diag.speedFresh ? diag.speed.toFixed(1) + ' km/h' : 'unavailable or stale'), 54, 255, 23, t.text);
-    text(cv, 'Last RAM result · 2E E311', 54, 309, 22, t.dim);
-    status(cv, diag.lastWrite ? diag.lastWrite.text : 'No write requested', 54, 343, 690,
-        diag.lastWrite && !diag.lastWrite.acknowledged ? t.warn : t.text);
-    button(cv, t, 54, 415, 294, 50, 'Read RAM identity', false);
-    control(54, 415, 294, 50, 'read-ram', m.readRam);
-
-    G.panel(cv, t, 805, 62, 771, 445, showingPlan ? 'Menu position 11 · offline' : 'BDC diagnostics');
-    if (showingPlan) {
-        const planText = plan && plan.codingReady === false
-            ? 'Current profile ' + plan.oldProfile.join(' / ') + ' · requested #' + rgbHex(plan.desiredRGB) + ' · mapping unverified'
-            : plan ? 'Factory profile ' + plan.profile.join(' / ') + ' · Lilac #' + rgbHex(plan.factoryLilacRGB)
-                : 'Select a plan for existing iDrive color position 11.';
-        status(cv, planText, 835, 148, 690, t.text);
-        button(cv, t, 835, 233, 325, 49, 'Use current color', false);
-        control(835, 233, 325, 49, 'current-plan', m.currentPlan);
-        button(cv, t, 1174, 233, 342, 49, 'Factory values', false);
-        control(1174, 233, 342, 49, 'factory-plan', m.factoryPlan);
-        text(cv, 'Read-only preview', 835, 345, 21, t.dim);
-    } else {
-        status(cv, '0x40 · 22 DA5F · ' + diag.bdcStatus[0], 835, 148, 690, t.text);
-        status(cv, '0x40 · 22 E3D1 · ' + diag.bdcStatus[1], 835, 227, 690, t.text);
-        status(cv, diag.bdcComparison || 'Read both LIN buses to capture a reference.', 835, 296, 690, t.text);
-        text(cv, 'Change color in the BMW menu, then read BDC again.', 835, 372, 21, t.dim);
-        button(cv, t, 835, 415, 273, 50, 'Read BDC status', false);
-        control(835, 415, 273, 50, 'read-bdc', m.readBdc);
-    }
-    button(cv, t, 1186, 415, 330, 50, showingPlan ? 'Back to BDC' : 'Menu 11 plan', false);
-    control(1186, 415, 330, 50, 'menu-plan', m.togglePlan);
-}
-
 function valueEditor(spec, value, commit) {
     let draft = value;
     return {
@@ -208,7 +173,7 @@ function valueEditor(spec, value, commit) {
 
 function drawPage(cv, t, tab, model, control) {
     G.frame(cv, t, TABS, tab, []);
-    [drawColor, drawFavorites, drawModes, drawDiagnostics][tab](cv, t, model, control);
+    [drawColor, drawFavorites, drawModes, drawDiagnostics, drawLog][tab](cv, t, model, control);
 }
 
-module.exports = { TABS, COLOR, FAVORITES, DRIVE_MODES, DIAGNOSTICS, PICKER, TRACK, SLIDERS, drawPage, valueEditor };
+module.exports = { TABS, COLOR, FAVORITES, DRIVE_MODES, DIAGNOSTICS, LOG, PICKER, TRACK, SLIDERS, drawPage, valueEditor };

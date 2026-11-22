@@ -1,23 +1,39 @@
-# G21 Ambient Lighting 0.4.3
+# G21 Ambient Lighting 0.4.4
 
-An iDrive 7 MGU app with a single RGB color and brightness control, six favorites, driving-mode previews, and vehicle diagnostics.
+iDrive 7 MGU app with one RGB color and brightness control, six favorites, driving-mode previews, and vehicle diagnostics. The native Settings tab includes the duration of the temporary RAM01 test.
 
 ## Color and saved looks
 
-- **Color** offers direct presets, a touch palette and four sliders. Select the number beside a slider to adjust its exact value with the iDrive controller. Turn to adjust, press to save or tilt left to cancel.
-- **RAM test** sends one temporary request for all RAM01 ambient modules after two deliberate presses while the car is stationary. The first press checks the RAM identity and starts an eight-second confirmation window. The duration is set in Settings. Check the interior lights for the result.
-- **Favorites** retain RGB and brightness from earlier versions. **Drive modes** can save a look for Sport, Comfort, Eco or Adaptive. Following the vehicle mode updates the editor only.
+**Color** offers direct presets, a touch palette, and sliders for RGB and brightness. Select a number beside a slider to adjust it exactly. Turn the iDrive controller to adjust, press to save, or tilt left to cancel. Saved **Favorites** retain their RGB and brightness across updates. **Drive modes** can save or load a look for Sport, Comfort, Eco, or Adaptive. Following the vehicle mode updates the editor only.
 
-With renderer touch routing, use the on-screen tabs and controls. In the native HMI fallback, **Next page** cycles tabs. **Previous** and **Next** move the outline, **Select** activates the outlined control, and **Settings** opens the app settings. While editing a number, Previous and Next adjust it and Select saves it.
+**Apply temporary color** uses the existing experimental RAM01 command with all-module ID 0. It requires a fresh standstill signal, the expected RAM01 identity, and a second press within eight seconds. The final diagnostic result appears under **Diagnostics → RAM01**. An acknowledgment records ECU acceptance. A vehicle observation is required to confirm a visible effect.
+
+The native HMI fallback uses **Next page**, **Previous**, **Next**, **Select**, and **Settings**. Move the outline with Previous/Next and select the outlined control. During numeric editing those buttons adjust the value.
 
 ## Diagnostics
 
-**READ RAM IDENTITY** checks RAM01 at address `0x37` with `22 F150`. The last result of the temporary test (`2E E311`) stays visible when the identity is refreshed. `6E E3 11` means the ECU acknowledged the request. `7F 2E 31` means the ECU rejected it as out of range.
+- **Overview → Start Diagnostics** runs the supported read-only sequence: RAM01 identity at `0x37` with `22 F150`, then BDC at `0x40` with `22 DA5F` and `22 E3D1`. The progress line shows the current step and Cancel stops the sequence.
+- **RAM01** displays the latest identity request and reply, timing, NRC, last positive reply, and complete details of the latest manual `2E E311` attempt. `7F 2E 31` means Request Out Of Range. The rejected request alone leaves the exact unsupported field or variant unresolved.
+- **LIN 1 / LIN 2** show the respective request, timing, response status, raw response pages, a paginated record table, and the latest successfully decoded sample. The documented BDC_G05 format contains 26 ten-byte records and one addressing-method byte. Fields with an unverified interpretation are shown raw. Older values are marked stale when access is lost or newer data cannot be decoded.
+- **Compare → Capture Reference** reads and saves both buses. Change the color manually in the original BMW menu, let the lights settle, and select **Compare**. Compare matches the bus and NAD, records changes to RGBW and brightness, and identifies missing, added, replaced, invalid, or duplicate records.
+- **Guided test** walks through baseline, BMW menu change, control measurement, and visual check. Yes/No/Not checked records your observation of the BMW-menu change. The observation belongs to that test and stays separate from the experimental RAM01 write result.
+- **Menu 11 plan** continues to show a read-only, offline preview of the desired or factory values for iDrive color 11.
 
-**READ BDC STATUS** sends read-only queries for `DA5F` and `E3D1` to `0x40`. The app retries each busy response (`7F 22 21`) once and displays the final reply status. A positive reply establishes diagnostic access to that data identifier. The BDC queries have no effect on the lights.
+## Live Log and QR export
 
-When both replies hold 261 data bytes, the app can compare the BDC_G05 LIN records. Read once, change the ambient color in the BMW menu, let the lights settle, then read again. The summary counts matching LIN records whose reported RGBW or brightness bytes changed. Check whether the physical retrofit lights followed the same menu change.
+The **Log** tab shows 13 chronological lines and the current range. Swipe or use **OLDER**, **NEWER**, and **LATEST**. With the renderer, the iDrive controller can focus the console and scroll by turning the knob. The log follows new entries at the end and preserves the view while you read older entries. **Clear Log** clears the in-app buffer only. The buffer holds up to 640 events or 96 KiB of messages, with an eviction count.
 
-**Menu 11 plan** in Diagnostics previews the requested color or factory values for existing iDrive color position 11. Both previews are offline.
+**Export Log** freezes a diagnostic report for scanning. Choose **Export text** for a readable report or **Export JSON** for structured records. Scan each numbered QR page and copy each full scan, including its header, to a text file. Pages may be out of order. Both formats are generated locally and can be reconstructed offline:
 
-The 2019 G21 in issue 8 identified RAM01 but reported a failed write and busy responses from both BDC queries. Compatibility with the retrofitted door and console LEDs and the illuminated grille remains unverified. Their wiring determines which controller can change them. [Issue 8](https://github.com/NamelsMissing/mgu-apps/issues/8)
+```sh
+python3 tools/ambient_qr_reassemble.py scans.txt -o ambient-report.txt
+python3 tools/ambient_qr_reassemble.py scans-json.txt -o ambient-report.json
+```
+
+The report contains allowlisted diagnostic requests and replies, timings, comparisons, and the retained log. It excludes application settings and the general SDK logfile. A reconstruction checks the page count and report hash.
+
+## Vehicle verification
+
+On the reported G21, RAM01 identity `0F 25 90` was returned and the attempted color write produced `7F 2E 31`. In a separate reported run, both BDC reads returned the expected 261 data bytes. Which controller drives the retrofitted cabin LEDs or illuminated grille still needs vehicle evidence. [Issue 8](https://github.com/NamelsMissing/mgu-apps/issues/8)
+
+See the [technical verification report](../../docs/g21-ambient-diagnostics-0.4.4.md) and [changelog](CHANGELOG.md).
