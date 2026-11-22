@@ -3,6 +3,7 @@
 const {Diag, hex, NRC, replyTo} = require('./kit/diag');
 const {ECU, DID, PROBE_DID, fromPreset} = require('./logic');
 const {BUSES, decode, compare} = require('./lin');
+const {encodeBdc, discoveredTargets, accepted} = require('./bdc_control');
 const {SessionLog} = require('./session_log');
 
 const BDC = 0x40;
@@ -51,6 +52,11 @@ class SafeDiag {
         this.nextSession = 0;
         this.operation = null;
         this.pending = null;
+        this.bdcPending = null;
+        this.bdcSelection = null;
+        this.bdcRejected = new Set();
+        this.lastBdcWrite = null;
+        this.lastBdcWriteAt = null;
         this.lastWrite = null;
         this.lastWriteAt = null;
         this.lastError = null;
@@ -80,6 +86,8 @@ class SafeDiag {
         this.log.add('TASU DISCONNECTED', '', 'warning');
         this.connectionRevision++;
         this.readAt = null;
+        this.bdcSelection = null;
+        this.bdcRejected.clear();
         this.cancel();
         this.abort('TASU disconnected');
     }
@@ -115,7 +123,99 @@ class SafeDiag {
         this.speedRevision = valid ? this.connectionRevision : null;
         if (!this.parked) this.cancel();
     }
-    cancel() { this.pending = null; }
+    cancel() { this.pending = null; this.bdcPending = null; }
+    get bdcTargets() {
+        const w = this.wizard;
+        if (!this.online || w.step !== 4 || w.physical !== 'Yes' ||
+            !w.comparison || !this.fresh(w.comparison) ||
+            !recent(w.observedAt, REPORT_FRESH_MS)) return [];
+        return discoveredTargets(w.comparison.rows);
+    }
+    selectBdcTarget(bus, nad) {
+        const found = this.bdcTargets.find(target => target.bus === bus && target.nad === nad);
+        this.cancel();
+        if (!found) {
+            this.info = 'Target not proven. Run guided BMW-menu comparison first.';
+            return false;
+        }
+        this.bdcSelection = {bus: found.bus, nad: found.nad, revision: this.connectionRevision};
+        this.info = 'BDC LIN ' + bus + ' NAD ' + nad + ' selected for a short, confirmed test.';
+        this.log.add('BDC TARGET', this.info);
+        return true;
+    }
+    nextBdcTarget(delta) {
+        const options = this.bdcTargets;
+        if (!options.length) { this.info = 'No changed LIN target was verified.'; return false; }
+        const index = options.findIndex(x => this.bdcSelection &&
+            x.bus === this.bdcSelection.bus && x.nad === this.bdcSelection.nad);
+        const target = options[(index < 0 ? 0 : (index + delta + options.length) % options.length)];
+        return this.selectBdcTarget(target.bus, target.nad);
+    }
+    get bdcConfirming() {
+        return !!this.bdcPending && !this.bdcWriteReady && Date.now() < this.bdcPending.until;
+    }
+    get bdcWriteReady() {
+        if (!this.online) return 'TASU unavailable';
+        if (!this.parked) return 'Vehicle standstill not confirmed';
+        if (this.busy) return 'Diagnostics busy';
+        const sel = this.bdcSelection;
+        if (!sel || sel.revision !== this.connectionRevision ||
+            !this.bdcTargets.some(t => t.bus === sel.bus && t.nad === sel.nad))
+            return 'No verified LIN target. Use Diagnostics > Guided test, then BDC test.';
+        if (this.bdcRejected.has(sel.bus + ':' + sel.nad)) return 'Target rejected the write (NRC 31). Test blocked.';
+        if (this.lastBdcWriteAt !== null && Date.now() - this.lastBdcWriteAt < 3000)
+            return 'Wait 3 seconds after the last request';
+        if (Date.now() < (this.quietUntil.get(BDC) || 0)) return 'Waiting for late BDC replies';
+        return '';
+    }
+    async applyBdc(color, brightness, seconds, isCurrent) {
+        if (!this.bdcSelection && this.bdcTargets.length === 1) {
+            const target = this.bdcTargets[0];
+            this.selectBdcTarget(target.bus, target.nad);
+        }
+        const blocked = this.bdcWriteReady;
+        if (blocked) { this.cancel(); this.info = blocked; this.log.add('BDC TEST BLOCKED', blocked, 'warning'); return; }
+        if (!isCurrent()) { this.cancel(); return; }
+        const target = this.bdcSelection;
+        let data;
+        try { data = encodeBdc(target.bus, target.nad, color, brightness, seconds); }
+        catch (error) { this.cancel(); this.info = error.message; return; }
+        const signature = target.bus + ':' + bytes(data);
+        if (!this.bdcPending || this.bdcPending.signature !== signature ||
+            Date.now() >= this.bdcPending.until) {
+            this.cancel();
+            this.bdcPending = {signature, until: Date.now() + 8000};
+            this.info = 'Press APPLY again in 8 s to test BDC LIN ' +
+                target.bus + ' NAD ' + target.nad + ' for ' + seconds + ' s.';
+            this.log.add('BDC TEST ARMED', 'Manual confirmation required · ' + signature);
+            return;
+        }
+        this.bdcPending = null;
+        this.lastBdcWriteAt = Date.now();
+        await this.run('BDC LIN single-target color test', async op => {
+            const rec = await this.request(op, BDC, 0x2E, data,
+                'BDC LIN ' + target.bus + ' NAD ' + target.nad);
+            rec.bus = target.bus;
+            rec.nad = target.nad;
+            rec.parameters = {on: data[3], brightness: data[4], rgb: data.slice(5, 8), seconds: data[8]};
+            rec.acknowledged = accepted(rec, target.bus);
+            rec.physical = 'Not checked';
+            if (rec.nrc === 0x31) this.bdcRejected.add(target.bus + ':' + target.nad);
+            rec.text = rec.acknowledged ? 'BDC accepted command; actual light effect unverified.' :
+                rec.status === STATUS.success ? 'Invalid BDC write acknowledgment' : describe(rec);
+            this.lastBdcWrite = rec;
+            this.info = rec.text;
+            this.log.add('BDC WRITE', 'LIN ' + target.bus + ' NAD ' + target.nad +
+                ' · ' + rec.text, rec.acknowledged ? 'success' : 'warning');
+            return rec.status === STATUS.success && !rec.acknowledged ? STATUS.invalid : rec.status;
+        });
+    }
+    markBdcPhysical(answer) {
+        if (!this.lastBdcWrite || !this.lastBdcWrite.acknowledged ||
+            !['Yes', 'No', 'Not checked'].includes(answer)) return;
+        this.lastBdcWrite.physical = answer;
+        this.log.add('BDC PHYSICAL', 'Observed physical effect: ' + answer);
+    }
     abort(reason = 'Cancelled by operator') {
         this.cancel();
         const op = this.operation;
@@ -275,14 +375,14 @@ class SafeDiag {
     startDiagnostics(wizard = false) {
         return this.run(wizard ? 'Guided test · baseline' : 'Read-only diagnostics', async op => {
             if (wizard) this.wizard = {step: 1, physical: 'Not checked'};
-            const ram = await this.probeRam(op);
+            // RAM01 is not required for BDC LIN diagnostics.
             const bdc = await this.sampleBdc(op);
             if (wizard && !op.cancelled && this.saveReference(bdc.snapshot)) {
                 this.wizard.step = 2;
                 this.wizard.reference = this.reference;
                 this.log.add('GUIDED TEST', 'Change color in the original BMW menu.');
             }
-            return bdc.status === STATUS.success ? ram : bdc.status;
+            return bdc.status;
         });
     }
     compareReference(guided = false) {
@@ -376,7 +476,9 @@ class SafeDiag {
             ram: this.ram, ramIdentity: this.identity, ramIdentityAt: this.identityAt,
             bdc: this.bdc, reference: this.reference, comparison: this.comparison,
             comparisonAttempt: this.comparisonAttempt,
-            lastWrite: this.lastWrite, lastError: this.lastError, lastSuccess: this.lastSuccess,
+            lastWrite: this.lastWrite, lastBdcWrite: this.lastBdcWrite,
+            bdcSelection: this.bdcSelection, bdcTargets: this.bdcTargets,
+            lastError: this.lastError, lastSuccess: this.lastSuccess,
             visual: {step: this.wizard.step, result: this.wizard.physical,
                 referenceAt: this.wizard.reference && this.wizard.reference.at, observedAt: this.wizard.observedAt,
                 comparison: this.wizard.comparison},
