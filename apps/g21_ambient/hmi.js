@@ -79,8 +79,10 @@ function drawColor(cv, t, m, control) {
     text(cv, color.name, 778, 294, 35, t.text, { font: 'bold' });
     text(cv, '#' + rgbHex(color.rgb), 1538, 294, 32, t.text, { align: 'right', font: 'num' });
     text(cv, 'BDC LIN test · ' + duration + ' s', 778, 340, 23, t.dim);
-    button(cv, t, 778, 369, 368, 52, confirming ? 'Confirm BDC test' : !configured || !ready ? 'Set up BDC test' : 'Apply BDC test', online && !busy);
+    button(cv, t, 778, 369, 368, 52, confirming ? 'Confirm BDC test' : !configured || !ready ? 'Set up RGB test' : 'Test RGB (BDC)', online && !busy);
     control(778, 369, 368, 52, 'apply', m.apply);
+    button(cv, t, 1160, 369, 365, 52, 'BMW original colors', true);
+    control(1160, 369, 365, 52, 'bmw-colors', m.openBmwSlots);
     status(cv, notice, 778, 456, 753, online ? t.text : t.dim);
 }
 
