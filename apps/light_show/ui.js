@@ -7,14 +7,18 @@ const Car3D = require('./car3d');
 const { FILTERS } = require('./lists');
 
 const W = 1600, H = 520;
-const TABS = ['Show', 'Lights', 'Vehicle', 'Phone'];
-const PAGE = { SHOW: 0, LIGHTS: 1, VEHICLE: 2, PHONE: 3 };
+const TABS = ['Show', 'Lights', 'Vehicle', 'Phone', 'Diagnostics'];
+const PAGE = { SHOW: 0, LIGHTS: 1, VEHICLE: 2, PHONE: 3, DIAGNOSTICS: 4 };
 const TOP = 52, EDGE = 24, FOOT_Y = 452, FOOT_H = 52;
 const LIGHT_PANEL_WIDTH = 520, VEHICLE_LEFT_WIDTH = 760;
 const LIGHTS_BOX = Object.freeze({ id: 'light-show-lights', x: EDGE, y: TOP + 54,
     w: W - 2 * EDGE - LIGHT_PANEL_WIDTH - 16, h: FOOT_Y - TOP - 62, columns: 2, columnGap: 12, rowHeight: 60, rowGap: 8 });
 const UNITS_BOX = Object.freeze({ id: 'light-show-units', x: EDGE + VEHICLE_LEFT_WIDTH + 16 + 24, y: TOP + 46,
     w: W - 2 * EDGE - VEHICLE_LEFT_WIDTH - 16 - 48, h: 206, columns: 2, columnGap: 16, rowHeight: 36, rowGap: 4 });
+const DIAG_BOX = Object.freeze({ id: 'light-show-diagnostics', x: EDGE, y: TOP + 26,
+    w: W - 2 * EDGE, h: FOOT_Y - TOP - 36, columns: 1, columnGap: 0, rowHeight: 24, rowGap: 2 });
+const recoveryStatus = (r) => r.recoveryPending || r.state === 'ERROR' || r.state === 'STOPPING';
+const statusLabel = (r) => r.state === 'IDLE' ? 'READY' : r.state;
 const TEST_LABEL = { visible: 'Visible', untested: 'Not tested', 'not-visible': 'No visible effect', noise: 'Noise' };
 
 const FOLD = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss', '–': '-', '—': '-', '…': '...' };
@@ -135,8 +139,8 @@ function makeUi(G, colors) {
         if (m.commOff) chip(cv, carBox.x + 22, carBox.y + carBox.h - 56, 'Test: headlamps silenced', t.warn, 12);
         car(cv, t, carBox, m, m.carLamps, { top: 46 });
         label(cv, r.busy ? r.title : 'Light Show', carBox.x + 22, carBox.y + 36, 22, t.text, carBox.w - 200, { font: 'bold' });
-        chip(cv, carBox.x + carBox.w - 150, carBox.y + 16, r.busy ? (r.state === 'RUNNING' ? 'Playing' : 'Working') : m.allowed ? 'Ready' : 'Locked',
-            r.busy ? (t.accent2 || t.accent) : m.allowed ? (t.ok || t.accent) : t.crit);
+        chip(cv, carBox.x + carBox.w - 250, carBox.y + 16, recoveryStatus(r) || m.allowed ? statusLabel(r) : 'LOCKED',
+            recoveryStatus(r) || !m.allowed ? t.crit : t.ok || t.accent);
         if (r.progress) {
             const p = r.progress, bw = carBox.w - 44;
             cv.roundRect(carBox.x + 22, carBox.y + carBox.h - 22, bw, 6, 3, withAlpha('#ffffff', 0.12));
@@ -166,11 +170,12 @@ function makeUi(G, colors) {
             : pl && pl.error ? pl.error
             : pl ? sel + ' lights, ' + pl.steps.length * (pl.cycles || 1) + ' steps, about ' + Math.max(1, Math.round(pl.estimateMs / 1000)) + ' s. ' + (pl.notes[0] || '') : '';
         paragraph(cv, info, x0 + 2, iy, 16, pl && pl.error ? t.warn : t.dim, w - 4, 2);
-        const hint = !m.allowed ? m.lockText : r.recoveryPending && !r.busy ? 'A previous run is not released yet: press STOP.' : r.note;
+        const hint = recoveryStatus(r) ? r.note : !m.allowed ? m.lockText : r.note;
         footer(cv, t, hint, !m.allowed || r.state === 'ERROR' ? t.crit : null, [
+            recoveryStatus(r) ? { text: 'Diagnostics', w: 205, key: 'DIAG_SHOW', run: a.diagnostics } : null,
             sel ? { text: 'Clear lights', w: 185, key: 'CLEAR_LIGHTS', run: a.clearSelection, off: r.busy } : null,
             { text: 'Stop', w: 200, key: 'STOP', run: a.stop, color: t.crit, off: !r.busy && !r.recoveryPending },
-            { text: r.busy ? 'Playing...' : 'Start show', w: 260, key: 'START', run: a.start, primary: true,
+            { text: r.state === 'RUNNING' ? 'Playing...' : 'Start show', w: 260, key: 'START', run: a.start, primary: true,
                 off: r.busy || !m.allowed || !pl || !!pl.error || r.recoveryPending },
         ]);
     }
@@ -246,8 +251,9 @@ function makeUi(G, colors) {
             button(cv, t, px + bw + 12, TOP + 350, bw, 46, inShow ? 'Remove' : 'Add to show', () => a.toggle(l.id), 'TOGGLE', { off: (!l.available || l.status !== 'visible') && !inShow, size: 15, on: inShow });
             button(cv, t, px + 2 * (bw + 12), TOP + 350, bw, 46, 'Rename', () => a.rename(l.id), 'RENAME', { size: 16 });
         }
-        footer(cv, t, !m.allowed ? m.lockText : m.notice || 'Test while parked in P. Keep the area in front of the car clear.',
+        footer(cv, t, recoveryStatus(m.runner) ? m.runner.note : !m.allowed ? m.lockText : m.notice || 'Test while parked in P. Keep the area in front of the car clear.',
             !m.allowed ? t.crit : null, [
+                recoveryStatus(m.runner) ? { text: 'Diagnostics', w: 205, key: 'DIAG_LIGHTS', run: a.diagnostics } : null,
                 { text: 'Stop', w: 150, key: 'STOP_L', run: a.stop, color: t.crit, off: !m.runner.busy && !m.runner.recoveryPending },
             ]);
     }
@@ -303,9 +309,9 @@ function makeUi(G, colors) {
             { on: m.commOff, size: 15, color: m.commOff ? t.warn : null, off: m.runner.busy });
         paragraph(cv, 'Test option (like BimmerLight, 28 02 01): during a show the headlamp modules ignore the car\'s own light requests; normal communication returns at the end. SUPPORTED = tested in a car, FROM BMW DATA = from the BMW PRG.',
             rx + 24, TOP + 330, 13.5, t.dim, rw - 48, 3);
-        footer(cv, t, m.notice || (m.recoveryUnreadable ? 'Recovery file unreadable: check every normal light with the car\'s own switches, then confirm.' : m.runner.state === 'SCANNING' ? m.runner.note : 'Park in P to scan. The scan only reads identities and vehicle order.'),
-            m.recoveryUnreadable ? t.crit : null, [
-                m.recoveryUnreadable ? { text: 'Lights checked', w: 230, key: 'ACK', run: a.acknowledge, color: t.warn } : null,
+        footer(cv, t, recoveryStatus(m.runner) ? m.runner.note : m.notice || (m.runner.state === 'SCANNING' ? m.runner.note : 'Park in P to scan. The scan only reads identities and vehicle order.'),
+            recoveryStatus(m.runner) ? t.crit : null, [
+                { text: 'Diagnostics', w: 205, key: 'DIAG_VEHICLE', run: a.diagnostics },
                 { text: m.runner.state === 'SCANNING' ? 'Scanning...' : p ? 'Scan again' : 'Scan vehicle', w: 240, key: 'SCAN', run: a.scan, primary: true, off: m.runner.busy || m.runner.recoveryPending || !m.allowed },
             ]);
     }
@@ -345,19 +351,32 @@ function makeUi(G, colors) {
         paragraph(cv, 'The phone page shows the same lights, tests and effects as this screen, with a 3D car you can turn. ' +
             'Every command still needs P and standstill. The code changes with every start of the app.', x + 26, TOP + 300, 16, t.dim, w - 52, 3);
         label(cv, ph.link || '', x + 26, TOP + 376, 14, withAlpha(t.dim, 0.8), w - 52);
-        footer(cv, t, m.notice || 'No Internet needed: the phone talks to the head unit over the car Wi-Fi.', null, [
+        footer(cv, t, recoveryStatus(m.runner) ? m.runner.note : m.notice || 'No Internet needed: the phone talks to the head unit over the car Wi-Fi.', null, [
             { text: 'Stop', w: 150, key: 'STOP_P', run: a.stop, color: t.crit, off: !m.runner.busy && !m.runner.recoveryPending },
+        ]);
+    }
+
+    function drawDiagnostics(cv, t, m, a) {
+        const r = m.runner;
+        label(cv, statusLabel(r), EDGE, TOP + 15, 17, recoveryStatus(r) ? t.crit : t.text, DIAG_BOX.w, { font: 'bold' });
+        drawList(cv, t, m.diagScroll, (i, x, y, w) => {
+            label(cv, m.diagnosticLines[i], x + 4, y + 18, 16, t.text, w - 10);
+        });
+        footer(cv, t, m.notice || 'Swipe or focus the scroll bar to read the report.', null, [
+            { text: 'Export report', w: 240, key: 'EXPORT_DIAG', run: a.exportDiagnostics },
+            { text: 'Stop', w: 150, key: 'STOP_D', run: a.stop, color: t.crit, off: !r.busy && !r.recoveryPending },
         ]);
     }
 
     function draw(cv, t, m, a) {
         cv.clear(t.bg);
         const badge = m.allowed ? { text: 'PARKED', color: t.ok || t.accent } : { text: m.lock === 'moving' ? 'NOT IN P' : 'LOCKED', color: t.crit };
-        const badges = [m.runner.busy ? { text: m.runner.state === 'RUNNING' ? 'SHOW RUNNING' : m.runner.state, color: t.accent2 || t.accent } : null,
-            m.phone.connected ? { text: 'PHONE', color: t.accent2 || t.accent } : null, badge];
+        const badges = [recoveryStatus(m.runner) ? { text: statusLabel(m.runner), color: t.crit } : m.runner.busy ? { text: m.runner.state === 'RUNNING' ? 'SHOW RUNNING' : m.runner.state, color: t.accent2 || t.accent } : null,
+            m.phone.connected ? { text: 'PHONE', color: t.accent2 || t.accent } : null, recoveryStatus(m.runner) ? null : badge];
         G.frame(cv, t, TABS, m.page, badges);
         if (m.page === PAGE.LIGHTS) drawLights(cv, t, m, a);
         else if (m.page === PAGE.VEHICLE) drawVehicle(cv, t, m, a);
+        else if (m.page === PAGE.DIAGNOSTICS) drawDiagnostics(cv, t, m, a);
         else if (m.page === PAGE.PHONE) drawPhone(cv, t, m, a);
         else drawShow(cv, t, m, a);
         if (!cv.own && m.nativeFocus) {
@@ -377,4 +396,4 @@ function makeUi(G, colors) {
     return { draw, fit };
 }
 
-module.exports = { makeUi, ascii, TABS, PAGE, LIGHTS_BOX, UNITS_BOX, W, H };
+module.exports = { makeUi, ascii, TABS, PAGE, LIGHTS_BOX, UNITS_BOX, DIAG_BOX, W, H };

@@ -111,6 +111,14 @@ class WebServer {
         this.lastSeen = Date.now();
         if (req.method === 'GET' && q.pathname === '/') return reply(res, 200, page, 'text/html; charset=utf-8');
         if (req.method === 'GET' && q.pathname === '/api/state') return this.answer(res, () => this.actions.state());
+        if (req.method === 'GET' && q.pathname === '/api/diagnostics' && typeof this.actions.diagnostics === 'function') {
+            const result = this.actions.diagnostics();
+            if (q.searchParams.get('download') === '1') {
+                res.setHeader('Content-Disposition', 'attachment; filename="light-show-diagnostics.txt"');
+                return reply(res, 200, result.text, 'text/plain; charset=utf-8');
+            }
+            return json(res, 200, result);
+        }
         const routes = { '/api/show': 'show', '/api/save': 'save', '/api/test': 'test', '/api/toggle': 'toggle', '/api/observe': 'observe',
             '/api/name': 'name', '/api/stop': 'stop', '/api/scan': 'scan', '/api/experimental': 'experimental', '/api/commoff': 'commoff' };
         const action = routes[q.pathname];

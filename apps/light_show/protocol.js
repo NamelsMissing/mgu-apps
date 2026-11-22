@@ -5,6 +5,7 @@ const DiagnosticOutputs = require('./diagnostic-outputs');
 // RCTECU telegrams and the timed SG_FUNKTIONEN requests were captured from
 // original PRG bytecode against a recording-only interface. This verifies
 // encoding, not physical lamp operation. See protocol-evidence.json.
+const MAX_TIMED_MS = 2000;
 const ADDRESS = 0x40;
 const INDEX = '0F2680';
 const DID = [0xE3, 0xB5];
@@ -84,7 +85,7 @@ function settings(get) {
 }
 function timedControl(lights, durationMs) {
     if (!Object.prototype.hasOwnProperty.call(FUNCTIONS, lights) || !Number.isInteger(durationMs)
-        || durationMs < 0 || durationMs > 2000 || durationMs % 10) throw new Error('Invalid timed light function');
+        || durationMs < 0 || durationMs > MAX_TIMED_MS || durationMs % 10) throw new Error('Invalid timed light function');
     const ticks = durationMs / 10;
     // ARG_0xD542_D: ELEMENT s16 high byte first, ZEIT s16 = seconds * 100.
     // No persistent duration, IO control parameter or enable mask is used.
@@ -122,5 +123,5 @@ function indexOf(data) {
 }
 function hex(data) { return data.map((v) => ('0' + v.toString(16)).slice(-2)).join(' ').toUpperCase(); }
 
-module.exports = { ADDRESS, INDEX, DID, FUNCTION_DID, FUNCTIONS, BODY_VARIANTS, bodyVariant, PAIRS, PATTERNS, BOTH_PATTERNS,
+module.exports = { MAX_TIMED_MS, ADDRESS, INDEX, DID, FUNCTION_DID, FUNCTIONS, BODY_VARIANTS, bodyVariant, PAIRS, PATTERNS, BOTH_PATTERNS,
     pattern, settings, timedControl, statusSummary, singleOutputSummary, control, release, indexOf, hex };

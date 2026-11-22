@@ -14,10 +14,11 @@ const Runner = require('./runner');
 const Lamps = require('./lamps');
 const Effects = require('./effects');
 const Scan = require('./ecu-scan');
+const diagnosticReport = require('./diagnostics');
 const { Names, Observations, statusText } = require('./store');
 const { WebServer } = require('./web-server');
 const { ListScroll, LightList } = require('./lists');
-const { makeUi, PAGE, LIGHTS_BOX, UNITS_BOX, W, H } = require('./ui');
+const { makeUi, PAGE, TABS, LIGHTS_BOX, UNITS_BOX, DIAG_BOX, W, H } = require('./ui');
 
 const CONFIG_FILE = 'light-show-config.json';
 const DEFAULTS = { selection: [], effect: 'chase', stepMs: 500, gapMs: 100, cycles: 3, pwm: 60, allowExperimental: false };
@@ -35,7 +36,9 @@ mgu.run({
         try { Object.assign(config, sanitize(JSON.parse(fs.readFileSync(path.join(ctx.dataDir, CONFIG_FILE), 'utf8')))); }
         catch (e) { if (e.code !== 'ENOENT') log.warn('Light Show config: ' + e.message); }
 
-        const lightList = new LightList(LIGHTS_BOX), unitsScroll = new ListScroll(UNITS_BOX);
+        const lightList = new LightList(LIGHTS_BOX), unitsScroll = new ListScroll(UNITS_BOX), diagScroll = new ListScroll(DIAG_BOX);
+        let diagnosticText = '', diagnosticLines = [], autoRecovery = journal.pending();
+        const report = () => diagnosticReport(runner.status(), link.trace);
         unitsScroll.resize(profile ? profile.units.length : 0);
         let page = PAGE.SHOW, lastTested = null, lampCatalog = null, filterMenu = null;
         let notice = null, noticeAt = 0, yaw = 0.8, dirty = true;
@@ -112,7 +115,7 @@ mgu.run({
                 runner.play(plan, byId(list)).then((r) => { if (r.error) say(r.error); });
                 return { ok: true };
             },
-            stop() { runner.stop('STOP pressed'); return { ok: true }; },
+            stop() { autoRecovery = false; return runner.stop('STOP pressed'); },
             test(id, opts) {
                 requireIdle();
                 const l = byId(lamps())[id];
@@ -195,6 +198,7 @@ mgu.run({
             observe(b) { return actions.observe(String(b.lamp), String(b.result)); },
             name(b) { names.set(String(b.lamp), typeof b.name === 'string' ? b.name.trim() : ''); lampCatalog = null; changed(); return { ok: true }; },
             stop() { return actions.stop(); },
+            diagnostics() { return { text: report() }; },
             scan() { return actions.scan(); },
             experimental(b) { return actions.experimental(b.on === true); },
             commoff(b) { return actions.commOff(b.on === true); },
@@ -202,7 +206,13 @@ mgu.run({
         try { server.start(); } catch (e) { log.warn('Light Show phone server: ' + e.message); }
 
         /* ---------- car screen ---------- */
-        const run = (fn) => () => { try { const v = fn(); if (v && v.catch) v.catch((e) => say(String(e.message || e))); } catch (e) { say(String(e.message || e)); } changed(); };
+        const run = (fn) => () => {
+            try {
+                const result = fn();
+                return result && result.catch ? result.catch((e) => say(String(e.message || e))) : result;
+            } catch (e) { say(String(e.message || e)); }
+            finally { changed(); }
+        };
         const selectedId = (expected) => {
             lightList.sync(lamps());
             if (page !== PAGE.LIGHTS || !lightList.selected || lightList.selected.id !== expected) throw new Error('Select a light first');
@@ -254,10 +264,15 @@ mgu.run({
             scan: run(() => actions.scan()),
             toggleExperimental: run(() => actions.experimental(!config.allowExperimental)),
             toggleCommOff: run(() => actions.commOff(!commOff())),
-            acknowledge: run(() => runner.acknowledgeNormalLights()),
+            diagnostics: () => open(PAGE.DIAGNOSTICS),
+            exportDiagnostics: run(() => {
+                const file = path.join(ctx.dataDir, 'light-show-diagnostics.txt');
+                fs.writeFileSync(file, report() + '\n', { mode: 0o600 });
+                say('Saved ' + file);
+            }),
         };
         const focusButtons = [['BTN_FOCUS_BACK', -1], ['BTN_FOCUS_NEXT', 1], ['BTN_FOCUS_SELECT', 0]];
-        const hasList = () => page === PAGE.LIGHTS || page === PAGE.VEHICLE;
+        const hasList = () => page === PAGE.LIGHTS || page === PAGE.VEHICLE || page === PAGE.DIAGNOSTICS;
         function refreshFocusButtons() {
             if (ctx.display) ctx.display.pageFocusKey = null;
             if (ctx.display && typeof ctx.ui.visible === 'function') {
@@ -274,25 +289,33 @@ mgu.run({
         if (typeof ctx.onTab === 'function') ctx.onTab((i) => open(i));
         if (typeof ctx.onScroll === 'function') ctx.onScroll((dy, viewport) => {
             if (page === PAGE.LIGHTS) lightList.sync(lamps());
-            const list = page === PAGE.LIGHTS ? lightList.scroll : page === PAGE.VEHICLE ? unitsScroll : null;
+            const list = page === PAGE.LIGHTS ? lightList.scroll : page === PAGE.VEHICLE ? unitsScroll : page === PAGE.DIAGNOSTICS ? diagScroll : null;
             if (!list || (viewport && viewport !== list.box.id) || filterMenu || !list.move(dy)) return false;
             changed(); return true;
         });
         if (typeof ctx.onLayout === 'function') ctx.onLayout(() => { filterMenu = null; refreshFocusButtons(); changed(); });
         ctx.ui.onClick('BTN_START', a.start);
         ctx.ui.onClick('BTN_STOP', a.stop);
-        ctx.ui.onClick('BTN_PAGE', () => open((page + 1) % 4));
+        ctx.ui.onClick('BTN_PAGE', () => open((page + 1) % TABS.length));
 
         function viewModel() {
             const list = lamps(), r = runner.status(), why = guard.reason();
             if (page === PAGE.LIGHTS) lightList.sync(list);
+            if (page === PAGE.DIAGNOSTICS) {
+                const text = report();
+                if (diagnosticText !== text) {
+                    diagnosticText = text;
+                    diagnosticLines = text.split('\n').reduce((lines, line) => lines.concat(line.match(/.{1,104}/g) || ['']), []);
+                    diagScroll.resize(diagnosticLines.length);
+                }
+            }
             const sel = new Set(config.selection), act = new Set(r.active);
             if (notice && Date.now() - noticeAt > 8000) notice = null;
             return {
                 page, yaw, allowed: !why, lockText: why, lock: why && /stationary|P \(Park\)/.test(why) ? 'moving' : 'signal',
                 runner: r, config, effects: Effects.EFFECTS, plan: currentPlan(list), profile, notice,
                 allowExperimental: config.allowExperimental, supportText: Scan.supportText, commOff: commOff(),
-                recoveryUnreadable: journal.pending() && !journal.control(),
+                diagScroll, diagnosticLines,
                 lights: lightList, unitsScroll, filterMenu, lastTested: lastTested && lastTested.id,
                 nativeFocus: hasList() && ctx.display && ctx.display.pageFocusKey,
                 carLamps: list.filter((l) => l.available && (sel.has(l.id) || act.has(l.id)))
@@ -304,7 +327,7 @@ mgu.run({
 
         guard.init(ctx.signals, log).catch((e) => log.warn('Light Show vehicle signals: ' + e));
         let linkReady = false;
-        link.init().then(() => { linkReady = true; if (journal.pending()) return runner.stop('Releasing a run from before the restart'); })
+        link.init().then(() => { linkReady = true; startupRecovery(); })
             .catch((e) => log.warn('Light Show diagnostic init: ' + e));
 
         // First start: scan the car by itself once it is parked (read-only identities and
@@ -320,7 +343,14 @@ mgu.run({
                 (e) => say('Automatic scan failed (' + (e.message || e) + ')' + (auto.tries < Scan.AUTO_TRIES ? ', trying again in a minute.' : '. Use Scan vehicle on VEHICLE.')));
         }
 
-        setInterval(() => { server.poll(); autoScan(); }, 1000);
+        function startupRecovery() {
+            if (!autoRecovery || !linkReady || !link.available || guard.reason() || runner.status().busy) return;
+            autoRecovery = false;
+            runner.stop('Releasing a run from before the restart').then((result) => {
+                if (!result.ok) log.warn('Light Show startup recovery: ' + result.error);
+            });
+        }
+        setInterval(() => { server.poll(); startupRecovery(); autoScan(); }, 1000);
         let lastFrame = 0, lastDraw = 0;
         ctx.loop('MAIN', 15, () => {
             const now = Date.now();

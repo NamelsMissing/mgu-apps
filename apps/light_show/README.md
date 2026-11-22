@@ -1,4 +1,4 @@
-# Light Show 0.4.7
+# Light Show 0.4.8
 
 Exterior light shows for BMW G-series cars with the iDrive 7 head unit (MGU), in the spirit of
 Bimmerlight: pick lights, pick an effect, start, from the BMW screen or from your phone.
@@ -38,7 +38,7 @@ Names and test results from 0.3.x are taken over (same app id, same data folder)
   typed on the phone.
 - **Vehicle** - the scan (read-only), the support level of the
   body controller and both headlamp modules, the list of all units, the switch for experimental
-  headlamp modules, and the manual "lights checked" confirmation if a recovery file is unreadable.
+  headlamp modules, and a link to Diagnostics.
 - **Phone** - QR code, status of the firewall helper, the server and the phone connection.
 
 ## Finding and browsing lights
@@ -156,8 +156,8 @@ standstill, identities, tested lights). No Internet is needed.
 - Before every request: P and a current speed signal of 0 km/h. Losing either stops the show.
 - Before anything is switched: BDC_G05 and every used headlamp module are identified.
 - A recovery file is written before the first session or lamp request. It is removed only after
-  every touched unit acknowledged its STOP / OFF and the default session; otherwise STOP (or the
-  next app start) releases them again.
+  the required release steps are verified. An interrupted release retains its confirmed steps
+  in the marker. The next STOP retries the pending steps. An unreadable marker keeps control locked.
 - Every lamp has a finite time in the control unit (FLM seconds, D542 duration) and an explicit OFF.
 - One FLM module plays one LED channel at a time; effects split steps accordingly.
 - Requests go one by one through BMW's diagnostic transport (about 100-500 ms each in the car),
@@ -167,6 +167,25 @@ An acknowledgement confirms the control unit received the command. Report **Noth
 didn't see light. A more recent **Nothing** overrides a previous visible result for that light.
 If the test fails, the error points to the ECU address and diagnostic response when available.
 Use those details and the result of the test when reporting a problem.
+
+## STOP and diagnostics
+
+STOP waits for the release result. While parked, startup makes one recovery attempt for a saved
+run after the diagnostic link and vehicle signals are ready. Open **Diagnostics** on the MGU or
+phone to read the complete status, last STOP result and recent UDS trace. The MGU exports
+`light-show-diagnostics.txt` in the app data directory. The paired phone can download the same
+report. The report omits vehicle-order payloads and the extra bytes in identity replies.
+
+The BDC_G05 locator uses D542 function 0x15 with a duration in 10 ms units. OFF uses zero duration
+(`2E D5 42 00 15 00 00`). A matching `7F 2E 35` from address 0x40 is UDS invalidKey.
+The negative reply identifies the service. It carries no DID or function identifier.
+BMW's locator write definition provides a finite timer. Its read layout has no dedicated locator
+status entry. The app waits the full 2-second command bound after a positive `50 01` when a locator
+OFF receives this refusal. It records the refusal separately from the release result. For an
+older BDC_G05 marker with locator as the only outstanding BDC output, STOP uses the same bounded
+path without opening an extended session or sending another locator OFF. New markers distinguish
+a matched locator refusal from a timeout. The cause of the vehicle's refusal and behavior of
+its locator timer still require confirmation on the affected BDC software version.
 
 ## Tests
 
