@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,11 +9,11 @@ for name in ('equalizer', 'mgu-equalizer-dsp'):
     assert name in entries, name
 app = json.loads((ROOT / 'apps/equalizer/app.json').read_text())
 tool = json.loads((ROOT / 'native/equalizer-dsp/component.json').read_text())
-assert app['version'] == entries['equalizer']['version'] == '0.2.4'
-assert tool['version'] == entries['mgu-equalizer-dsp']['version'] == '0.2.1'
+assert app['version'] == entries['equalizer']['version'] == '0.3.0'
+assert tool['version'] == entries['mgu-equalizer-dsp']['version'] == '0.2.2'
 assert entries['equalizer']['requires']['mgu-equalizer-dsp'] == tool['version']
 assert entries['mgu_video_hub']['version'] == '0.2.0'
-assert entries['mgu_video_hub']['requires']['mgu-equalizer-dsp'] == '0.2.1'
+assert entries['mgu_video_hub']['requires']['mgu-equalizer-dsp'] == '0.2.2'
 for f in tool['files']:
     assert (ROOT / 'native/equalizer-dsp' / f['path']).is_file(), f
 assert 'Group=12202' in (ROOT / 'native/equalizer-dsp/mgu-equalizer-dsp.service').read_text()
@@ -23,4 +24,21 @@ assert any(b[0] == 'BTN_MUSIC_EXPORT' for b in app['screens'][0]['buttons'])
 assert any(b[0] == 'BTN_MUSIC' for b in app['screens'][0]['buttons'])
 assert any(b[0] == 'BTN_DSP_ON' for b in app['screens'][0]['buttons'])
 assert any(b[0] == 'BTN_BYPASS' for b in app['screens'][0]['buttons'])
-print('PASS Store versions, DSP dependency, service files, shared runtime client and socket group')
+diag = json.loads((ROOT / 'apps/mgu_audio_diagnostics/app.json').read_text())
+assert diag['version'] == entries['mgu_audio_diagnostics']['version'] == '0.1.3'
+assert entries['mgu_audio_diagnostics']['requires']['mgu-equalizer-dsp'] == tool['version']
+assert {'BTN_BMW_ORIGINAL', 'BTN_BMW_DSP', 'BTN_BMW_STOP'} <= {b[0] for b in app['screens'][0]['buttons']}
+sys.path.insert(0, str(ROOT / 'kit/tools'))
+from build import build_ui, manifest_for
+
+assert build_ui(app)[3]['MAIN']
+assert build_ui(diag)[3]['MAIN']
+proxies = manifest_for(app)['proxies']
+player = proxies['de.bmw.infotainment.entertainment.mediaplayer.MediaPlayer']
+assert player['instances'] == 'OapGenericMedia'
+assert player['attributes'] == {'currentItemTime': 'r'}
+assert set(player['methods']) == {'playFile', 'sendButtonEvent'}
+assert player['broadcasts'] == ['playbackErrorEvent']
+assert {'getListMainConnections', 'getListMainSources', 'connect', 'disconnect'} <= set(
+    proxies['org.genivi.am.commandinterface.CommandControl']['methods'])
+print('PASS Store versions, DSP dependencies, socket group, generated source manifest and RHMI definitions')

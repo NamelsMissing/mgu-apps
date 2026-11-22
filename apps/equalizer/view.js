@@ -2,6 +2,24 @@
 const C = require('./controls');
 const G = require('./kit/gauges');
 
+function response(config, rate, hz, preamp) {
+    const w = 2 * Math.PI * hz / rate;
+    const sin = Math.sin(w), cos = Math.cos(w);
+    return config.bands.reduce((db, band) => {
+        if (!band.gainDb) return db;
+        const center = 2 * Math.PI * band.frequencyHz / rate;
+        const alpha = Math.sin(center) / (2 * band.q);
+        const a = Math.pow(10, band.gainDb / 40);
+        const real = Math.pow(cos - Math.cos(center), 2);
+        const imag = Math.pow(alpha * sin, 2);
+        return db + 10 * Math.log10((real + imag * a * a) / (real + imag / (a * a)));
+    }, preamp);
+}
+function recentPcm(s) {
+    return s.dspOnline && s.dspStatus && (s.dspStatus.streams || []).filter((stream) =>
+        stream.lastFrameAt && Date.now() - stream.lastFrameAt < 3000) || [];
+}
+
 const WHITE = '#eef3fc', DIM = '#909eaf', AMBER = '#ffbd69';
 function fit(r, text, width, size) {
     let s = String(text).replace(/ß/g, 'ss'); if (r.textWidth(s, size) <= width) return s;
@@ -63,9 +81,23 @@ function draw(r, t, s, a) {
         const play = s.testMusic && s.testMusic.playing;
         button('test-music', 1184, 382, 168, play ? 'Stop' : 'Testmusik', a.testMusic, play);
         button('dsp-headroom', 1363, 382, 169, config.autoHeadroom ? 'Headroom auto' : 'Headroom aus', a.headroom);
-        button('music-wav-export', 44, 454, 398, 'Night Drive WAV Export', a.exportWave);
-        text('Vergleich: 2 WAV-Dateien fuer USB / kein Live-CarPlay-EQ', 465, 488, 18, DIM);
-        text('HR ' + db(effective) + ' · ' + (s.testMusic ? s.testMusic.status : 'idle') + ' · ' + (s.dspConfig.enabled ? 'DSP aktiv' : 'Bypass aktiv'), 1184, 466, 17, DIM);
+        const streams = recentPcm(s);
+        const rate = (streams.length === 1 && streams[0].sampleRate) || 48000;
+        const mid = 94, curveTop = 74, curveBottom = 109;
+        r.line(44, mid, 1122, mid, 1, '#38465a');
+        let last = mid;
+        for (let i = 0; i <= 96; i++) {
+            const hz = 20 * Math.pow(1000, i / 96);
+            const y = C.clamp(mid - response(config, rate, hz, effective) * 0.8, curveTop, curveBottom);
+            if (i) r.line(44 + 11.2 * (i - 1), last, 44 + 11.2 * i, y, 2, BLUE);
+            last = y;
+        }
+        text('EQ-Kurve · ' + rate / 1000 + ' kHz', 1157, 94, 17, DIM);
+        button('music-wav-export', 44, 445, 245, 'WAV exportieren', a.exportWave);
+        button('bmw-original', 305, 445, 239, 'BMW Original', a.bmwOriginal);
+        button('bmw-dsp', 560, 445, 239, 'BMW DSP', a.bmwDsp);
+        button('bmw-stop', 815, 445, 307, 'BMW-Test stoppen', a.bmwStop);
+        text('Headroom ' + db(effective), 1184, 476, 18, DIM);
     } else if (s.page === 1) {
         text('BASS, HÖHEN UND VERTEILUNG', 44, 90, 23, DIM, { spacing: 2 });
         C.CONTROLS.filter((c) => c.group === 'tone').forEach((c, i) => {
@@ -86,18 +118,33 @@ function draw(r, t, s, a) {
         button('tone-minus', 280, 435, 116, '−', () => a.adjust(-1));
         button('tone-plus', 412, 435, 116, '+', () => a.adjust(1));
         button('tone-apply', 1240, 435, 316, 'Übernehmen', a.apply, true);
+    } else if (s.page === 2 && s.profileEdit) {
+        const edit = s.profileEdit;
+        panel(44, 95, 1514, 300);
+        text('Profilname bearbeiten', 77, 151, 30);
+        edit.chars.forEach((char, i) => {
+            const x = 77 + i * 78, selected = i === edit.cursor;
+            r.roundRect(x, 186, 67, 81, 8, selected ? '#25527a' : '#192330');
+            text(char, x + 33, 238, 30, selected ? BLUE : WHITE, { align: 'center' });
+        });
+        button('cursor', 72, 309, 286, 'Zeichen wählen', a.next);
+        button('char-down', 375, 309, 155, '−', () => a.adjust(-1));
+        button('char-up', 547, 309, 155, '+', () => a.adjust(1));
+        button('save-name', 1238, 310, 277, 'Name speichern', a.profileName, true);
+        button('delete-profile', 44, 410, 335, 'DSP-Profil löschen', a.profileDelete);
+        button('cancel-name', 396, 410, 255, 'Abbrechen', a.profileCancel);
     } else if (s.page === 2) {
         text('SCHNELL ZU DEINEM SOUND', 44, 89, 23, DIM, { spacing: 2 });
         s.profiles.forEach((p, i) => {
             const x = 44 + (i % 3) * 513, y = 119 + Math.floor(i / 3) * 141, on = i === s.selected.profile, saved = s.store.state.dspProfiles[p[0]], old = s.store.state.profiles[p[0]];
             panel(x, y, 487, 120); if (on) r.strokeRoundRect(x, y, 487, 120, 18, 2, BLUE);
-            text(p[1], x + 27, y + 44, 28, on ? BLUE : WHITE);
+            text(saved && saved.name || p[1], x + 27, y + 44, 28, on ? BLUE : WHITE);
             text(i < 3 ? ['DSP-Bänder auf 0 dB', 'Tiefe Frequenzen anheben', 'Mitten und Sprachverständlichkeit'][i] : saved ? '7 DSP-Bänder gespeichert' : old ? 'Bisheriges BMW-Profil vorhanden' : 'Freier Speicherplatz', x + 27, y + 84, 20, DIM);
             target('profile-' + i, x, y, 487, 120, () => a.profile(i));
         });
         button('load', 44, 415, 300, 'Vorschau laden', a.load);
         button('save', 366, 415, 300, 'Auswahl speichern', a.save);
-        button('discard', 688, 415, 300, 'Entwurf verwerfen', a.discard);
+        button('profile-edit', 688, 415, 300, 'Profil bearbeiten', a.profileEdit);
         button('profile-apply', 1115, 415, 442, 'Vorbereiteten Klang übernehmen', a.apply, true);
     } else if (s.page === 3) {
         const l = s.store.state.learning, c = l ? C.CONTROLS.find((p) => p.id === l.control) : C.CONTROLS[s.selected.setup], phase = l ? l.shots.length : -1;
@@ -123,25 +170,28 @@ function draw(r, t, s, a) {
         const shot = s.snapshot || { points: [], scopes: [], errors: [] };
         panel(44, 92, 760, 310); panel(828, 92, 730, 310);
         text('VERBINDUNG & WERTE', 73, 136, 23, DIM, { spacing: 1 });
-        [['DSP-Dienst', s.dspOnline ? 'Verbunden · ' + (s.dspStatus.streams || []).length + ' PCM-Quellen' : 'Nicht verbunden'],
-         ['PCM-Frames gesamt', s.dspStatus ? s.dspStatus.frames : '--'], ['BMW-Klangwerte', shot.points.length],
-         ['CarPlay / Radio', 'Noch nicht an DSP angebunden'], ['Version', '0.2.4 · WAV-Vergleich experimentell']].forEach((v, i) => {
-            text(v[0], 73, 187 + i * 42, 23, DIM); text(v[1], 774, 187 + i * 42, 22, WHITE, { align: 'right' });
+        const streams = recentPcm(s);
+        const processing = streams.filter((stream) => stream.lastFilteredAt && Date.now() - stream.lastFilteredAt < 3000);
+        [['BMW-Medienroute', s.bmwSource], ['DSP-Dienst', s.dspOnline ? (s.dspConfig.enabled ? 'Verbunden · Filter an' : 'Verbunden · Bypass') : 'Nicht verfügbar'],
+         ['PCM jetzt', processing.length ? processing.map((x) => x.source).join(', ') : streams.length ? 'PCM ohne bestätigte Filterung' : 'Kein PCM festgestellt'],
+         ['PCM-Frames gesamt', s.dspOnline ? s.dspStatus.frames : '--'], ['BMW-Klangwerte', shot.points.length],
+         ['CarPlay / Radio / Bluetooth', 'DSP-Pfad unbestätigt'], ['Lautsprecherausgabe', 'Nicht verifiziert']].forEach((v, i) => {
+            text(v[0], 73, 171 + i * 32, 21, DIM);
+            text(fit(r, v[1], 365, 19), 774, 171 + i * 32, 19, WHITE, { align: 'right' });
         });
         text('LETZTE MELDUNGEN', 856, 136, 23, DIM, { spacing: 1 });
-        const errors = (s.diagnostics ? [s.diagnostics] : []).concat(shot.errors, s.audio.errors).slice(0, 5);
+        const errors = [s.dspError, s.diagnostics].filter(Boolean).concat(shot.errors, s.audio.errors).slice(0, 5);
         (errors.length ? errors : ['Keine Fehler gemeldet', 'Rücklesen bestätigt den Zahlenwert.', 'Die hörbare Wirkung wird im Fahrzeug geprüft.']).forEach((v, i) => text(fit(r, v, 672, 21), 856, 185 + i * 40, 21, errors.length ? AMBER : DIM));
         button('export', 44, 425, 365, 'Diagnose exportieren', a.export);
         button('discard', 432, 425, 365, 'Entwurf verwerfen', a.discard);
         text('Export: equalizer-diagnostics.json im App-Datenordner', 828, 459, 21, DIM);
     }
-    if (s.page === 0) text('Quelle: verbundene PCM-Apps, z. B. Video Hub · CarPlay und Radio noch nicht angebunden', 44, 480, 21, DIM);
     r.fillRect(0, 499, 1600, 21, '#0a111c');
     text(fit(r, (s.busy ? '● ' : '') + s.status, 1490, 17), 44, 516, 17, s.busy ? AMBER : DIM);
     // Native HMI bar remains available without touch routing or the GPU renderer.
     s.targets = targets; r.targets = focusTargets;
-    const live = s.dspOnline && s.dspStatus.streams.some((x) => x.frames > 0 && x.lastFrameAt && Date.now() - x.lastFrameAt < 3000);
+    const live = recentPcm(s).some((x) => x.lastFilteredAt && Date.now() - x.lastFilteredAt < 3000);
     const badge = s.page === 0 ? !s.dspOnline ? 'DSP OFFLINE' : live && s.dspConfig.enabled ? 'DSP LIVE' : s.dspConfig.enabled ? 'DSP BEREIT' : 'BYPASS' : s.connected ? 'BMW AUDIO' : 'BMW OFFLINE';
     G.frame(r, t, s.tabs, s.page, [{ text: s.busy ? 'ARBEITET' : badge, color: s.dspOnline || s.connected ? BLUE : DIM }]);
 }
-module.exports = { draw };
+module.exports = { draw, response };

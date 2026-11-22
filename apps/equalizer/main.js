@@ -8,6 +8,8 @@ const { draw } = require('./view');
 const DSP = require('./kit/dsp-client');
 const { MusicPlayer } = require('./test_music');
 const { exportComparison } = require('./music_export');
+const { BmwMusic, sources, connections, connected } = require('./bmw_music');
+const PROFILE_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
 const TABS = ['DSP', 'BMW-Klang', 'Profile', 'Einrichten', 'Diagnose'];
 const PROFILES = [ ['neutral', 'Neutral'], ['bass', 'Bass'], ['voice', 'Stimme'], ['1', 'Eigenes Profil 1'], ['2', 'Eigenes Profil 2'], ['3', 'Eigenes Profil 3'] ];
@@ -15,15 +17,29 @@ const signature = (b) => JSON.stringify([b.id, b.low, b.center, b.high, b.direct
 
 mgu.run({
     start(ctx) {
-        const { ui, log } = ctx, store = new Storage(ctx.dataDir, log), audio = new Audio(ctx.signals, log);
+        const { ui, log } = ctx, store = new Storage(ctx.dataDir, log, ctx.spec.version), audio = new Audio(ctx.signals, log);
         const s = { page: 0, selected: { eq: 0, tone: 0, setup: 7, profile: 0 }, current: {}, draft: {}, base: {},
             snapshot: null, status: 'Audioverbindung wird aufgebaut …', busy: false, connected: false,
             store, audio, tabs: TABS, profiles: PROFILES, diagnostics: '', targets: [],
             dspOnline: false, dspStatus: null, dspConfig: DSP.defaults(), dspDraft: null, dspBaseRevision: null, dspParameter: 0,
+            bmwSource: 'Nicht verifiziert', dspError: '',
             testMusic: { status: 'idle', detail: 'Night Drive · 32 s · Originalmusik', playing: false } };
         const dspOpts = { runtime: ctx.dspRuntime || process.env.MGU_DSP_RUNTIME || DSP.RUNTIME };
         const dspRequest = ctx.dspRequest || DSP.request;
-        let renderLoop, eventTimer = null, lastRefresh = 0;
+        let renderLoop, eventTimer = null, lastRefresh = 0, statusTimer, standstillAt = 0;
+        let closing = false, statusReading = null, routeReading = null;
+        ctx.signals.watch('de.bmw.infotainment.vehicle.Vehicle2', '1', {
+            statusCarSpeed2(info) { standstillAt = info && info.speedVehicleCentreOfGravity === 0 ? Date.now() : 0; }
+        }, null, { pollMs: 2000 }).catch(() => {});
+        const bmwPlayer = new BmwMusic(ctx.signals, {
+            exportOptions: { runtime: dspOpts.runtime, request: dspRequest, source: 'equalizer_bmw_test' },
+            canRun: () => !closing && s.page === 0 && ui.isVisible('MAIN') && Date.now() - standstillAt < 4500,
+            onState: (info) => {
+                s.bmwTest = info;
+                if (info.status === 'error') s.diagnostics = info.detail;
+                message(info.detail);
+            }
+        });
         const bindings = () => store.state.bindings;
         const controls = () => C.CONTROLS.filter((c) => c.group === (s.page === 1 ? 'tone' : 'eq'));
         const selected = () => s.page === 3 ? C.CONTROLS[s.selected.setup] : controls()[s.selected[s.page === 1 ? 'tone' : 'eq']];
@@ -49,14 +65,46 @@ mgu.run({
                 if (p && C.normalized(b, p.value) !== null) s.current[id] = p.value;
             });
             lastRefresh = Date.now();
-            await readDsp();
+            await Promise.all([readDsp(), readRoute()]);
             return shot;
         }
-        async function readDsp() {
-            try {
-                s.dspStatus = await dspRequest({ op: 'status' }, dspOpts);
-                s.dspConfig = s.dspStatus.config; s.dspOnline = true;
-            } catch (e) { s.dspOnline = false; s.diagnostics = 'DSP: ' + String(e.message || e); }
+        function readDsp() {
+            if (statusReading) return statusReading;
+            statusReading = Promise.resolve().then(async () => {
+                try {
+                    s.dspStatus = await dspRequest({ op: 'status' }, dspOpts);
+                    s.dspConfig = s.dspStatus.config; s.dspOnline = true; s.dspError = '';
+                } catch (e) { s.dspOnline = false; s.dspError = String(e.message || e); }
+                finally { statusReading = null; }
+            });
+            return statusReading;
+        }
+        function readRoute() {
+            if (!audio.command) return Promise.resolve();
+            if (routeReading) return routeReading;
+            const call = (proxy, name) => ctx.signals.call(proxy, name, {}, 1500);
+            routeReading = Promise.resolve().then(async () => {
+                try {
+                    const links = await connections(call, audio.command);
+                    const names = await sources(call, audio.command);
+                    const front = await ctx.signals.call(audio.command, 'getListMainSinks', {}, 1500);
+                    const sinks = front && front.listMainSinks;
+                    const matches = Array.isArray(sinks) ? sinks.filter((x) => x && x.name === 'MediaSink_Front') : [];
+                    if (matches.length !== 1 || !Number.isInteger(matches[0].sinkID)) throw new Error('MediaSink_Front');
+                    const active = links.filter((x) => x.sinkID === matches[0].sinkID && connected(x));
+                    const source = active.length === 1 && names.find((x) => x.sourceID === active[0].sourceID);
+                    s.bmwSource = source && typeof source.name === 'string' ? source.name.replace(/[^A-Za-z0-9_. -]/g, '_').slice(0, 48) :
+                        active.length ? 'Mehrere / unbekannt' : 'Keine aktive Medienverbindung gemeldet';
+                } catch (_) { s.bmwSource = 'Nicht verifiziert'; }
+                finally { routeReading = null; }
+            });
+            return routeReading;
+        }
+        async function stopMusic() { testPlayer.stop(); await bmwPlayer.stop(); }
+        async function shutdown() {
+            closing = true;
+            clearInterval(statusTimer);
+            await stopMusic();
         }
         function editDsp(fn) {
             if (s.busy) return;
@@ -69,12 +117,13 @@ mgu.run({
         async function applyDsp() {
             if (!s.dspDraft) return message('Keine DSP-Änderungen vorbereitet.');
             if (!s.dspOnline || s.dspBaseRevision === null) throw new Error('DSP-Dienst nicht verbunden. Abhängigkeit im MGU Store installieren und neu lesen.');
+            if (statusReading) await statusReading;
             const expected = s.dspBaseRevision;
             const result = await dspRequest({ op: 'set', config: s.dspDraft, expectedRevision: expected }, dspOpts);
-            s.dspConfig = result.config; s.dspStatus = result; s.dspDraft = null;
+            s.dspConfig = result.config; s.dspStatus = result; s.dspDraft = null; s.dspBaseRevision = null;
             await readDsp();
             if (!s.dspOnline || s.dspStatus.revision !== result.revision || JSON.stringify(s.dspConfig) !== JSON.stringify(result.config)) throw new Error('DSP-Rücklesen nicht bestätigt. Diagnose prüfen.');
-            const live = (s.dspStatus.streams || []).some((x) => x.frames > 0 && x.lastFrameAt && Date.now() - x.lastFrameAt < 3000);
+            const live = (s.dspStatus.streams || []).some((x) => x.lastFilteredAt && Date.now() - x.lastFilteredAt < 3000);
             message(s.dspConfig.enabled ? live ? 'DSP eingeschaltet · PCM-Filterung aktiv' : 'DSP eingeschaltet · keine PCM-Quelle verbunden' : 'Bypass eingeschaltet · PCM-Daten unverändert');
         }
         async function setBypass(enabled) {
@@ -117,12 +166,14 @@ mgu.run({
         async function apply() { return s.page === 0 || s.page === 2 && s.dspDraft ? applyDsp() : applyNative(); }
         function page(i) {
             const target = (i + TABS.length) % TABS.length;
-            if (s.page === 0 && target !== 0) testPlayer.stop();
+            if (s.page === 0 && target !== 0) stopMusic();
+            if (s.page !== target) s.profileEdit = null;
             s.page = target;
             labels(); renderLoop && renderLoop.kick();
         }
         function next() {
             if (s.busy) return;
+            if (s.profileEdit) return profileCursor();
             if (s.page === 3 && store.state.learning) return message('Aktuelle Messreihe abschließen oder abbrechen.');
             const key = s.page === 0 ? 'eq' : s.page === 1 ? 'tone' : s.page === 2 ? 'profile' : 'setup';
             const size = s.page === 0 ? 7 : s.page === 1 ? 4 : s.page === 2 ? 6 : 11;
@@ -130,6 +181,7 @@ mgu.run({
             renderLoop && renderLoop.kick();
         }
         function adjust(d) {
+            if (s.profileEdit) return profileChar(d);
             if (s.page === 0) {
                 return editDsp((v) => {
                     const b = v.bands[s.selected.eq];
@@ -156,7 +208,7 @@ mgu.run({
                 }
                 s.draft = {}; s.base = {}; s.dspBaseRevision = s.dspStatus && s.dspStatus.revision;
                 s.dspDraft = config;
-                return message(PROFILES[s.selected.profile][1] + ' als DSP-Entwurf geladen · Mit Übernehmen aktivieren');
+                return message((savedDsp && savedDsp.name || PROFILES[s.selected.profile][1]) + ' als DSP-Entwurf geladen · Mit Übernehmen aktivieren');
             }
             if (store.state.learning) throw new Error('BMW-Einrichtung zuerst abschließen oder abbrechen.');
             const values = /^[123]$/.test(id) ? (() => {
@@ -183,8 +235,39 @@ mgu.run({
             const slot = PROFILES[s.selected.profile][0];
             if (!/^[123]$/.test(slot)) throw new Error('Zum Speichern einen eigenen Profilplatz auswählen.');
             const config = JSON.parse(JSON.stringify(s.dspDraft || s.dspConfig));
-            store.update((v) => { v.dspProfiles[slot] = { at: new Date().toISOString(), config }; });
+            store.update((v) => { v.dspProfiles[slot] = { name: v.dspProfiles[slot] && v.dspProfiles[slot].name, at: new Date().toISOString(), config }; });
             message('DSP-Profil ' + slot + ' gespeichert');
+        }
+        function editProfile() {
+            const slot = PROFILES[s.selected.profile][0], profile = store.state.dspProfiles[slot];
+            if (!profile) return message('Wähle ein gespeichertes DSP-Profil.');
+            s.profileEdit = { slot, cursor: 0, chars: (profile.name || 'Profil ' + slot).padEnd(18).split('') };
+            labels(); renderLoop.kick();
+        }
+        function profileCursor() {
+            const edit = s.profileEdit; edit.cursor = (edit.cursor + 1) % edit.chars.length;
+            renderLoop.kick();
+        }
+        function profileChar(direction) {
+            const edit = s.profileEdit, index = PROFILE_CHARS.indexOf(edit.chars[edit.cursor]);
+            edit.chars[edit.cursor] = PROFILE_CHARS[(index + direction + PROFILE_CHARS.length) % PROFILE_CHARS.length];
+            renderLoop.kick();
+        }
+        function saveName() {
+            const edit = s.profileEdit, name = edit.chars.join('').trim();
+            if (!name) throw new Error('Der Profilname darf nicht leer sein.');
+            store.update((v) => { v.dspProfiles[edit.slot].name = name; });
+            s.profileEdit = null; labels(); message('Profilname gespeichert');
+        }
+        function deleteProfile() {
+            const slot = s.profileEdit.slot;
+            store.update((v) => { delete v.dspProfiles[slot]; });
+            s.profileEdit = null; labels(); message('DSP-Profil gelöscht');
+        }
+        function startBmw(filtered) {
+            if (s.busy || s.page !== 0) return;
+            testPlayer.stop();
+            bmwPlayer.start(filtered);
         }
         function startLearning() {
             if (Object.keys(s.draft).length) throw new Error('Offene BMW-Klangänderungen zuerst übernehmen oder verwerfen.');
@@ -213,16 +296,23 @@ mgu.run({
             message('Einrichtung abgebrochen · BMW-Regler im Klangmenü nach Wunsch einstellen'); labels();
         }
         async function primary() {
+            if (s.profileEdit) return saveName();
             if (s.page === 3) return capture();
             if (s.page === 4) {
                 const file = store.export({ bindings: bindings(), learning: store.state.learning, snapshot: s.snapshot, errors: audio.errors,
-                    dsp: s.dspStatus, dspOnline: s.dspOnline, testMusic: s.testMusic, lastMessage: s.diagnostics });
+                    dsp: s.dspStatus, dspOnline: s.dspOnline, bmwRoute: s.bmwSource, bmwTest: s.bmwTest, testMusic: s.testMusic, lastMessage: s.diagnostics });
                 message('Diagnose gespeichert: equalizer-diagnostics.json'); log.info('diagnostic export ' + file); return;
             }
             return apply();
         }
         function labels() {
             const learning = !!store.state.learning;
+            ui.text('BTN_PROFILE_EDIT', s.profileEdit ? 'Bearbeitung abbrechen' : 'Profil bearbeiten');
+            if (s.profileEdit) {
+                [['BTN_NEXT', 'Zeichen wählen'], ['BTN_DEC', 'Vorheriges Zeichen'], ['BTN_INC', 'Nächstes Zeichen'],
+                 ['BTN_APPLY', 'Name speichern']].forEach((x) => ui.text(x[0], x[1]));
+                return;
+            }
             [['BTN_NEXT', s.page === 2 ? 'Profil wählen' : 'Regler wählen'],
              ['BTN_DEC', s.page === 2 ? 'Speichern' : s.page === 3 ? learning ? 'Abbrechen' : 'Neu zuordnen' : s.page === 4 ? 'Entwurf verwerfen' : '−'],
              ['BTN_INC', s.page === 2 ? 'Vorschau laden' : s.page === 3 ? 'Messung erfassen' : s.page === 4 ? 'Neu verbinden' : '+'],
@@ -244,11 +334,14 @@ mgu.run({
             toggleDsp() { return run(async () => setBypass(!s.dspConfig.enabled)); },
             dspOn() { return run(async () => setBypass(true)); },
             dspBypass() { return run(async () => setBypass(false)); },
-            testMusic() { if (!s.busy && s.page === 0) testPlayer.toggle(); },
+            testMusic() { if (!s.busy && s.page === 0 && !bmwPlayer.active) testPlayer.toggle(); },
+            bmwOriginal: () => startBmw(false), bmwDsp: () => startBmw(true), bmwStop: () => bmwPlayer.stop(),
+            profileEdit: editProfile, profileCancel() { s.profileEdit = null; labels(); renderLoop.kick(); }, profileName: () => run(async () => saveName()),
+            profileDelete: () => run(async () => deleteProfile()),
             exportWave() {
                 return run(async () => {
                     if (s.page !== 0) return;
-                    testPlayer.stop();
+                    await stopMusic();
                     message('WAV-Export wird vorbereitet ...');
                     const result = await exportComparison(ctx.dataDir, {
                         runtime: dspOpts.runtime, request: dspRequest,
@@ -270,19 +363,28 @@ mgu.run({
         };
         ui.onClick('BTN_NEXT', next);
         ui.onClick('BTN_MUSIC', () => actions.testMusic());
+        ui.onClick('BTN_BMW_ORIGINAL', actions.bmwOriginal);
+        ui.onClick('BTN_BMW_DSP', actions.bmwDsp);
+        ui.onClick('BTN_BMW_STOP', actions.bmwStop);
+        ui.onClick('BTN_PROFILE_EDIT', () => {
+            if (s.page !== 2 || s.busy) return;
+            if (s.profileEdit) actions.profileCancel(); else actions.profileEdit();
+        });
         ui.onClick('BTN_MUSIC_EXPORT', () => actions.exportWave());
         ui.onClick('BTN_DSP_ON', () => actions.dspOn());
         ui.onClick('BTN_BYPASS', () => actions.dspBypass());
         ui.onClick('BTN_PARAM', () => { if (s.page === 0 && !s.busy) actions.parameter(); });
         ui.onClick('BTN_DEC', () => run(async () => {
-            if (s.page === 2) saveProfile();
+            if (s.profileEdit) profileChar(-1);
+            else if (s.page === 2) saveProfile();
             else if (s.page === 3) store.state.learning ? cancelLearning() : startLearning();
             else if (s.page === 4) { s.draft = {}; s.base = {}; s.dspDraft = null; message('Vorbereitete Änderungen verworfen'); }
             else { s.busy = false; adjust(-1); s.busy = true; }
             labels();
         }));
         ui.onClick('BTN_INC', () => run(async () => {
-            if (s.page === 2) { loadProfile(); }
+            if (s.profileEdit) profileChar(1);
+            else if (s.page === 2) { loadProfile(); }
             else if (s.page === 3) await capture();
             else if (s.page === 4) { await audio.connect(); await read(); message(s.connected ? 'Audioverbindung bereit' : 'Keine Audioantwort · Diagnose prüfen'); }
             else { s.busy = false; adjust(1); s.busy = true; }
@@ -303,9 +405,18 @@ mgu.run({
         renderLoop = ctx.loop('MAIN', 3, render);
         ui.onVisible((name, visible) => {
             if (name !== 'MAIN') return;
-            if (!visible) testPlayer.stop();
-            else if (Date.now() - lastRefresh > 3000 && !s.busy) run(read);
+            clearInterval(statusTimer);
+            if (!visible) stopMusic();
+            else {
+                statusTimer = setInterval(() => {
+                    if (s.busy || closing || (s.page !== 0 && s.page !== 4)) return;
+                    Promise.all([readDsp(), readRoute()]).then(() => renderLoop.kick());
+                }, 1800);
+                if (Date.now() - lastRefresh > 3000 && !s.busy) run(read);
+            }
         });
+        if (ctx.onShutdown) ctx.onShutdown(shutdown);
+        for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => shutdown().then(() => process.exit(0)));
         process.once('exit', () => testPlayer.stop());
         audio.onChange = () => {
             clearTimeout(eventTimer);

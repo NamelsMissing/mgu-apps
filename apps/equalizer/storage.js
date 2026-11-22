@@ -10,6 +10,8 @@ function validate(s) {
     Object.keys(s.dspProfiles).forEach((slot) => {
         const p = s.dspProfiles[slot];
         if (!/^[123]$/.test(slot) || !p || !p.config || !Array.isArray(p.config.bands) || p.config.bands.length !== 7) throw new Error('Ungültiges DSP-Profil.');
+        if (p.name !== undefined && (typeof p.name !== 'string' || !/^[A-Za-z0-9 _-]{1,18}$/.test(p.name) || !p.name.trim()))
+            throw new Error('Ungültiger DSP-Profilname.');
     });
     const ids = {};
     Object.keys(s.bindings).forEach((key) => {
@@ -31,8 +33,8 @@ function validate(s) {
     return s;
 }
 class Storage {
-    constructor(dir, log) {
-        this.file = path.join(dir, 'equalizer-state.json'); this.log = log; this.state = fresh(); this.error = null;
+    constructor(dir, log, version) {
+        this.file = path.join(dir, 'equalizer-state.json'); this.log = log; this.version = version; this.state = fresh(); this.error = null;
         for (const file of [this.file, this.file + '.bak']) {
             try { this.state = validate(JSON.parse(fs.readFileSync(file, 'utf8'))); return; }
             catch (e) { if (e.code !== 'ENOENT') { this.error = String(e.message || e); log.warn('Equalizer-Speicher: ' + this.error); } }
@@ -54,7 +56,7 @@ class Storage {
     update(fn) { const next = JSON.parse(JSON.stringify(this.state)); fn(next); this.save(next); }
     export(data) {
         const file = path.join(path.dirname(this.file), 'equalizer-diagnostics.json');
-        fs.writeFileSync(file + '.tmp', JSON.stringify(Object.assign({ app: 'equalizer', version: '0.2.3', created: new Date().toISOString() }, data), null, 2), { mode: 0o600 });
+        fs.writeFileSync(file + '.tmp', JSON.stringify(Object.assign({ app: 'equalizer', version: this.version, created: new Date().toISOString() }, data), null, 2), { mode: 0o600 });
         fs.renameSync(file + '.tmp', file); return file;
     }
 }

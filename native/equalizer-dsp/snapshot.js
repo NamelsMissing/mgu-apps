@@ -74,7 +74,11 @@ function decode(b) {
 function write(dir, config, revision) {
     const file = path.join(dir, FILE_NAME), tmp = file + '.tmp', data = encode(config, revision);
     const fd = fs.openSync(tmp, 'w', 0o640);
-    try { fs.writeSync(fd, data, 0, data.length, 0); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    try {
+        fs.writeFileSync(fd, data);
+        fs.fchmodSync(fd, 0o640);
+        fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
     fs.renameSync(tmp, file);
     return file;
 }

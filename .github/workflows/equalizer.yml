@@ -6,6 +6,8 @@ on:
       - 'apps/mgu_video_hub/**'
       - 'native/equalizer-dsp/**'
       - 'kit/runtime/dsp-client.js'
+      - 'kit/runtime/mgu.js'
+      - 'mgu-repo.json'
       - 'tests/equalizer*'
       - 'kit/tools/test_equalizer*'
       - '.github/workflows/equalizer.yml'
@@ -15,6 +17,8 @@ on:
       - 'apps/mgu_video_hub/**'
       - 'native/equalizer-dsp/**'
       - 'kit/runtime/dsp-client.js'
+      - 'kit/runtime/mgu.js'
+      - 'mgu-repo.json'
       - 'tests/equalizer*'
       - 'kit/tools/test_equalizer*'
       - '.github/workflows/equalizer.yml'
@@ -31,6 +35,7 @@ jobs:
       - run: node tests/equalizer_dsp.test.js
       - run: node tests/equalizer_snapshot.test.js
       - run: node tests/equalizer_music.test.js
+      - run: node tests/equalizer_bmw_music.test.js
       - run: node tests/equalizer_music_export.test.js
       - run: node kit/tools/test_equalizer.js
       - run: node tests/equalizer_video_pipe.test.js
@@ -41,7 +46,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '8.17.0'
+          node-version: '8.16.2'
       - run: node tests/equalizer_node8_smoke.js
       - run: node tests/equalizer_snapshot.test.js
       - run: node tests/equalizer_music.test.js
+      - run: node tests/equalizer_bmw_music.test.js

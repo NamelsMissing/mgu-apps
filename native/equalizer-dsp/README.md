@@ -1,4 +1,4 @@
-# Equalizer PCM DSP 0.2.1
+# Equalizer PCM DSP 0.2.2
 
 Gemeinsamer Hintergrunddienst für tatsächlich angeschlossene PCM-Audioquellen. Sieben parametrische Peaking-Filter verarbeiten die Audiosamples vor deren Ausgabe. Die Standardeinstellung ist Bypass.
 
@@ -22,7 +22,7 @@ Der MGU Store installiert dieses Tool als Abhängigkeit von Equalizer und Video 
 | `control.sock` | Eine JSON-Zeile, `op: status` oder `op: set` mit vollständigem `config` und `expectedRevision`; Antwort `{ok,data}` bzw. `{ok:false,error}` |
 | `pcm.sock` | JSON-Zeile `{protocol:1,format:"s16le",sampleRate:44100,channels:2,source:"app-name"}`; JSON-Bestätigung; danach je Block 4 Byte LE-Länge und PCM-Daten; Antwort im selben Blockformat |
 
-### Nativer Snapshot (neu in 0.2.1)
+### Nativer Snapshot (Layout 1)
 
 Zusätzlich schreibt der Dienst beim Start und nach jedem erfolgreichen `set` die aktive Konfiguration als `carplay.snapshot` in dasselbe Laufzeitverzeichnis. Das Format ist ein festes, versioniertes Binärlayout (204 Byte, Little Endian, Magic `MGEQSNP1`, Layout 1, CRC-32) und in `snapshot.js` beschrieben. Geschrieben wird atomar (temporäre Datei, `fsync`, `rename`), Modus `0640`. Ein Schreibfehler ist nicht fatal; er erscheint im Status unter `nativeSnapshot.error`, die Socket-Clients arbeiten unverändert weiter.
 
@@ -58,3 +58,9 @@ node tests/equalizer_node8_smoke.js
 Der erste Test misst die tatsächlich verarbeiteten Samples aller sieben Bänder bei 44,1 und 48 kHz. Die Socket-Tests prüfen den echten Hintergrunddienst und den Client. Der separate Node-8-Test prüft Zielruntime, Unix-Sockets, Konfigurationsänderung und +6-dB-Verarbeitung. GitHub Actions führt diese Prüfungen aus. In einer Umgebung, die `listen()` mit EPERM sperrt, kann der lokale DSP-Test nur die Kernprüfungen ausführen und meldet die Socket-Prüfungen ausdrücklich als übersprungen.
 
 Es liegen noch keine Messungen zur CPU-Last, Latenz oder hörbaren Ausgabe auf dem G21 vor. Die Filterkern-Tests messen digitale Samples; sie ersetzen keinen Fahrzeugtest.
+
+## Laufzeitverhalten in 0.2.2
+
+Bei schnellen Einstellungsänderungen beendet der Prozessor die laufende 25-ms-Überblendung und übernimmt danach die jüngste wartende Konfiguration. PCM-Formate werden pro Socket ausgehandelt. Die Schnittstelle bleibt auf S16LE mit den bisherigen Abtastraten und Kanalzahlen begrenzt.
+
+`frames` zählt empfangene beziehungsweise verarbeitete Frames auch im Bypass. `filteredFrames` und `lastFilteredAt` beziehen sich auf Blöcke mit aktivem Filter oder einem laufenden Übergang zum oder vom Filter. Diese Zähler messen Software-Verarbeitung. Geräteausgabe und akustische Wiedergabe erfordern eigene Nachweise. Die Snapshot-Datei bleibt ein atomarer 204-Byte-Datensatz mit Layout 1 und CRC-32.

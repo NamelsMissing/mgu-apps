@@ -2,7 +2,7 @@
   "id": "equalizer",
   "title": "Equalizer",
   "description": "Experimental seven-band audio equalizer with adjustable filters and saved presets.",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "vendor": "custom",
   "loggingId": "OA9E",
   "iconGlyph": "EQ",
@@ -15,7 +15,11 @@
         "getListMainSinkSoundProperties",
         "setMainSinkSoundProperty",
         "getListSystemProperties",
-        "setSystemProperty"
+        "setSystemProperty",
+        "getListMainSources",
+        "getListMainConnections",
+        "connect",
+        "disconnect"
       ],
       "_broadcasts": [
         "mainSinkSoundPropertyChanged",
@@ -36,6 +40,22 @@
       "_broadcasts": [
         "eqDataChanged"
       ]
+    },
+    "de.bmw.infotainment.entertainment.mediaplayer.MediaPlayer": {
+      "_instances": "OapGenericMedia",
+      "_optional": "BMW-Testmusik auf dieser Firmware nicht verfügbar",
+      "currentItemTime": "r",
+      "_methods": [
+        "playFile",
+        "sendButtonEvent"
+      ],
+      "_broadcasts": [
+        "playbackErrorEvent"
+      ]
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "_optional": "Stillstand kann nicht bestätigt werden",
+      "statusCarSpeed2": "rs"
     }
   },
   "screens": [
@@ -91,6 +111,22 @@
         [
           "BTN_SETTINGS",
           "Einstellungen"
+        ],
+        [
+          "BTN_BMW_ORIGINAL",
+          "BMW Original"
+        ],
+        [
+          "BTN_BMW_DSP",
+          "BMW DSP"
+        ],
+        [
+          "BTN_BMW_STOP",
+          "BMW Test stoppen"
+        ],
+        [
+          "BTN_PROFILE_EDIT",
+          "Profil bearbeiten"
         ]
       ]
     }

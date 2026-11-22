@@ -81,6 +81,24 @@ async function main() {
         const b = sine(48000, 100, 0.1, 0.1); processAudio(p, b); p.configure(v);
         assert.equal(processAudio(p, b).length, b.length); assert.equal(p.previous, null);
     });
+    await test('rapid filter edits preserve the current crossfade and apply only the latest queued settings', () => {
+        const rate = 48000;
+        const start = Core.defaults();
+        const changed = Core.defaults(); changed.enabled = true; changed.bands[0].gainDb = 12;
+        const discarded = Core.defaults(); discarded.enabled = true; discarded.bands[0].gainDb = -12;
+        const input = sine(rate, 100, 0.1, 0.02, false);
+        const processor = new Core.Processor(rate, 2, start);
+        const reference = new Core.Processor(rate, 2, start);
+        for (const p of [processor, reference]) { p.process(input); p.configure(changed); p.process(input.slice(0, 2000)); }
+        processor.configure(discarded);
+        processor.configure(start);
+        // Both outputs must remain identical until transition one is complete.
+        assert.deepStrictEqual(processor.process(input.slice(0, 2800)), reference.process(input.slice(0, 2800)));
+        assert.strictEqual(processor.current.enabled, false);
+        assert.strictEqual(processor.previous.enabled, true);
+        processor.process(Buffer.alloc(rate * 0.025 * 4));
+        assert.deepStrictEqual(processor.process(input), input);
+    });
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mgu-dsp-')), runtime = path.join(root, 'run'), stateFile = path.join(root, 'settings.json');
     const service = new Service({ runtime, stateFile });
     try {
@@ -123,6 +141,27 @@ async function main() {
             const v = Core.defaults(); service.set(v, service.revision);
             fs.writeFileSync(stateFile, 'broken'); const recovered = new Service({ runtime, stateFile });
             assert.equal(recovered.config.bands[3].gainDb, 6); assert(recovered.configError);
+        });
+        await test('format changes across connections preserve each negotiated rate and reject unsupported formats', async () => {
+            const cfg = Core.defaults();
+            service.set(cfg, service.revision);
+            for (const [sampleRate, channels] of [[44100, 1], [48000, 2], [88200, 1], [96000, 2]]) {
+                const pcm = Buffer.alloc(80, 91);
+                const out = await filtered(pcm, { runtime, sampleRate, channels, source: 'format_change' });
+                assert.deepStrictEqual(out, pcm);
+            }
+            let fallback = 0;
+            assert.deepStrictEqual(await filtered(Buffer.alloc(80, 119), { runtime, sampleRate: 32000, channels: 2,
+                onFallback: () => fallback++ }), Buffer.alloc(80, 119));
+            assert.strictEqual(fallback, 1);
+            await new Promise((resolve, reject) => {
+                const socket = net.connect(path.join(runtime, 'pcm.sock'), () => {
+                    socket.write(JSON.stringify({ protocol: 1, format: 's24le', sampleRate: 48000, channels: 2, source: 'format_change' }) + '\n');
+                });
+                socket.on('data', () => reject(new Error('Unexpected PCM format accepted')));
+                socket.on('error', reject);
+                socket.on('close', resolve);
+            });
         });
     } finally { await service.stop(); fs.rmSync(root, { recursive: true, force: true }); }
     console.log(tests + ' DSP tests passed');

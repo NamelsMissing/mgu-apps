@@ -80,8 +80,8 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Equalizer DSP**](apps/equalizer/README.md) | **0.2.4** | Experimental | Seven-band audio equalizer with filters and presets. Currently applies only to supported app playback paths, **not** system-wide CarPlay, radio or Bluetooth. |
-| [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.2** | Experimental / read-only | Displays SmartX, ALSA and DSP information for audio troubleshooting. It does not change sound settings. |
+| [**Equalizer DSP**](apps/equalizer/README.md) | **0.3.0** | Experimental | Seven-band PCM EQ, saved presets and a local BMW MediaPlayer A/B test. Direct CarPlay, radio and Bluetooth PCM routing remains unverified. |
+| [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.3** | Experimental / read-only | Displays CarPlay process metadata, AudioManager routes, SmartX, ALSA, and PCM client diagnostics. |
 
 ### Exterior lighting (use on private ground while parked)
 
@@ -104,7 +104,7 @@ The same [store catalog](mgu-repo.json) lists **13 apps** and **6 native helper 
 
 | Helper | Version | Used by |
 | --- | --- | --- |
-| `mgu-equalizer-dsp` | **0.2.1** | Equalizer DSP, Video Hub and Audio Diagnostics |
+| `mgu-equalizer-dsp` | **0.2.2** | Equalizer DSP, Video Hub and Audio Diagnostics |
 | `mgu-game-net` | **0.1.0** | GameStation phone controllers |
 | `mgu-gif-net` | **0.1.0** | GIF Home phone management |
 | `mgu-light-net` | **0.1.0** | Light Show phone remote |
@@ -145,6 +145,7 @@ This repository contains the apps' source code and build tools, but no BMW SDK. 
 | [Store catalog](mgu-repo.json) | All components, versions and dependencies the Store reads |
 | [Store installation notes](STORE_INSTALLATION.md) | Autostart and settings behaviour after Store updates |
 | [Equalizer DSP notes](native/equalizer-dsp/README.md) | DSP design, audio routing and limits |
+| [BMW audio integration report](docs/equalizer-audio-integration.md) | BMW MediaPlayer A/B test, CarPlay evidence and vehicle verification |
 | [ECU/PRG review](docs/ecu-prg-review-2026-11-03.md) | Technical diagnostic research |
 
 **Privacy:** never upload BMW SDK files, diagnostic PRG files, SSH keys, VINs, personal data or logs that contain sensitive vehicle information.

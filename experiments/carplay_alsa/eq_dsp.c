@@ -89,8 +89,7 @@ int mgu_eq_init(MguEqDsp *dsp, unsigned sample_rate, unsigned channels, const Mg
     return 0;
 }
 
-int mgu_eq_configure(MguEqDsp *dsp, const MguEqConfig *config) {
-    if (!dsp || !mgu_eq_valid(config, dsp->sample_rate)) return -1;
+static void begin_transition(MguEqDsp *dsp, const MguEqConfig *config) {
     MguEqBank next;
     make_bank(&next, dsp->sample_rate, config);
     const unsigned used = dsp->history_count < MGU_EQ_HISTORY_FRAMES ? dsp->history_count : MGU_EQ_HISTORY_FRAMES;
@@ -104,33 +103,73 @@ int mgu_eq_configure(MguEqDsp *dsp, const MguEqConfig *config) {
     dsp->current = next;
     dsp->fading = 1;
     dsp->fade_remaining = dsp->fade_frames;
+}
+
+int mgu_eq_configure(MguEqDsp *dsp, const MguEqConfig *config) {
+    if (!dsp || !mgu_eq_valid(config, dsp->sample_rate)) return -1;
+    if (dsp->fading) {
+        dsp->queued = *config;
+        dsp->has_queued = 1;
+    } else begin_transition(dsp, config);
     return 0;
 }
 
-int mgu_eq_process_s16le(MguEqDsp *dsp, const int16_t *in, int16_t *out, size_t frames) {
-    if (!dsp || !in || !out || frames > 4096 ||
+unsigned mgu_eq_sample_bytes(int format) {
+    switch (format) {
+    case MGU_EQ_S16_LE: return 2;
+    case MGU_EQ_S24_LE: return 4;
+    case MGU_EQ_S24_3LE: return 3;
+    default: return 0;
+    }
+}
+
+int mgu_eq_process(MguEqDsp *dsp, int format, const void *in, void *out, size_t frames) {
+    const unsigned bytes = mgu_eq_sample_bytes(format);
+    if (!dsp || !in || !out || !bytes || frames > 4096 ||
         (dsp->channels != 1 && dsp->channels != 2)) return -1;
+    const unsigned significant = format == MGU_EQ_S16_LE ? 2 : 3;
+    const int32_t scale = (int32_t)1 << (significant * 8 - 1);
+    const uint8_t *source = in;
+    uint8_t *dest = out;
     for (size_t frame = 0; frame < frames; ++frame) {
         const double mix = dsp->fading ? 1.0 - (double)dsp->fade_remaining / dsp->fade_frames : 1.0;
-        for (unsigned ch = 0; ch < dsp->channels; ++ch) {
-            const size_t index = frame * dsp->channels + ch;
-            const double input = in[index] / 32768.0;
+        for (unsigned ch = 0; ch < dsp->channels; ++ch, source += bytes, dest += bytes) {
+            int32_t pcm = (int32_t)source[0] | ((int32_t)source[1] << 8);
+            if (significant == 3) pcm |= (int32_t)source[2] << 16;
+            if (pcm >= scale) pcm -= 2 * scale;
+            const double input = (double)pcm / scale;
             dsp->history[dsp->history_pos][ch] = (float)input;
             double output = filter_sample(&dsp->current, input, ch);
             if (dsp->fading)
                 output = (1.0 - mix) * filter_sample(&dsp->previous, input, ch) + mix * output;
             if (!finite_value(output)) return -1;
-            long raw = lround(output * 32768.0);
-            if (raw > 32767) { raw = 32767; ++dsp->clipped_samples; }
-            if (raw < -32768) { raw = -32768; ++dsp->clipped_samples; }
-            out[index] = (int16_t)raw;
+            long raw = lround(output * scale);
+            if (raw >= scale) { raw = scale - 1; ++dsp->clipped_samples; }
+            if (raw < -scale) { raw = -scale; ++dsp->clipped_samples; }
+            if (!dsp->fading && !dsp->current.enabled) {
+                if (dest != source) memcpy(dest, source, bytes);
+            } else {
+                const uint32_t encoded = (uint32_t)raw;
+                for (unsigned byte = 0; byte < bytes; ++byte)
+                    dest[byte] = (uint8_t)(encoded >> (8 * byte));
+            }
             if (fabs(input) > dsp->peak_in) dsp->peak_in = fabs(input);
-            if (fabs(raw / 32768.0) > dsp->peak_out) dsp->peak_out = fabs(raw / 32768.0);
+            if (fabs((double)raw / scale) > dsp->peak_out) dsp->peak_out = fabs((double)raw / scale);
         }
         dsp->history_pos = (dsp->history_pos + 1) % MGU_EQ_HISTORY_FRAMES;
         if (dsp->history_count < MGU_EQ_HISTORY_FRAMES) ++dsp->history_count;
-        if (dsp->fading && --dsp->fade_remaining == 0) dsp->fading = 0;
+        if (dsp->fading && --dsp->fade_remaining == 0) {
+            dsp->fading = 0;
+            if (dsp->has_queued) {
+                dsp->has_queued = 0;
+                begin_transition(dsp, &dsp->queued);
+            }
+        }
     }
     dsp->frames_processed += frames;
     return 0;
+}
+
+int mgu_eq_process_s16le(MguEqDsp *dsp, const int16_t *in, int16_t *out, size_t frames) {
+    return mgu_eq_process(dsp, MGU_EQ_S16_LE, in, out, frames);
 }

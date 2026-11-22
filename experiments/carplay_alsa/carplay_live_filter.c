@@ -30,7 +30,6 @@ typedef int (*GetAccessFn)(const snd_pcm_hw_params_t *, int *);
 typedef snd_pcm_sframes_t (*WriteFn)(snd_pcm_t *, const void *, snd_pcm_uframes_t);
 typedef int (*CloseFn)(snd_pcm_t *);
 
-#define SND_PCM_FORMAT_S16_LE_VALUE 2
 #define ACCESS_MMAP_INTERLEAVED 0
 #define ACCESS_RW_INTERLEAVED 3
 #define MAX_WRITE_FRAMES 4096UL
@@ -54,7 +53,7 @@ static _Atomic(int) g_armed;
 static MguEqDsp g_dsp;
 static _Atomic(uint64_t) g_write_calls, g_processed_frames, g_bypassed_frames;
 static _Atomic(uint64_t) g_mmap_calls, g_unsupported, g_partials;
-static _Thread_local int16_t g_scratch[MAX_WRITE_FRAMES * 2];
+static _Thread_local uint8_t g_scratch[MAX_WRITE_FRAMES * 2 * 4];
 
 /* ---- Snapshot bridge: wait-free triple buffer (one producer, one consumer) ----
  * Slot ownership: the producer owns g_back, the audio thread owns g_front and the
@@ -192,7 +191,7 @@ void mgu_cp_live_snapshot(MguCarplayLiveStats *out) {
 int mgu_cp_live_arm(const MguEqConfig *config) {
     if (!config || !config->enabled) return -EINVAL;
     pthread_mutex_lock(&g_lock);
-    int ok = g_target && g_negotiated && g_format == SND_PCM_FORMAT_S16_LE_VALUE &&
+    int ok = g_target && g_negotiated && mgu_eq_sample_bytes(g_format) &&
         g_rate == 48000 && g_channels == 2 && (g_access==ACCESS_MMAP_INTERLEAVED || g_access==ACCESS_RW_INTERLEAVED) && mgu_eq_valid(config, g_rate);
     if (ok) {
         ok = mgu_eq_init(&g_dsp, g_rate, g_channels, config) == 0;
@@ -263,6 +262,10 @@ void mgu_cp_live_bridge_stop(void) {
         pthread_join(g_bridge_thread, NULL);
         g_bridge_thread_running = 0;
     }
+    pthread_mutex_lock(&g_bridge_lock);
+    bridge_publish(0, 0, NULL);
+    atomic_store(&g_bridge_active, 0);
+    pthread_mutex_unlock(&g_bridge_lock);
     pthread_mutex_unlock(&g_bridge_ctl_lock);
 }
 
@@ -285,15 +288,15 @@ int snd_pcm_hw_params(snd_pcm_t *pcm, snd_pcm_hw_params_t *params) {
     pthread_once(&g_once, resolve_symbols);
     if (!g_params) return -ENOSYS;
     int rc = g_params(pcm, params);
-    if (rc || !params || !g_format_get || !g_channels_get || !g_rate_get || !g_access_get) return rc;
     pthread_mutex_lock(&g_lock);
     if (is_target(pcm)) {
         clear_stream();
         int format = -1, access = -1, direction = 0; unsigned channels = 0, rate = 0;
-        if (!g_format_get(params, &format) && !g_channels_get(params, &channels) &&
+        if (!rc && params && g_format_get && g_channels_get && g_rate_get && g_access_get &&
+            !g_format_get(params, &format) && !g_channels_get(params, &channels) &&
             !g_rate_get(params, &rate, &direction) && !g_access_get(params, &access)) {
             g_format = format; g_channels = channels; g_rate = rate; g_access = access;
-            g_negotiated = format == SND_PCM_FORMAT_S16_LE_VALUE && channels == 2 && rate == 48000 &&
+            g_negotiated = mgu_eq_sample_bytes(format) && channels == 2 && rate == 48000 &&
                 (access == ACCESS_RW_INTERLEAVED || access == ACCESS_MMAP_INTERLEAVED);
         } else atomic_fetch_add(&g_unsupported, 1);
     }
@@ -328,7 +331,7 @@ static snd_pcm_sframes_t filter_write(snd_pcm_t *pcm, const void *buf,
         return original(pcm, buf, frames);
     }
     MguEqDsp previous = g_dsp; /* rollback snapshot for short/error writes */
-    if (mgu_eq_process_s16le(&g_dsp, (const int16_t *)buf, g_scratch, frames) != 0) {
+    if (mgu_eq_process(&g_dsp, g_format, buf, g_scratch, frames) != 0) {
         g_dsp = previous;
         atomic_fetch_add(&g_unsupported, 1);
         atomic_fetch_add(&g_bypassed_frames, frames);
@@ -340,7 +343,7 @@ static snd_pcm_sframes_t filter_write(snd_pcm_t *pcm, const void *buf,
         atomic_fetch_add(&g_partials, 1);
         g_dsp = previous;
         if (result > 0)
-            (void)mgu_eq_process_s16le(&g_dsp, (const int16_t *)buf, g_scratch, (size_t)result);
+            (void)mgu_eq_process(&g_dsp, g_format, buf, g_scratch, (size_t)result);
     }
     if (result > 0) atomic_fetch_add(&g_processed_frames, (uint64_t)result);
     if (g_fading_out && !g_dsp.fading) { atomic_store(&g_armed, 0); g_fading_out = 0; }

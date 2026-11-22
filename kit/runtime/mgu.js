@@ -547,7 +547,16 @@ async function runInner(impl) {
     const active = () => Promise.resolve().then(() => app.registerActive())
         .then(() => log.info('registered active')).catch((e) => log.warn('registerActive: ' + e));
     app.on('appStatusProxyReady', active);
-    app.on('shutdown', () => { log.info('shutdown requested by MainApp'); setTimeout(() => process.exit(0), 200); });
+    let shuttingDown = false, shutdownTask;
+    app.on('shutdown', () => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        log.info('shutdown requested by MainApp');
+        if (!shutdownTask) return setTimeout(() => process.exit(0), 200);
+        const limit = setTimeout(() => process.exit(0), 15000);
+        Promise.resolve().then(shutdownTask).catch((e) => log.warn('shutdown cleanup: ' + e))
+            .then(() => { clearTimeout(limit); process.exit(0); });
+    });
     // home-screen widget: MainApp hands it over (now or whenever one is placed)
     const widget = new Widget(SPEC.startWidget);
     if (SPEC.startWidget) {
@@ -572,6 +581,7 @@ async function runInner(impl) {
     const ctx = {
         app, ui, settings, log, spec: SPEC, dataDir: DATA_DIR, storageInfo: STORAGE_INFO, display, widget,
         signals: require('./signals'),
+        onShutdown(fn) { shutdownTask = fn; },
         theme: () => themes.theme(settings.get('theme')),
         /**
          * controller.grab(true): the iDrive controller's knob, press and tilt go to this app only

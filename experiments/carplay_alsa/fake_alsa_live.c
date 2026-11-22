@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-typedef struct _snd_pcm { int stream; char name[96]; } snd_pcm_t;
+typedef struct _snd_pcm { int stream; int format; char name[96]; } snd_pcm_t;
 typedef struct _snd_pcm_hw_params { int format; unsigned channels, rate; int access; } snd_pcm_hw_params_t;
 static double g_rms;
 static unsigned long g_frames;
@@ -16,7 +16,11 @@ int snd_pcm_open(snd_pcm_t **out,const char *name,int stream,int mode) {
     pcm->stream=stream;strncpy(pcm->name,name,sizeof(pcm->name)-1);
     *out=pcm;return 0;
 }
-int snd_pcm_hw_params(snd_pcm_t *pcm,snd_pcm_hw_params_t *p) {return pcm&&p?0:-1;}
+int snd_pcm_hw_params(snd_pcm_t *pcm,snd_pcm_hw_params_t *p) {
+    if (!pcm || !p) return -1;
+    pcm->format = p->format;
+    return 0;
+}
 int snd_pcm_hw_params_get_format(const snd_pcm_hw_params_t *p,int *out) {
     if (!p||!out) return -1;
     *out=p->format;return 0;
@@ -37,8 +41,16 @@ static long capture(snd_pcm_t *pcm,const void *buf,unsigned long frames) {
     if (!pcm||!buf) return -1;
     unsigned long used=g_short ? frames/2 : frames;
     g_frames=used;double sum=0;
-    const int16_t *in=(const int16_t *)buf;
-    for(unsigned long i=0;i<used*2;i++){double s=(double)in[i]/32768.0;sum+=s*s;}
+    const unsigned bytes = pcm->format == 6 ? 4 : pcm->format == 32 ? 3 : 2;
+    const int32_t scale = bytes == 2 ? 32768 : 8388608;
+    const uint8_t *in = buf;
+    for (unsigned long i = 0; i < used * 2; i++, in += bytes) {
+        int32_t value = in[0] | (in[1] << 8);
+        if (bytes > 2) value |= in[2] << 16;
+        if (value >= scale) value -= 2 * scale;
+        const double sample = (double)value / scale;
+        sum += sample * sample;
+    }
     g_rms=used?sqrt(sum/(used*2)):0;
     return (long)used;
 }

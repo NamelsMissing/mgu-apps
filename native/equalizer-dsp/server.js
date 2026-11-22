@@ -4,7 +4,7 @@ const path = require('path');
 const net = require('net');
 const Core = require('./core');
 const Snapshot = require('./snapshot');
-const VERSION = '0.2.1';
+const VERSION = '0.2.2';
 function mkdir(dir) { if (!fs.existsSync(dir)) fs.mkdirSync(dir, 0o770); }
 class Service {
     constructor(opts) {
@@ -20,7 +20,7 @@ class Service {
         }
     }
     status() {
-        const streams = Array.from(this.streams).map((s) => Object.assign({ source: s.label, lastFrameAt: s.lastFrameAt }, s.processor.stats()));
+        const streams = Array.from(this.streams).map((s) => Object.assign({ source: s.label, lastFrameAt: s.lastFrameAt, lastFilteredAt: s.lastFilteredAt }, s.processor.stats()));
         return { version: VERSION, revision: this.revision, config: Core.clone(this.config), saved: this.saved, configError: this.configError,
             streams, frames: this.closedFrames + streams.reduce((sum, s) => sum + s.frames, 0),
             routing: 'explicit-pcm-clients', stockCarPlayRouted: false, stockRadioRouted: false,
@@ -89,7 +89,7 @@ class Service {
                     if (this.streams.size >= 8) throw new Error('Too many PCM streams');
                     if (h.protocol !== 1 || h.format !== 's16le' || typeof h.source !== 'string') throw new Error('Invalid PCM handshake');
                     stream = { processor: new Core.Processor(h.sampleRate, h.channels, this.config),
-                        label: h.source.replace(/[^a-zA-Z0-9_. -]/g, '_').slice(0, 64), lastFrameAt: null };
+                        label: h.source.replace(/[^a-zA-Z0-9_. -]/g, '_').slice(0, 64), lastFrameAt: null, lastFilteredAt: null };
                     this.streams.add(stream); clearTimeout(helloTimer);
                     socket.write(JSON.stringify({ ok: true, protocol: 1 }) + '\n');
                 }
@@ -97,8 +97,11 @@ class Service {
                 if (length !== null && (length < 1 || length > 16384 || length % (stream.processor.channels * 2))) throw new Error('Invalid PCM frame size');
                 if (length === null || pending.length < length) return;
                 const input = pending.slice(0, length); pending = pending.slice(length); length = null;
+                const filtered = stream.processor.filteredFrames;
                 const output = stream.processor.process(input), header = Buffer.allocUnsafe(4); header.writeUInt32LE(output.length, 0);
-                stream.lastFrameAt = Date.now(); pumping = true; socket.pause();
+                stream.lastFrameAt = Date.now();
+                if (stream.processor.filteredFrames > filtered) stream.lastFilteredAt = stream.lastFrameAt;
+                pumping = true; socket.pause();
                 socket.write(Buffer.concat([header, output]), () => { pumping = false; socket.resume(); pump(); });
             } catch (e) { socket.destroy(); }
         };
