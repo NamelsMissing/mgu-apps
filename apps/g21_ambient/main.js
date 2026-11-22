@@ -4,6 +4,7 @@ const mgu = require('./kit/mgu');
 const A = require('./logic');
 const QR = require('./qr_log');
 const { SafeDiag } = require('./safe_diag');
+const { BmwColors } = require('./bmw_colors');
 const { AmbientProfiles, MODES, modeFromSignal } = require('./ambient_profiles');
 const { TABS, COLOR, FAVORITES, DRIVE_MODES, DIAGNOSTICS, LOG, PICKER, TRACK, SLIDERS,
     drawPage, valueEditor } = require('./hmi');
@@ -17,6 +18,7 @@ mgu.run({
     async start(ctx) {
         const settings = ctx.settings;
         const ctl = new SafeDiag(ctx);
+        const bmw = new BmwColors(ctx.signals, ctl.log, ctx.log);
         const profiles = new AmbientProfiles(settings);
         let tab = COLOR, favoriteSelected = 0, modeSelected = 0;
         let driveMode = null, colorNotice = '', favoriteNotice = '', modeNotice = '';
@@ -195,7 +197,8 @@ mgu.run({
             if (phase === 3) touchedSlider = null;
         });
 
-        ctl.init().catch(e => { ctl.ramStatus = 'TASU initialization: ' + e; });
+        ctl.init().catch(e => { ctl.log.add('TASU INIT', String(e), 'warning'); });
+        bmw.start().catch(e => { ctl.log.add('BMW SLOT INIT', String(e), 'warning'); });
         ctx.signals.watch('de.bmw.infotainment.drivingexcitement.FES', '1', {
             statusFESVehicleDynamicSwitchHMI: value => {
                 const next = modeFromSignal(value);
@@ -210,6 +213,10 @@ mgu.run({
         }, ctx.log, { pollMs: 2500 }).catch(e => ctx.log.warn('FES ambient mode: ' + e));
 
         let gridPreset, cachedGrid;
+        const openBmwSlots = () => {
+            setTab(DIAGNOSTICS);
+            diagnosticView = 'bmw';
+        };
         const colorModel = () => {
             const preset = selectedPreset(), color = selected();
             let grid;
@@ -230,7 +237,8 @@ mgu.run({
             return { color, preset, grid, brightness: brightness(), duration: duration(), notice,
                 confirming: ctl.bdcConfirming, busy: ctl.busy, online: ctl.online,
                 configured: ctl.bdcTestTargets.length > 0, ready: !!ctl.bdcSelection,
-                choosePreset, editSlider, apply };
+                choosePreset, editSlider, apply, openBmwSlots,
+                bmwSlot: bmw.slot, bmwAvailable: bmw.available };
         };
         const favoritesModel = () => ({
             favorites: Array.from({ length: 6 }, (_, i) => profiles.loadFavorite(i)),
@@ -277,7 +285,7 @@ mgu.run({
             },
         });
         const diagnosticsModel = () => ({
-            diag: ctl, view: diagnosticView, page: diagnosticPage, raw: diagnosticRaw, guidedResult, plan,
+            diag: ctl, bmw, view: diagnosticView, page: diagnosticPage, raw: diagnosticRaw, guidedResult, plan,
             color: selected(), brightness: brightness(), duration: duration(),
             select(view, result = false) {
                 diagnosticView = view; diagnosticPage = 0; diagnosticRaw = false; guidedResult = result;
@@ -289,7 +297,7 @@ mgu.run({
         });
         const openExport = format => {
             try {
-                const report = QR.createReport(ctl.report(ctx.spec ? ctx.spec.version : '0.4.6'), format);
+                const report = QR.createReport(Object.assign(ctl.report(ctx.spec ? ctx.spec.version : '0.4.7'), { bmwColors: bmw.report() }), format);
                 logExport = Object.assign(report, {page: 0, matrix: QR.matrix(report.pages[0])});
                 exportError = '';
             } catch (error) {
