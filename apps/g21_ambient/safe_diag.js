@@ -54,6 +54,7 @@ class SafeDiag {
         this.pending = null;
         this.bdcPending = null;
         this.bdcSelection = null;
+        this.experimentalLin = false;
         this.bdcRejected = new Set();
         this.lastBdcWrite = null;
         this.lastBdcWriteAt = null;
@@ -124,6 +125,63 @@ class SafeDiag {
         if (!this.parked) this.cancel();
     }
     cancel() { this.pending = null; this.bdcPending = null; }
+    setExperimentalLin(enabled) {
+        const value = enabled === true;
+        if (this.experimentalLin === value) return;
+        this.experimentalLin = value;
+        this.bdcSelection = null;
+        this.cancel();
+        this.log.add('BDC TEST MODE', value ?
+            'Experimental single-NAD mode enabled by user. LIN read records do NOT prove physical hardware.' :
+            'Experimental mode disabled', value ? 'warning' : 'info');
+    }
+    get bdcCandidates() {
+        if (!this.experimentalLin || !this.online) return [];
+        const options = [];
+        this.bdc.forEach((entry, index) => {
+            if (!entry.read || !entry.read.decoded || !this.fresh(entry.read) ||
+                !entry.valid || !this.fresh(entry.valid)) return;
+            for (const record of entry.valid.data.records) {
+                if (!record.valid || !Number.isInteger(record.nad) ||
+                    record.nad < 1 || record.nad > 26) continue;
+                options.push({bus: index + 1, nad: record.nad, location: record.location,
+                    verified: false, experimental: true});
+            }
+        });
+        return options;
+    }
+    get bdcTestTargets() {
+        const verified = this.bdcTargets.map(target => Object.assign({}, target, {verified: true}));
+        if (!this.experimentalLin) return verified;
+        const combined = verified.slice();
+        for (const target of this.bdcCandidates) {
+            if (!combined.some(t => t.bus === target.bus && t.nad === target.nad))
+                combined.push(target);
+        }
+        return combined.sort((a, b) => a.bus - b.bus || a.nad - b.nad);
+    }
+    get bdcGuidance() {
+        if (!this.online) return 'TASU unavailable. Reconnect and read BDC LIN 1 / 2.';
+        const w = this.wizard;
+        if (this.bdcTargets.length) return this.bdcTargets.length + ' target(s) from a verified BMW color comparison.';
+        if (this.experimentalLin && this.bdcCandidates.length)
+            return 'Experimental: read-only BDC records found. NAD mapping and actual light effect are NOT verified.';
+        if (w.step === 0) return 'Start Guided test: read baseline, change BMW color, compare, confirm LED result.';
+        if (w.step === 1) return 'Reading the BDC baseline. Wait for both LIN replies.';
+        if (w.step === 2) return 'Baseline only! Change color in BMW iDrive, then press Compare after BMW change.';
+        if (w.step === 3) return 'Comparing BDC LIN data after BMW color change.';
+        if (w.step === 4 && w.physical !== 'Yes') return 'Guided test step 4: confirm whether the LEDs visibly changed.';
+        if (w.step === 4 && !this.fresh(w.comparison)) return 'Comparison expired. Restart Guided test.';
+        if (w.step === 4 && w.comparison) {
+            const rows = w.comparison.rows || [];
+            const unchanged = rows.filter(row => row.status === 'Unchanged').length;
+            const invalid = rows.filter(row => (row.from && row.from.rgbw.slice(0, 3).includes(255)) ||
+                (row.to && row.to.rgbw.slice(0, 3).includes(255))).length;
+            return 'No verifiable RGB target. ' + unchanged + ' unchanged, ' + invalid +
+                ' RGB-255 record(s). Optional: enable Experimental single-NAD test in Settings.';
+        }
+        return 'No target found. Run Guided test, or enable Experimental single-NAD mode in Settings.';
+    }
     get bdcTargets() {
         const w = this.wizard;
         if (!this.online || w.step !== 4 || w.physical !== 'Yes' ||
@@ -132,19 +190,19 @@ class SafeDiag {
         return discoveredTargets(w.comparison.rows);
     }
     selectBdcTarget(bus, nad) {
-        const found = this.bdcTargets.find(target => target.bus === bus && target.nad === nad);
+        const found = this.bdcTestTargets.find(target => target.bus === bus && target.nad === nad);
         this.cancel();
         if (!found) {
             this.info = 'Target not proven. Run guided BMW-menu comparison first.';
             return false;
         }
         this.bdcSelection = {bus: found.bus, nad: found.nad, revision: this.connectionRevision};
-        this.info = 'BDC LIN ' + bus + ' NAD ' + nad + ' selected for a short, confirmed test.';
+        this.info = 'BDC LIN ' + bus + ' NAD ' + nad + (found.verified ? ' verified' : ' EXPERIMENTAL / UNVERIFIED') + ' selected.';
         this.log.add('BDC TARGET', this.info);
         return true;
     }
     nextBdcTarget(delta) {
-        const options = this.bdcTargets;
+        const options = this.bdcTestTargets;
         if (!options.length) { this.info = 'No changed LIN target was verified.'; return false; }
         const index = options.findIndex(x => this.bdcSelection &&
             x.bus === this.bdcSelection.bus && x.nad === this.bdcSelection.nad);
@@ -160,8 +218,8 @@ class SafeDiag {
         if (this.busy) return 'Diagnostics busy';
         const sel = this.bdcSelection;
         if (!sel || sel.revision !== this.connectionRevision ||
-            !this.bdcTargets.some(t => t.bus === sel.bus && t.nad === sel.nad))
-            return 'No verified LIN target. Use Diagnostics > Guided test, then BDC test.';
+            !this.bdcTestTargets.some(t => t.bus === sel.bus && t.nad === sel.nad))
+            return 'No selected LIN target. Complete Guided test or opt into Experimental mode in Settings.';
         if (this.bdcRejected.has(sel.bus + ':' + sel.nad)) return 'Target rejected the write (NRC 31). Test blocked.';
         if (this.lastBdcWriteAt !== null && Date.now() - this.lastBdcWriteAt < 3000)
             return 'Wait 3 seconds after the last request';
@@ -169,8 +227,8 @@ class SafeDiag {
         return '';
     }
     async applyBdc(color, brightness, seconds, isCurrent) {
-        if (!this.bdcSelection && this.bdcTargets.length === 1) {
-            const target = this.bdcTargets[0];
+        if (!this.bdcSelection && this.bdcTestTargets.length === 1) {
+            const target = this.bdcTestTargets[0];
             this.selectBdcTarget(target.bus, target.nad);
         }
         const blocked = this.bdcWriteReady;
@@ -191,12 +249,16 @@ class SafeDiag {
             return;
         }
         this.bdcPending = null;
+        // Recheck the exact selected target when confirmation is executed.
+        if (this.bdcWriteReady) { this.info = this.bdcWriteReady; return; }
+        const experimental = !this.bdcTargets.some(t => t.bus === target.bus && t.nad === target.nad);
         this.lastBdcWriteAt = Date.now();
         await this.run('BDC LIN single-target color test', async op => {
             const rec = await this.request(op, BDC, 0x2E, data,
                 'BDC LIN ' + target.bus + ' NAD ' + target.nad);
             rec.bus = target.bus;
             rec.nad = target.nad;
+            rec.experimental = experimental;
             rec.parameters = {on: data[3], brightness: data[4], rgb: data.slice(5, 8), seconds: data[8]};
             rec.acknowledged = accepted(rec, target.bus);
             rec.physical = 'Not checked';
@@ -205,8 +267,9 @@ class SafeDiag {
                 rec.status === STATUS.success ? 'Invalid BDC write acknowledgment' : describe(rec);
             this.lastBdcWrite = rec;
             this.info = rec.text;
-            this.log.add('BDC WRITE', 'LIN ' + target.bus + ' NAD ' + target.nad +
-                ' · ' + rec.text, rec.acknowledged ? 'success' : 'warning');
+            this.log.add('BDC WRITE', (experimental ? 'EXPERIMENTAL / UNVERIFIED · ' : 'Verified target · ') +
+                'LIN ' + target.bus + ' NAD ' + target.nad + ' · ' + rec.text,
+                rec.acknowledged ? 'success' : 'warning');
             return rec.status === STATUS.success && !rec.acknowledged ? STATUS.invalid : rec.status;
         });
     }
@@ -374,7 +437,10 @@ class SafeDiag {
     }
     startDiagnostics(wizard = false) {
         return this.run(wizard ? 'Guided test · baseline' : 'Read-only diagnostics', async op => {
-            if (wizard) this.wizard = {step: 1, physical: 'Not checked'};
+            if (wizard) {
+                this.wizard = {step: 1, physical: 'Not checked'};
+                this.bdcSelection = null;
+            }
             // RAM01 is not required for BDC LIN diagnostics.
             const bdc = await this.sampleBdc(op);
             if (wizard && !op.cancelled && this.saveReference(bdc.snapshot)) {
@@ -478,6 +544,8 @@ class SafeDiag {
             comparisonAttempt: this.comparisonAttempt,
             lastWrite: this.lastWrite, lastBdcWrite: this.lastBdcWrite,
             bdcSelection: this.bdcSelection, bdcTargets: this.bdcTargets,
+            bdcCandidates: this.bdcCandidates, experimentalLin: this.experimentalLin,
+            bdcGuidance: this.bdcGuidance,
             lastError: this.lastError, lastSuccess: this.lastSuccess,
             visual: {step: this.wizard.step, result: this.wizard.physical,
                 referenceAt: this.wizard.reference && this.wizard.reference.at, observedAt: this.wizard.observedAt,
