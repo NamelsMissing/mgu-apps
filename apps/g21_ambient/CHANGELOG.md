@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.5
+
+- Introduced PRG-documented BDC LIN 1/2 temporary RGB testing (DA5E/E3D1) with guarded, single-NAD writes only after guided comparison and visual confirmation.
+- Routed Apply to BDC instead of RAM01; RAM01 remains a legacy manual read-only diagnostic view.
+- Added fresh standstill gating, double confirmation, <=10 s test, NRC-31 target lockout, and independent ECU acknowledgment / operator-observed effect.
+- Left FDL menu position 11 offline and read-only; no production retrofit light control is claimed until a car test.
+
+
 ## 0.4.4
 
 - Added a read-only diagnostic sequence, dedicated RAM01 and two BDC LIN views, paginated raw responses, and a four-step guided test.
