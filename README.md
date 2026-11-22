@@ -51,15 +51,15 @@ You don't have to type on the car at all:
 
 ## Apps available from this main source
 
-Version numbers below are those in the **main** store catalog. **Stable** means tested on the developer's G21 for the described basic use; **Experimental** means not every vehicle configuration, background function or control path has been verified. Consult each app's guide before operating it.
+Version numbers below are those in the **main** store catalog. **Stable** means the described basic use has been reported working on a compatible vehicle; **Beta / Experimental** means important functions, vehicle variants or hardware control paths remain unverified. Versions below are repository versions on `main`, **not a readout of what is installed in your car**. Consult each app's guide and its vehicle-verification notes before operating it.
 
 ### Comfort and vehicle
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.4** | Stable / vehicle-specific | Automatic seat and steering-wheel heating with BDC or separate seat-module detection, settings saved between starts, manual controls, background startup and diagnostic logs. Actual ECU acceptance depends on the car. |
-| [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Stable / read-only | Displays live diesel particulate-filter readings and the recorded regeneration history. Does **not** start a forced regeneration. |
-| [**Ambient Lighting**](apps/g21_ambient/README.md) | **0.4.4** | Experimental | Sets interior ambient-light colors and brightness, stores favorite looks, and provides diagnostics for unsupported ECU requests. |
+| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.4** | Beta / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
+| [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Experimental / read-only | Requests diesel particulate-filter measurements and regeneration-history values from the DDE. DID scaling was reviewed offline; live routing and actual responses still need vehicle verification. Does **not** start forced regeneration. |
+| [**Ambient Lighting**](apps/g21_ambient/README.md) | **0.4.7** | Experimental | Reads the OEM BMW ambient-color status and offers manual selection of menu slots 1–12 with separate setter/readback feedback. Includes RGB previews, saved looks and carefully gated BDC LIN testing; aftermarket LED control is not yet verified. |
 
 ### Screens and cluster
 
@@ -87,7 +87,7 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Light Show**](apps/light_show/README.md) | **0.4.7** | Experimental | Scans supported lighting control units, lets you test visible lamp channels and create lighting effects with a 3D vehicle view and optional phone remote. Requires parked/P checks and careful recovery. |
+| [**Light Show**](apps/light_show/README.md) | **0.4.8** | Experimental | Scans supported BDC, headlamp and rear-light controllers; filters and tests individual outputs before allowing them in lighting effects. Includes 3D car view, phone remote, STOP and recovery reporting. Requires parked/P checks. |
 | [**Light Flasher**](apps/light_flasher/README.md) | **0.1.26** | Experimental | Configurable headlamp strobe sequences with a button or short high-beam stalk pulse, recovery and background observation. |
 
 Use lighting effects only while safely parked in P on private ground, with nobody in front of the car. **Light Flasher 0.1.26 does not enforce P or zero speed**, so this is a user safety requirement, not a claim that the software blocks operation while moving. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
@@ -96,7 +96,22 @@ Use lighting effects only while safely parked in P on private ground, with nobod
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Phone Terminal**](apps/mgu_phone_terminal/README.md) | **0.1.7** | Stable / advanced | Time-limited phone-browser terminal with QR pairing, commands, output and file downloads. Gives privileged access: keep it on a trusted local connection. |
+| [**Phone Terminal**](apps/mgu_phone_terminal/README.md) | **0.1.7** | Advanced / privileged | Temporary phone-browser terminal with QR pairing, commands, output and file downloads. Uses root privileges; verify local reachability and access controls on your MGU before relying on it. |
+
+### Background components installed with apps
+
+The same [store catalog](mgu-repo.json) lists **13 apps** and **6 native helper components**. These tools are dependencies, not additional user-facing MGU apps.
+
+| Helper | Version | Used by |
+| --- | --- | --- |
+| `mgu-equalizer-dsp` | **0.2.1** | Equalizer DSP, Video Hub and Audio Diagnostics |
+| `mgu-game-net` | **0.1.0** | GameStation phone controllers |
+| `mgu-gif-net` | **0.1.0** | GIF Home phone management |
+| `mgu-light-net` | **0.1.0** | Light Show phone remote |
+| `mgu-phone-bridge` | **0.1.6** | Phone Terminal |
+| `mgu-video-net` | **0.1.0** | Video Hub phone import |
+
+App and tool version numbers are maintained in `apps/*/app.json` and `native/*/component.json`, respectively; `mgu-repo.json` must match those files. Do not raise version numbers just to refresh documentation. A Store install or update also depends on the actual SDK, network access and vehicle setup.
 
 ### Apps moved to other repositories
 
