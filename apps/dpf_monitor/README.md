@@ -1,4 +1,4 @@
-# DPF Monitor 0.2.7 — BMW G21 B47 / D83BX7C0
+# DPF Monitor 0.2.8 — BMW G21 B47 / D83BX7C0
 
 Read-only iDrive 7 DPF monitor built with the `cauliflowermossgrape/idrive7-apps` kit and installable through MGU Store.
 

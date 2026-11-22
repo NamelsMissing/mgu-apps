@@ -67,7 +67,7 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 | --- | --- | --- | --- |
 | [**GIF Home**](apps/gif_home/README.md) | **0.3.1** | Stable | Animated GIFs in the iDrive home tile: included animations or uploads from a phone via QR code. |
 | [**Custom Cluster**](apps/custom_cluster/README.md) | **0.6.11** | Experimental | Alternative instrument-cluster layouts, navigation-related controls and diagnostics. KOMBI overlay tests are guarded by parked / selected-layout conditions; background startup does not activate an overlay by itself. |
-| [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | **0.1.4** | Experimental | Spotify lyrics on the iDrive screen, optionally in the cluster map region. The app supports background startup; display and lyric availability depend on Spotify data and network access. |
+| [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | **0.1.4** | Experimental | Spotify lyrics on the iDrive screen, optionally in the cluster map region, including an overlay mode with Waze visible. The app supports background startup; display and lyric availability depend on Spotify data and network access. |
 
 ### Entertainment (parked only)
 
@@ -83,14 +83,14 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 | [**Equalizer DSP**](apps/equalizer/README.md) | **0.2.4** | Experimental | Seven-band audio equalizer with filters and presets. Currently applies only to supported app playback paths, **not** system-wide CarPlay, radio or Bluetooth. |
 | [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.2** | Experimental / read-only | Displays SmartX, ALSA and DSP information for audio troubleshooting. It does not change sound settings. |
 
-### Exterior lighting (parked only)
+### Exterior lighting (use on private ground while parked)
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
 | [**Light Show**](apps/light_show/README.md) | **0.4.7** | Experimental | Scans supported lighting control units, lets you test visible lamp channels and create lighting effects with a 3D vehicle view and optional phone remote. Requires parked/P checks and careful recovery. |
-| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.24** | Experimental | Configurable headlamp strobe sequences using a button or a guarded short high-beam stalk pulse; service diagnostics, recovery and background observation. The faster sub-100 ms mode is experimental and button-only. |
+| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.24** | Experimental | Configurable headlamp strobe sequences using a button or a guarded short high-beam stalk pulse; service diagnostics, recovery and background observation. In 0.1.24, Fast Mode intervals can also be started by the stalk when its trigger is enabled. |
 
-Use lighting effects only on private ground, in P, with nobody in front of the car. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
+Use lighting effects only while safely parked in P on private ground, with nobody in front of the car. **Light Flasher 0.1.24 does not enforce P or zero speed for all triggers**, so this is a user safety requirement, not a claim that the software blocks operation while moving. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
 
 ### Tools
 

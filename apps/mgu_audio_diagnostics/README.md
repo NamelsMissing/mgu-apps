@@ -18,7 +18,7 @@ Die Oberflaeche benutzt wegen fehlender Umlaute im Renderer ASCII-Bezeichnungen 
 2. MGU Audio Diagnostics oeffnen, `Neu einlesen` waehlen und die Seite `AudioManager` aufrufen.
 3. `Diagnose exportieren` waehlen und die neue JSON senden. Falls die AudioManager-Methode nicht unterstuetzt wird, liefert `audioManager.errors` die jeweilige Diagnose.
 
-Diese App ersetzt weder einen AudioManager-registrierten Medienplayer noch den separaten [ALSA Null-Diagnoseplayer](../../experiments/mgu_alsa). Der vorhandene Equalizer 0.2.3 bleibt unveraendert.
+Diese App ersetzt weder einen AudioManager-registrierten Medienplayer noch den separaten [ALSA Null-Diagnoseplayer](../../experiments/mgu_alsa). Der vorhandene Equalizer 0.2.4 bleibt unveraendert.
 
 ## Installation
 
@@ -34,4 +34,4 @@ The BMW AudioManager returned **60 registered sources**, including `CarPlayMedia
 
 Next test while parked with CarPlay Spotify playing: update MGU Audio Diagnostics, select **Neu einlesen**, export again, and share `audioManager.connections` and `audioManager.errors`.
 
-No write, route modification, or media playback added. Existing Equalizer 0.2.3 stays untouched.
+No write, route modification, or media playback added. Existing Equalizer 0.2.4 stays untouched.

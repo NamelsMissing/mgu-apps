@@ -2,11 +2,11 @@
 
 Sieben echte parametrische Software-DSP-Bänder ergänzen die bisherige BMW-Klangsteuerung. Die Filter bearbeiten PCM-Audiosamples; sie sind unabhängig davon, ob das Fahrzeug ab Werk einen Siebenband-Equalizer anbietet.
 
-**Aktuell wirkt der DSP auf explizit angeschlossene PCM-Apps. Video Hub 0.1.1 ist angebunden. Stock-CarPlay und Radio sind noch nicht angebunden.** Die hörbare Ausgabe auf deinem G21 ist weiterhin ungetestet.
+**Aktuell wirkt der DSP auf explizit angeschlossene PCM-Apps. Video Hub 0.2.0 ist angebunden. Stock-CarPlay und Radio sind noch nicht angebunden.** Die hörbare Ausgabe auf deinem G21 ist weiterhin ungetestet.
 
 ## Installation über MGU Store
 
-Quelle **NamelsMissing/mgu-apps**, Kanal **main** aktualisieren und **Equalizer DSP** installieren. Der Store installiert dabei den Hintergrunddienst `mgu-equalizer-dsp` 0.2.1 und die Renderer-Abhängigkeiten. Für die konkrete Audioanbindung auch **MGU Video Hub** auf **0.1.1** aktualisieren.
+Quelle **NamelsMissing/mgu-apps**, Kanal **main** aktualisieren und **Equalizer DSP** installieren. Der Store installiert dabei den Hintergrunddienst `mgu-equalizer-dsp` 0.2.1 und die Renderer-Abhängigkeiten. Für die konkrete Audioanbindung auch **MGU Video Hub** auf **0.2.0** aktualisieren.
 
 Der Store baut das App-Paket auf der MGU mit deren eigenem SDK. Das Repository enthält keine BMW-SDK-Dateien oder Diagnose-PRGs.
 

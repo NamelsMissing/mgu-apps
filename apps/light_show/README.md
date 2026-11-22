@@ -17,9 +17,9 @@ identity. Whether an individual light turns on depends on the hardware. Add a co
 the show and start with **Chase**, which works with a single light. **Wig-Wag** needs a confirmed
 light on each side. There are no preselected channels.
 
-## What's new compared to 0.3.4 (mgu-apps)
+## From Light Show 0.3.4 to 0.4.7
 
-| | 0.3.4 | 0.4.0 beta |
+| | 0.3.4 | 0.4.7 |
 |---|---|---|
 | Lights | Headlamp LED channels (FLM02) | Headlamp LED channels (FLM02, FLM02X, FLM2_1), all exterior BDC light functions, every BDC exterior output, rear light modules (RLM2 functions, RLM_1 channels) |
 | Which car | Fixed addresses and FLM02 only | **Vehicle scan** reads the identity of every control unit and offers only what this car has |
