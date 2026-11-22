@@ -25,7 +25,7 @@ finally { Module._load = load; }
 async function screen(initial = {}, own = true) {
     const values = Object.fromEntries(app.settings.map(setting => [setting.key, setting.default]));
     Object.assign(values, initial);
-    const actions = {}, feeds = {}, hidden = [];
+    const actions = {}, feeds = {}, hidden = [], vehicleWrites = [];
     let draw, canvas, tab, touch, scroll, onChange, editor, writes = 0;
     let drawn = [];
     await start({
@@ -41,7 +41,12 @@ async function screen(initial = {}, own = true) {
             onChange: fn => { onChange = fn; },
         },
         signals: {
-            watch: async (_iface, _instance, handlers) => { Object.assign(feeds, handlers); },
+            watch: async (iface, _instance, handlers) => {
+                Object.assign(feeds, handlers);
+                return iface === 'de.bmw.infotainment.misc.ComfortFunctionIuK' && initial.mockBmw
+                    ? {proxy:{iface},error:null} : {proxy:null,error:'Not available in mock'};
+            },
+            set: async (proxy, field, value) => { vehicleWrites.push({proxy,field,value}); },
             proxy: async () => { throw new Error('Test without TASU'); },
         },
         log: { info() {}, warn() {} },
@@ -63,7 +68,7 @@ async function screen(initial = {}, own = true) {
         sheet: sheet => { if (own) editor = sheet; return own; },
     });
     const targets = () => { draw(); return canvas.targets; };
-    return { actions, feeds, targets, touch, scroll, tab, values, hidden, drawn() { draw(); return drawn; }, editor: () => editor, saves: () => writes,
+    return { actions, feeds, vehicleWrites, targets, touch, scroll, tab, values, hidden, drawn() { draw(); return drawn; }, editor: () => editor, saves: () => writes,
         press(key) {
             const target = targets().find(target => target.key === key);
             assert(target, 'missing controller/touch target: ' + key);
@@ -161,8 +166,8 @@ test('diagnostic views remain separate and Menu 11 remains offline', async () =>
     assert(ui.targets().some(target => target.key === 'diagnostics-start'));
     await ui.press('diagnostics-start');
     assert(ui.drawn().some(line => line.includes('TASU unavailable')));
-    ui.press('diag-ram');
-    await ui.press('read-ram');
+    ui.press('diag-bmw');
+    assert(ui.drawn().some(line => line.includes('ComfortFunctionIuK')));
     ui.press('diag-lin1');
     await ui.press('read-bdc');
     ui.press('lin-raw');
@@ -201,4 +206,25 @@ test('live log scrolls by targets, touch and renderer controller hook; QR export
         ui.press('log-clear');
         assert.match(footer(), /0–0 \/ 0/);
     }
+});
+
+test('BMW original slots use their own diagnostic screen and only manual SOME/IP actions', async () => {
+    const ui = await screen({ mockBmw: true });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(ui.vehicleWrites.length, 0, 'no setter automatically at startup');
+    ui.press('bmw-colors');
+    assert(ui.targets().some(t => t.key === 'bmw-slot-2') === false,
+        'slot writes unavailable before an actual BMW status');
+    ui.feeds.statusAmbientLightInteriorColour({
+        statusMenuAmbientePanoramicRoofInteriorLighting: 'FARBAUSWAHL_1',
+    });
+    assert(ui.targets().some(t => t.key === 'bmw-slot-2'));
+    await ui.press('bmw-slot-2');
+    assert.equal(ui.vehicleWrites.length, 1);
+    assert.equal(ui.vehicleWrites[0].field, 'ambientLightInteriorColour');
+    assert.equal(ui.vehicleWrites[0].value.controlMenuAmbientePanoramicRoofInteriorLighting, 'FARBAUSWAHL_2');
+    ui.feeds.statusAmbientLightInteriorColour({
+        statusMenuAmbientePanoramicRoofInteriorLighting: 'FARBAUSWAHL_2',
+    });
+    assert(ui.drawn().some(line => line.includes('BMW slot 2')));
 });
