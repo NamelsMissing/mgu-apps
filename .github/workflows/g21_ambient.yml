@@ -1,0 +1,23 @@
+name: G21 Ambient checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/g21_ambient/**'
+      - 'tests/ambient*.test.js'
+      - 'kit/runtime/**'
+      - '.github/workflows/g21_ambient.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ambient tests
+        run: node --test tests/ambient*.test.js tests/controls.test.js tests/g21_car_ui_smoke.test.js
+      - name: Node syntax check
+        run: |
+          for f in apps/g21_ambient/*.js; do node --check "$f"; done
