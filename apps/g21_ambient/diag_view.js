@@ -6,6 +6,7 @@ const {draw: drawQr} = require('./qr_log');
 
 const VIEWS = [['overview', 'Overview'], ['ram', 'RAM01'], ['lin1', 'LIN 1'], ['lin2', 'LIN 2'],
     ['compare', 'Compare'], ['guided', 'Guided test'], ['plan', 'Menu 11 plan']];
+const LOG_BOUNDS = {x: 49, y: 174, w: 1491, h: 301};
 const time = at => at ? new Date(at).toISOString().slice(11, 23) + ' UTC' : 'Unknown';
 const hex = (n, width) => n.toString(16).toUpperCase().padStart(width || 2, '0');
 const tx = record => record && record.sent ? bytes(record.tx) : 'Not sent';
@@ -237,7 +238,7 @@ function drawLog(cv, t, m, control) {
     button(cv, t, control, 651, 121, 182, 'Export Log', () => m.openExport('text'), 'log-export');
     button(cv, t, control, 490, 121, 150, 'Clear Log', m.clear, 'log-clear');
     cv.fillRect(49, 174, 1491, 301, '#101823');
-    cv.scroll = {y: 174, bar: {x: 49, y: 174, w: 1491, h: 301}};
+    cv.scroll = {id: 'ambient-log', bounds: LOG_BOUNDS, bar: LOG_BOUNDS};
     page.lines.forEach((row, i) => cv.text(row.text, 61, 196 + i * 22, 18,
         row.level === 'error' ? t.crit : row.level === 'warning' ? t.warn : row.level === 'success' ? t.accent : t.text,
         {font: 'num', cellWidth: 12, literal: true}));

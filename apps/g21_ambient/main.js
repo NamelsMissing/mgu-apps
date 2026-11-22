@@ -136,8 +136,8 @@ mgu.run({
             ['BTN_PAGE', 'BTN_PREV', 'BTN_NEXT', 'BTN_ACTION'].forEach(id => ctx.hideButton(id));
         }
         const scrollAvailable = typeof ctx.onScroll === 'function';
-        if (scrollAvailable) ctx.onScroll(dy => {
-            if (tab !== LOG || logExport || !Number.isFinite(dy)) return false;
+        if (scrollAvailable) ctx.onScroll((dy, id) => {
+            if (tab !== LOG || logExport || (id && id !== 'ambient-log') || !Number.isFinite(dy)) return false;
             scrollDelta += dy;
             const rows = Math.trunc(scrollDelta / 22);
             if (!rows) return true;

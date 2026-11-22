@@ -1,6 +1,6 @@
 # Prüfbericht zu G21 Ambient Lighting 0.4.4
 
-Ausgangspunkt ist der Main-Commit `08d32ccdc2b89fed2d822afb349843411f976462`. Die Ambient-App stand dort auf 0.4.3. Die Umsetzung liegt auf `dev/ambient-diagnostics`.
+Ausgangspunkt ist der Main-Commit `08d32ccdc2b89fed2d822afb349843411f976462`. Die Ambient-App stand dort auf 0.4.3. Die abschließende Prüfung auf `dev/ambient-diagnostics` integriert zusätzlich den während der Arbeit erschienenen Main-Commit `d5aeea7a1d454e0e928cee0a09d56f4d5ed79724` mit den gemeinsamen Canvas- und Scroll-Änderungen.
 
 ## Befunde und Korrekturen
 
@@ -42,13 +42,14 @@ Der QR-Encoder entspricht der MIT-lizenzierten AutoHeat-Bibliothek. Die App erze
 | Prüfung | Ergebnis |
 | --- | --- |
 | Gezielte Ambient-, Protokoll- und iDrive-Smoke-Tests mit `node --test tests/ambient*.test.js tests/controls.test.js tests/g21_car_ui_smoke.test.js` | 29 bestanden. Unter anderem positive und unbekannte RAM-Identität, Timeout, NRC 21/31, Schreibquittung ohne Sichtnachweis, fehlerhafte LIN-Länge, unterschiedliche Reihenfolge und doppelte Schlüssel, Abbruch, Antwortfilter, Einzelflug, Live-Log und QR-Rekonstruktion. |
-| Gesamte JavaScript-Suite mit `node --test tests/*.test.js` | 179 von 185 bestanden. Die sechs Abweichungen sind unten aufgeführt und auf dem unveränderten Ausgangscommit reproduziert. |
+| Zusätzliche Light-Show- und Renderer-Regressionstests mit `node --test tests/light_show*.test.js` | Beide Testsuiten bestanden, einschließlich begrenzter Touch-Gesten, Renderer und Drehregler. |
+| Gesamte JavaScript-Suite mit `node --test tests/*.test.js` | 180 von 186 bestanden. Die sechs Abweichungen sind unten aufgeführt und auf beiden unveränderten Main-Commits reproduziert. |
 | Python-Suite mit `python3 -m pytest -q tests` | 15 bestanden, zusätzlich sechs bestandene Subtests. Pytest meldet eine Deprecation-Warnung eines installierten Plugins. |
 | Node 8.17.0 und Store-Paketierung | Syntaxprüfung aller Ambient-JavaScript-Dateien und der betroffenen Kit-Dateien bestanden. Software-Vorschau unter Node 8 für alle fünf App-Seiten gerendert. Store-Build mit OAP SDK 24.10.2 erzeugte `.tgz` und `.mgu`. |
-| MGU-Emulator mit nativer Renderer-Emulation | Farbpresets und RGB-Touchbewegung, Diagnoseaufruf, Live-Log-Swipe, Sprung ans Ende, Drehregler-Scrollen und beide QR-Ansichten geprüft. Native Rückfallnavigation mit abgeschaltetem Touch-Routing geprüft. Der Emulator liefert keine Fahrzeugdiagnosedaten. |
+| MGU-Emulator mit nativer Renderer-Emulation | Farbpresets und RGB-Touchbewegung, Diagnoseaufruf, auf die Konsole begrenzten Live-Log-Swipe, Sprung ans Ende, Drehregler-Scrollen und beide QR-Ansichten geprüft. Native Rückfallnavigation mit abgeschaltetem Touch-Routing geprüft. Der Emulator liefert keine Fahrzeugdiagnosedaten. |
 | QR-Scanner und Rekonstruktion | Ein unabhängiger Decoder hat alle acht gerenderten Seiten pro Format gelesen. Automatisierte Tests prüfen bytegenaue Offline-Rekonstruktion bei beliebiger Seitenreihenfolge sowie Ablehnung unvollständiger Berichte. |
 
-Bereits auf dem Ausgangscommit fehlschlagende Tests:
+### Bereits auf dem Ausgangscommit fehlschlagende Tests
 
 - `tests/equalizer_snapshot.test.js` erwartet für das zweite Snapshot-Layout 416 Bytes und bekommt 384.
 - `tests/light_flasher_recovery.test.js` enthält zwei veraltete Quelltext-Erwartungen für Stillstands- beziehungsweise Recovery-Gates.
