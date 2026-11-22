@@ -17,6 +17,8 @@ const text = (cv, s, x, y, size, color, opts) =>
     cv.text(String(s), x, y, size, color, opts || {});
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const SEAT_MODULE_STOP_MAX_AGE_MS = 110000;
+const WHEEL_START_READ_MS = 2000;
+const WHEEL_STATUS_READ_MS = 15000;
 
 mgu.run({
     async start(ctx) {
@@ -51,8 +53,9 @@ mgu.run({
         let cycleReason = cycle.reason;
         const outside = { value: null, at: 0, raw: null };
         const acknowledged = new Set();
+        let wheelCheck = null;
         const seatModuleActivations = new Map();
-        let seatModuleVehicleOn = false;
+        let vehicleReportsOn = false;
         const pendingStops = new Set();
         const stopAttempts = new Map();
         let firstUiAt = 0, uiOpenCount = 0, cancelGeneration = 0;
@@ -293,7 +296,7 @@ mgu.run({
             VehicleCondition: value => {
                 const raw = value && value.statusConditionVehicle;
                 const before = cycle.mode;
-                seatModuleVehicleOn = Cycle.condition(raw) === 'on';
+                vehicleReportsOn = Cycle.condition(raw) === 'on';
                 if (Cycle.condition(raw) === 'on' && before !== 'on')
                     cycle.offMinutes = offMinutes();
                 const observed = cycle.observe(raw, Date.now());
@@ -318,6 +321,7 @@ mgu.run({
                     pendingStops.clear();
                     stopAttempts.clear();
                     acknowledged.clear();
+                    wheelCheck = null;
                     seatModuleActivations.clear();
                     // Only a real ON -> OFF cycle resets the QR log. An
                     // initial OFF observation at process boot is not a new
@@ -366,6 +370,7 @@ mgu.run({
 
         function stopAutoHeating() {
             cancelGeneration++;
+            wheelCheck = null;
             const cancelled = cycle.cancel();
             const active = auto.cancel();
             acknowledged.forEach(name => {
@@ -380,6 +385,46 @@ mgu.run({
                 '; cancelled=' + cancelled + '; timers=' + active.join(', ') +
                 '; ECU OFF queued=' + Array.from(pendingStops).join(', ') +
                 ' (only if ECU guards permit)');
+        }
+
+        function decodeWheelEntry(entry) {
+            return entry && entry.ok ? B.decodeWheelReadback(entry.payload) : null;
+        }
+
+        function wheelReportsIdle(state) {
+            return state && !state.on && state.led !== true && state.currentAmps === 0 && state.coded === true;
+        }
+
+        // Verify the actuator after an ACK even with the Diagnostics tab closed.
+        async function checkSteeringWheel() {
+            const check = wheelCheck, device = 'Steering wheel';
+            if (!check || Date.now() < check.nextReadAt || !auto.active.has(device) ||
+                !acknowledged.has(device) || !ctl.online) return;
+            const ok = await ctl.read(B.DID_HEAT, { callTimeoutMs: 2300, hardTimeoutMs: 3000 });
+            if (wheelCheck !== check) return;
+            const entry = ctl.readbacks[B.DID_HEAT];
+            const state = ok ? decodeWheelEntry(entry) : null;
+            record('WHEEL READBACK', (state ? B.readbackLabel(state, false) : 'Status unavailable') +
+                ' | ' + (entry && (entry.raw || entry.error) || ctl.info));
+
+            check.nextReadAt = Date.now() + WHEEL_STATUS_READ_MS;
+            if (!check.startIntent) return;
+            const original = check.startIntent;
+            if (Date.now() >= original.startUntil || !wheelReportsIdle(state)) {
+                check.startIntent = null;
+                return;
+            }
+            if (++check.offReads < 2) {
+                check.nextReadAt = Date.now() + WHEEL_START_READ_MS;
+                return;
+            }
+            // Allow one recovery after two explicit OFF/zero-current readings.
+            // The app keeps the original deadline and never retries a timeout.
+            check.startIntent = null;
+            const seconds = Math.min(original.data.seconds, auto.remaining(device, Date.now()));
+            if (seconds <= 0) return;
+            record('WHEEL RECOVERY', 'BDC still reports OFF after two readings; one guarded start retry');
+            await sendIntent(Object.assign({}, original, { data: { seconds }, wheelRecovery: true }));
         }
 
         function forgetSeatModuleActivation(name) {
@@ -403,7 +448,7 @@ mgu.run({
 
             const allowed = () => {
                 const now = Date.now();
-                if (!seatModuleVehicleOn || cycle.mode !== 'on' || cycle.onAt !== ignition) return false;
+                if (!vehicleReportsOn || cycle.mode !== 'on' || cycle.onAt !== ignition) return false;
                 const age = activation && seatModuleActivations.get(name) === activation && activation.ignition === ignition ?
                     now - activation.sentAt : Infinity;
                 if (stopping) return age >= 0 && age < SEAT_MODULE_STOP_MAX_AGE_MS;
@@ -473,6 +518,8 @@ mgu.run({
             intent.retryable = false;
             const startAllowed = () => {
                 if (intent.type !== 'ON') return true;
+                if (intent.wheelRecovery && (!vehicleReportsOn || !ctl.verifiedFor(B.DID_HEAT) ||
+                    !wheelReportsIdle(decodeWheelEntry(ctl.readbacks[B.DID_HEAT])))) return false;
                 const c = config(), current = tempReading(Date.now());
                 const selected = intent.device === 'Steering wheel' ? c.wheelAuto :
                     intent.device === 'Driver seat' ? c.seatDriver : c.seatPassenger;
@@ -547,10 +594,20 @@ mgu.run({
                     record('WRITE UNCONFIRMED', intent.device + ': outcome unknown; no blind ON retry');
                 return { ok: accepted, nrc: ctl.lastNrc };
             };
+            const initialWheelState = intent.device === 'Steering wheel' && intent.type === 'ON' ?
+                decodeWheelEntry(ctl.readbacks[B.DID_HEAT]) : null;
             const result = await attemptWrite(intent.attempt || 1);
             const ok = result.ok;
             if (ok && (intent.type === 'ON' || intent.type === 'EXTEND')) acknowledged.add(intent.device);
             if (ok && intent.type === 'OFF') acknowledged.delete(intent.device);
+            if (ok && intent.device === 'Steering wheel' && cycle.mode === 'on' && cycle.onAt === ignition &&
+                generation === cancelGeneration) {
+                const sentAt = Date.now();
+                wheelCheck = intent.type === 'OFF' ? null : {
+                    sentAt, nextReadAt: sentAt + WHEEL_START_READ_MS, offReads: 0,
+                    startIntent: !intent.wheelRecovery && wheelReportsIdle(initialWheelState) ? intent : null,
+                };
+            }
             // A UI cancellation can occur while a UDS write is awaiting its
             // ACK. In that case queue a guarded OFF at the next control step.
             if (ok && intent.type !== 'OFF' && generation !== cancelGeneration && cycle.mode === 'on')
@@ -560,7 +617,7 @@ mgu.run({
                 pendingStops.clear();
                 stopAttempts.clear();
             }
-            if (ok && intent.type === 'ON') {
+            if (ok && intent.type === 'ON' && !intent.wheelRecovery) {
                 const acceptedAt = Date.now();
                 ctx.settings.set('_autoCycleAt', acceptedAt);
                 cycleReason = 'POSITIVE BDC ON ACK: ' + intent.device + ' at ' +
@@ -678,10 +735,10 @@ mgu.run({
                     const index = id.state === 'ok' && id.payload.length >= 3 ?
                         id.payload.slice(0, 3).map(n => n.toString(16).toUpperCase().padStart(2, '0')).join('') : null;
                     const decision = E.reuseDecision(ecuProfile, index);
-                    if (decision.reuse) {
-                        ecuState = decision.verified ? 'STORED, VERIFIED' : 'STORED (BDC not reachable)';
-                        ecuDone = decision.verified;
-                        ecuVerified = decision.verified;
+                    if (decision.reuse && decision.verified) {
+                        ecuState = 'STORED, VERIFIED';
+                        ecuDone = true;
+                        ecuVerified = true;
                         record('ECU PROFILE', decision.reason + ': ' + E.summary(ecuProfile));
                         return;
                     }
@@ -731,13 +788,21 @@ mgu.run({
             record('ECU PROFILE', 'manual re-detection requested');
         }
 
+        function seatRoutePending(cfg, side) {
+            const r = ecuProfile && ecuProfile.routes[side];
+            return !r || r.route === 'unresolved' || r.route === 'unknown' ||
+                (!ecuVerified && E.allowsSeatModule(ecuProfile, cfg, side));
+        }
+
         async function autoStep() {
             if (busy || statusBusy) return;
             busy = true;
             try {
                 const now = Date.now(), cfg = config(), reading = tempReading(now);
-                const wantedSeats = { driver: cfg.seatDriver, passenger: cfg.seatPassenger };
                 cfg.seatModuleRoutes = { driver: viaSeatModule(cfg, 'driver'), passenger: viaSeatModule(cfg, 'passenger') };
+                cfg.pendingSeatRoutes = {
+                    driver: seatRoutePending(cfg, 'driver'), passenger: seatRoutePending(cfg, 'passenger'),
+                };
                 const skipped = E.applyRoutes(cfg, ecuProfile);
                 const skipNote = skipped.join('; ');
                 if (skipNote !== lastSkipNote) {
@@ -748,10 +813,10 @@ mgu.run({
                 // An OFF request still uses the route of our acknowledged ON.
                 for (const name of ['Driver seat', 'Passenger seat']) {
                     const active = auto.active.get(name);
-                    if (!active) continue;
+                    if (!active || active.pending) continue;
                     const side = E.DEVICE_KEY[name], module = E.SEAT_MODULES[side];
                     const usesSeatModule = active.on.viaSeatModule;
-                    if (usesSeatModule ? cfg.seatModuleRoutes[side] && cfg[module.seatSetting] && seatModuleVehicleOn &&
+                    if (usesSeatModule ? cfg.seatModuleRoutes[side] && cfg[module.seatSetting] && vehicleReportsOn &&
                         cfg.seatLevel === active.on.level : E.allows(ecuProfile, name))
                         continue;
                     auto.active.delete(name);
@@ -789,20 +854,12 @@ mgu.run({
                 // moving as long as speed data are fresh and BDC accepts writes.
                 const enabledForPlanner = cfg.autoEnabled && cycle.mayContinue() &&
                     (canStart || auto.active.size > 0);
-                // First start after install / BDC change: give the read-only
-                // detection a short, bounded chance (2 runs, max. 60 s after
-                // ignition ON) to settle a selected seat route before the
-                // one-shot plan is made. Afterwards plan with what is known.
-                const routePending = key => {
-                    const r = ecuProfile && ecuProfile.routes[key];
-                    return !r || r.route === 'unresolved' || r.route === 'unknown' ||
-                        (!ecuVerified && E.allowsSeatModule(ecuProfile, cfg, key));
-                };
-                const awaitingRoutes = !auto.fired && auto.active.size === 0 && cfg.autoEnabled &&
-                    cycle.mode === 'on' && cycle.canStart() && ecuAttempts < 2 &&
-                    now < cycle.onAt + 60000 && ctl.online &&
-                    ((wantedSeats.driver && routePending('driver')) ||
-                        (wantedSeats.passenger && routePending('passenger')));
+                // Each seat can wait for its route through the normal
+                // ignition start window while a verified channel starts.
+                const isWaiting = (name, side) => (!auto.fired || auto.active.has(name)) &&
+                    cfg[E.SEAT_MODULES[side].seatSetting] && cfg.pendingSeatRoutes[side];
+                const awaitingRoutes = enabledForPlanner && now < cfg.startUntil &&
+                    (isWaiting('Driver seat', 'driver') || isWaiting('Passenger seat', 'passenger'));
                 const plannerStatus = !cfg.autoEnabled ? 'OFF (setting)'
                     : awaitingRoutes ? 'WAITING FOR CONTROL-UNIT DETECTION'
                     : cycle.mode !== 'on' ? 'WAITING FOR VERIFIED VEHICLE ON'
@@ -823,7 +880,6 @@ mgu.run({
                         offMinutes() + 'm; vehicle=' + cycle.mode);
                     lastPlannerStatus = plannerStatus;
                 }
-                if (awaitingRoutes) return;
                 const wasFired = auto.fired;
                 const pendingBefore = Array.from(auto.active).filter(([, s]) => s.pending).map(([name]) => name);
                 const intents = auto.step({ now, tempC: reading.value, tempAt: reading.at,
@@ -861,6 +917,7 @@ mgu.run({
                                 '; no further automatic ON this ignition'));
                     }
                 }
+                await checkSteeringWheel();
             } catch (e) {
                 lastAction = 'Automatic heating error: ' + (e.message || String(e));
                 ctx.log.warn(lastAction);
@@ -920,7 +977,7 @@ mgu.run({
                 ctl.online && ctl.motionKnown && fresh;
             const status = !c.autoEnabled ? 'AUTOMATION OFF'
                     : Array.from(auto.active.values()).some(s => s.pending) ? 'WAITING FOR ECU / START RETRY'
-                    : auto.active.size ? 'HEATING SCHEDULE ACTIVE'
+                    : auto.active.size ? 'AUTOMATIC CYCLE SCHEDULED'
                     : cycle.mode !== 'on' ? 'WAITING FOR VERIFIED IGNITION ON'
                     : !cycle.mayContinue() ? 'CANCELLED FOR THIS DRIVE'
                     : auto.fired ? 'CYCLE FINISHED FOR THIS DRIVE'
@@ -935,14 +992,26 @@ mgu.run({
             // configured -> skipped (route) -> pending -> ECU ACK. An ACK is not
             // proof of physical heating.
             const blocked = key => !viaSeatModule(c, key) && !E.allows(ecuProfile, key);
-            const planText = (key, on, value) => !on ? 'Off' : blocked(key) ?
-                'Skipped: ' + E.routeLabel(ecuProfile, key) : value;
+            const planText = (key, on, value) => {
+                if (!on) return 'Off';
+                if (!blocked(key)) return value;
+                return key !== 'wheel' && seatRoutePending(c, key) ?
+                    'Waiting for control unit' : 'Skipped: ' + E.routeLabel(ecuProfile, key);
+            };
             const confirmText = (device, key, on) => {
                 if (!on) return 'Off';
+                const a = auto.active.get(device);
+                if (a && a.pending && key !== 'wheel' && seatRoutePending(c, key))
+                    return 'waiting for control unit';
                 if (blocked(key)) return 'skipped (' + E.routeLabel(ecuProfile, key) + ')';
+                if (key === 'wheel' && acknowledged.has(device)) {
+                    const entry = ctl.readbacks[B.DID_HEAT];
+                    const fresh = wheelCheck && entry && entry.at > wheelCheck.sentAt && now - entry.at <= 30000;
+                    const decoded = fresh ? decodeWheelEntry(entry) : null;
+                    return B.readbackLabel(decoded, false) || 'BDC ACK (status unconfirmed)';
+                }
                 if (acknowledged.has(device))
                     return (seatModuleActivations.has(device) ? E.SEAT_MODULES[key].id : 'BDC') + ' ACK (heat not verified)';
-                const a = auto.active.get(device);
                 if (a && a.pending) return 'start pending';
                 return 'configured';
             };

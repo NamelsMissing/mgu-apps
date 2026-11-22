@@ -94,6 +94,38 @@ test('G05: both seat modules, BDC seat NRC 0x22 -> wheel only', async () => {
     assert.equal(E.readsBdcSeat(p, 'wheel'), true);
 });
 
+test('gateway NRC 25 needs two detection runs and valid BDC status before using BDC seats', async () => {
+    const c = car(Object.assign({}, G21, {
+        '6d:f150': nrc(0x25), '6e:f150': nrc(0x25), '40:e430': pos(0xE430, 0xff, 0xff),
+    }));
+    const first = await E.detect(c.probe, { now: 0 });
+    assert.equal(first.ecus.SMFA.presence, 'unknown');
+    assert.equal(first.ecus.SMFA.timeoutRuns, 1);
+    const next = await E.detect(c.probe, { now: 25000, previous: first });
+    assert.equal(next.routes.driver.route, 'bdc');
+    assert.equal(next.routes.passenger.route, 'unresolved');
+    assert.equal(next.ecus.SMBF.timeoutRuns, 0);
+});
+
+test('old gateway NRC 25 conflict is re-detected, an identified seat module is retained', async () => {
+    const { p } = await runs(G21, [0, 25000]);
+    p.ecus.SMFA = Object.assign({}, p.ecus.SMFA, { state: 'nrc', nrc: 0x25, presence: 'present', present: true });
+    p.routes.driver = { route: 'conflict', allowsAuto: false };
+    const migrated = E.load(E.serialize(p));
+    assert.equal(migrated.complete, false);
+    assert.equal(migrated.routes.driver.route, 'unresolved');
+    assert.equal(migrated.ecus.SMFA.timeoutRuns, 0);
+    assert.equal(migrated.routes.passenger.route, 'bdc');
+
+    const first = (await runs(G05, [0])).p;
+    const next = await E.detect(car(Object.assign({}, G05, {
+        '6d:f150': nrc(0x25), '40:e432': G21['40:e432'],
+    })).probe, { now: 25000, previous: first });
+    assert.equal(next.ecus.SMFA.presence, 'present');
+    assert.equal(next.ecus.SMFA.sgbd, 'FAS_G11');
+    assert.equal(next.routes.driver.route, 'conflict');
+});
+
 test('reported fault: SMFA silent at first, answers later -> never stored as BDC route', async () => {
     const flaky = Object.assign({}, G05, { '6d:f150': n => n <= 2 ? undefined : G05['6d:f150'] });
     const c = car(flaky);

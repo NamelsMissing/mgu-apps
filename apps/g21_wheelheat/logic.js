@@ -39,12 +39,13 @@ function temperatureInput(realValue, realAt, simulationEnabled, simulationC, now
  * UDS 62 D0 74. Unknown/truncated values are never guessed as OFF. */
 function decodeWheelReadback(payload) {
     if (!Array.isArray(payload) || payload.length < 2 ||
-        (payload[0] !== 0 && payload[0] !== 1) ||
-        (payload[1] !== 0 && payload[1] !== 1)) return null;
-    return { on: payload[0] === 1, led: payload[1] === 1,
-        currentAmps: payload.length > 2 ? payload[2] / 10 : null,
+        (payload[0] !== 0 && payload[0] !== 1)) return null;
+    const flag = n => n === 0 ? false : n === 1 ? true : null;
+    const current = payload[2];
+    return { on: payload[0] === 1, led: flag(payload[1]),
+        currentAmps: Number.isInteger(current) && current >= 0 && current <= 254 ? current / 10 : null,
         actuator: payload.length > 3 ? payload[3] : null,
-        coded: payload.length > 4 ? payload[4] === 1 : null };
+        coded: flag(payload[4]) };
 }
 /** BDC_G05.prg RES_0xE432_D / RES_0xE430_D:
  * status, level, seat cushion/back temperatures, reduction, emergency,
@@ -67,7 +68,10 @@ function decodeSeatReadback(payload) {
 function readbackLabel(decoded, seat) {
     if (!decoded) return null;
     if (seat) return decoded.on ? 'ON  |  Level ' + decoded.level : 'OFF (BDC report)';
-    return decoded.on ? 'ON  |  LED ' + (decoded.led ? 'ON' : 'OFF') : 'OFF (BDC report)';
+    const state = decoded.on ? 'BDC ON' : 'BDC OFF';
+    const current = decoded.currentAmps === null ? 'current unavailable' : decoded.currentAmps.toFixed(1) + ' A';
+    const led = decoded.led === null ? '' : '  |  LED ' + (decoded.led ? 'ON' : 'OFF');
+    return state + '  |  ' + current + led;
 }
 module.exports = { ECU, DID_HEAT, DID_LED, DID_SEAT_DRIVER, DID_SEAT_PASSENGER,
     TIMES, heating, led, seat, exteriorTemp, temperatureInput,

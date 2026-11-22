@@ -54,6 +54,7 @@ function boot(t, car, settingsOverride, dir) {
     };
     const watchers = {}, clicks = {};
     let qrText = '', render = null;
+    let wheelUntil = null;
     class FakeDiag {
         constructor() { this.p = {}; this.available = true; }
         async init() {}
@@ -63,13 +64,18 @@ function boot(t, car, settingsOverride, dir) {
             if (sid === 0x22) {
                 const key = addr.toString(16) + ':' + did.toString(16);
                 counts[key] = (counts[key] || 0) + 1;
-                let r = car[key];
-                if (typeof r === 'function') r = r(counts[key]);
+                const r = car[key];
+                if (typeof r === 'function') return (await r(counts[key])) || null;
+                if (key === '40:d074' && wheelUntil !== null && r && r[0] === 0x62) {
+                    return Date.now() < wheelUntil ? pos(0xD074, 1, 0, 0x44, 2, 1) : pos(0xD074, 0, 0, 0, 1, 1);
+                }
                 return r === undefined ? null : r;
             }
             if (sid === 0x2E) {
-                if (car.write) return car.write(addr, data);
-                return [0x6E, data[0], data[1]];
+                const reply = car.write ? await car.write(addr, data) : [0x6E, data[0], data[1]];
+                if (addr === 0x40 && did === 0xD074 && reply && reply[0] === 0x6E)
+                    wheelUntil = Date.now() + data[2] * 1000;
+                return reply;
             }
             return null;
         }
@@ -169,7 +175,7 @@ test('G05: wheel automated, seats skipped, no seat write and no seat retries', a
     // Main screen: configured vs skipped vs confirmed.
     const main = app.screen().join('\n');
     assert.match(main, /Driver seat: skipped \(Seat module SMFA \(read-only\)\)/);
-    assert.match(main, /Steering wheel: BDC ACK \(heat not verified\)/);
+    assert.match(main, /Steering wheel: BDC ON +\| +6\.8 A/);
     // Diagnostics refresh: no BDC seat reads, module + IHKA once each.
     app.clicks.BTN_PAGE();
     const before = app.requests.length;
@@ -204,7 +210,7 @@ for (const level of [1, 2, 3]) {
         const screen = app.screen().join('\n');
         assert.match(screen, /Driver seat: SMFA ACK/);
         assert.match(screen, /Passenger seat: SMBF ACK/);
-        assert.match(screen, /Steering wheel: BDC ACK/);
+        assert.match(screen, /Steering wheel: BDC ON +\| +6\.8 A/);
         await app.tick(300000);
         assert.deepEqual(wrote(app, 0xD074).map(w => w.data[2]), [180, 0]);
         assert.deepEqual(wrote(app, 0xE432).concat(wrote(app, 0xE430)), []);
@@ -442,6 +448,84 @@ test('G21 without seat modules: BDC seat heating still works after absence is co
     const ids = second.requests.filter(r => r.did === 0xF150);
     assert.deepEqual(ids.map(r => r.addr), [0x40], 'only the BDC is re-identified');
     assert(second.kinds('ECU PROFILE').some(e => /BDC identity matches stored profile/.test(e.message)));
+});
+
+test('G21 seats can start after late detection in the same ignition while the wheel starts first', async t => {
+    withTimers(t);
+    const car = Object.assign({}, G21, {
+        '6d:f150': nrc(0x25), '6e:f150': nrc(0x25),
+        '40:e432': n => n <= 2 ? nrc(0x22) : G21['40:e432'],
+    });
+    const app = boot(t, car);
+    await app.drive(93);
+    await app.tick(35000);
+    assert.equal(wrote(app, 0xD074).length, 1);
+    assert.equal(wrote(app, 0xE432).length, 0);
+    assert.equal(wrote(app, 0xE430).length, 1);
+    assert.match(app.screen().join('\n'), /Driver seat: waiting for control unit/);
+    // The first valid driver-seat response provides one run of absence evidence.
+    await app.tick(65000);
+    assert.equal(wrote(app, 0xE432).length, 1);
+    assert.equal(wrote(app, 0xE430).length, 1);
+    assert(wrote(app, 0xE432)[0].at > wrote(app, 0xE430)[0].at);
+    assert.equal(wrote(app, 0xD714).length, 0);
+});
+
+test('wheel ACK with two OFF reads recovers once and keeps the original OFF time', async t => {
+    withTimers(t);
+    let starts = 0;
+    const car = Object.assign({}, G21, {
+        '40:d074': () => starts >= 2 ? pos(0xD074, 1, 0, 0x44, 2, 1) : G21['40:d074'],
+        write(_addr, data) {
+            if (data[0] === 0xD0 && data[1] === 0x74 && data[2] > 0) starts++;
+            return [0x6E, data[0], data[1]];
+        },
+    });
+    const app = boot(t, car, { seatDriver: false, seatPassenger: false });
+    await app.drive(93);
+    await app.tick(30000);
+    const [first, retry] = wrote(app, 0xD074);
+    assert.equal(starts, 2);
+    assert.equal(first.data[2], 180);
+    assert.equal(retry.data[2], 180 - Math.floor((retry.at - first.at) / 1000));
+    assert.equal(app.kinds('WHEEL RECOVERY').length, 1);
+    assert.match(app.screen().join('\n'), /Steering wheel: BDC ON +\| +6\.8 A/);
+    await app.tick(180000);
+    const writes = wrote(app, 0xD074);
+    assert.equal(writes.length, 3);
+    assert.equal(writes[2].data[2], 0);
+    assert.equal(writes[2].at - first.at, 180000);
+});
+
+test('wheel ON with zero current is reported as such and does not trigger recovery', async t => {
+    withTimers(t);
+    const car = Object.assign({}, G21, { '40:d074': () => pos(0xD074, 1, 3, 0, 2, 1) });
+    const app = boot(t, car, { seatDriver: false, seatPassenger: false });
+    await app.drive(93);
+    await app.tick(32000);
+    assert.equal(wrote(app, 0xD074).length, 1);
+    assert.equal(app.kinds('WHEEL RECOVERY').length, 0);
+    assert.match(app.screen().join('\n'), /Steering wheel: BDC ON +\| +0\.0 A/);
+});
+
+test('wheel monitoring respects a later manual off and never repeats a failed recovery', async t => {
+    withTimers(t);
+    let manuallyOff = false;
+    const manual = boot(t, Object.assign({}, G21, {
+        '40:d074': n => n > 2 && !manuallyOff ? pos(0xD074, 1, 0, 0x44, 2, 1) : G21['40:d074'],
+    }), { seatDriver: false, seatPassenger: false });
+    const neverStarts = boot(t, Object.assign({}, G21, {
+        '40:d074': () => G21['40:d074'],
+    }), { seatDriver: false, seatPassenger: false });
+    await manual.drive(93);
+    await neverStarts.drive(93);
+    await manual.tick(30000, neverStarts);
+    assert.match(manual.screen().join('\n'), /Steering wheel: BDC ON/);
+    manuallyOff = true;
+    await manual.tick(60000, neverStarts);
+    assert.equal(wrote(manual, 0xD074).length, 1);
+    assert.equal(wrote(neverStarts, 0xD074).length, 2);
+    assert.match(manual.screen().join('\n'), /Steering wheel: BDC OFF +\| +0\.0 A/);
 });
 
 test('only SMFA installed: passenger via BDC, driver skipped', async t => {

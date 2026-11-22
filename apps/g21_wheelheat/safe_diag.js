@@ -69,7 +69,7 @@ class SafeDiag {
         return '';
     }
     cancel() { this.pending = null; }
-    async read(did) {
+    async read(did, options) {
         this.cancel();
         this.lastReadNrc = null;
         if (this.busy) { this.info = 'Diagnostics busy'; return false; }
@@ -78,7 +78,8 @@ class SafeDiag {
         this.busy = true;
         const data = [did >> 8, did & 255];
         try {
-            const u = await this.diag.physical(this.target, 0x22, data, 2300, replyTo(0x22, data), { maxRetries: 0 });
+            const u = await this.diag.physical(this.target, 0x22, data, 2300, replyTo(0x22, data),
+                Object.assign({}, options, { maxRetries: 0 }));
             if (u && u.length > 3 && u[0] === 0x62 && u[1] === data[0] && u[2] === data[1]) {
                 this.verifiedAt[did] = Date.now();
                 this.readText = bytes(u);

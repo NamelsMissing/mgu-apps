@@ -36,13 +36,13 @@ Route per channel:
 | **Unresolved** | seat module not identified yet, or BDC seat DID not readable | no, detection retries |
 | **Not available** | NRC 0x31 | no |
 
-- A missing reply is not proof that a control unit is missing. A seat module counts as absent only
-  after it stayed silent in two detection runs at least 20 s apart while the BDC answered. A module
-  that answered once stays "present". Busy/offline errors never count.
+- A seat module is treated as absent after two detection runs at least 20 s apart with no module
+  reply and a responsive BDC. Gateway NRC 0x25 counts as a missing reply only when the BDC reports
+  a valid status for the corresponding seat. A directly identified module stays present.
 - Unresolved routes are retried: up to 5 runs per ignition (20–30 s apart), then every 10 min; a new
   ignition starts again. Confirmed-absent modules are not polled again.
-- On the first start after install or after a BDC change, the one-time plan waits up to 60 s after
-  ignition ON for the seat routes (two detection runs). Afterwards it plans with what is known.
+- Each selected seat can wait for route detection throughout the two-minute ignition start window.
+  A detected heating channel can start while the other channels are still being checked.
 - Seat ON/EXTEND is checked against the route again right before every write. If a route stops being
   verified during a session, the app cancels the schedule and requests a guarded OFF through the
   same control unit that acknowledged ON.
@@ -51,7 +51,13 @@ Route per channel:
 The profile is saved in the app settings. On the next start only the BDC identification is read
 again; a complete profile of the same BDC is reused, an incomplete one is completed, a different BDC
 starts from scratch. 0.5.1 profiles are migrated and always re-detected (0.5.1 could treat a silent
-seat module as missing). Diagnostics → **RE-DETECT ECUs** forces a new detection.
+seat module as missing). Cached seat-module entries inferred solely from gateway NRC 0x25 are
+re-detected. Diagnostics → **RE-DETECT ECUs** forces a new detection.
+
+While an automatic wheel cycle runs, the Comfort tab periodically shows the BDC status and its
+reported heating current. If the controller reported OFF before the start and again on two fresh,
+consecutive zero-current readings after the acknowledgment, one guarded retry is allowed within
+the start window. The original deadline still controls switch-off.
 
 Diagnostics tab: the steering wheel is read from the BDC (`D074`); BDC seat DIDs are only read where
 the route can use them. Seats on a seat module show the module's own `D714` value; the IHKA line
@@ -68,7 +74,7 @@ and [the diagnostic definitions](../../docs/sgbd-seat-heating.md).
 The "Test next ignition ON" switch also works while the app is already running, and it applies
 to exactly one ignition.
 
-## Experimental seat-module heating (0.5.3)
+## Experimental seat-module heating
 
 For the driver, enable **Driver seat heating** and **Experimental SMFA driver heating**.
 For the passenger, enable **Passenger seat heating** and **Experimental SMBF passenger heating**.

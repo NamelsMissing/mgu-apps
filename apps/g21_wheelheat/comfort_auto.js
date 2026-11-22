@@ -51,7 +51,7 @@ class ComfortAuto {
                     Number.isFinite(tempC) && Number.isFinite(tempAt) &&
                     tempAt <= now && now - tempAt <= SENSOR_AGE_MS &&
                     tempC <= Number(cfg.belowTemp)) {
-                    this.issueStart(device, s, now, out);
+                    this.issueStart(device, s, now, out, cfg);
                 }
                 continue;
             }
@@ -88,11 +88,10 @@ class ComfortAuto {
         };
         if (cfg.wheelAuto) plan.push(['Steering wheel', secs(cfg.wheelMins), { seconds: secs(cfg.wheelMins) }, { seconds: 0 }]);
         const level = Number(cfg.seatLevel);
-        const seatModuleRoutes = cfg.seatModuleRoutes || {};
         if (cfg.seatDriver) plan.push(['Driver seat', secs(cfg.seatMins),
-            { side: 'driver', level, viaSeatModule: seatModuleRoutes.driver === true }, { side: 'driver', level: 0 }]);
+            { side: 'driver', level }, { side: 'driver', level: 0 }]);
         if (cfg.seatPassenger) plan.push(['Passenger seat', secs(cfg.seatMins),
-            { side: 'passenger', level, viaSeatModule: seatModuleRoutes.passenger === true }, { side: 'passenger', level: 0 }]);
+            { side: 'passenger', level }, { side: 'passenger', level: 0 }]);
         // Validate all parameter values before emitting any action.
         for (const [device, sec, value] of plan) {
             if (sec < 1 || sec > 1200 || ((device !== 'Steering wheel') && (!Number.isInteger(value.level) || value.level < 1 || value.level > 3))) {
@@ -106,12 +105,15 @@ class ComfortAuto {
                 pending: true, startUntil, attempts: 0, nextAttemptAt: now,
                 inFlight: null, nextRenewAt: Infinity };
             this.active.set(device, s);
-            this.issueStart(device, s, now, out);
+            this.issueStart(device, s, now, out, cfg);
         }
         if (!plan.length) this.lastEvent = 'No heating selected';
         return out;
     }
-    issueStart(device, s, now, out) {
+    issueStart(device, s, now, out, cfg) {
+        const side = s.on.side;
+        if (side && cfg.pendingSeatRoutes && cfg.pendingSeatRoutes[side]) return;
+        if (side) s.on.viaSeatModule = !!(cfg.seatModuleRoutes && cfg.seatModuleRoutes[side]);
         const intent = { type: 'ON', device, data: Object.assign({}, s.on,
             { seconds: Math.min(s.duration, SEGMENT_SECONDS) }), at: now,
             startUntil: s.startUntil, attempt: ++s.attempts };
