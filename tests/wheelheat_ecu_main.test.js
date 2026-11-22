@@ -8,9 +8,10 @@ const os = require('node:os');
 const path = require('node:path');
 const Module = require('module');
 const realDiag = require('../kit/runtime/diag');
+const { frame } = require('../kit/runtime/gauges');
+const { Display } = require('../kit/runtime/display');
 
 const APP = path.join(__dirname, '../apps/g21_wheelheat');
-const realQr = require(path.join(APP, 'qr_log'));
 const pos = (did, ...p) => [0x62, did >> 8, did & 255, ...p];
 const nrc = c => [0x7F, 0x22, c];
 const D701 = v => pos(0xD701, ...new Array(15).fill(0), v, ...new Array(9).fill(0));
@@ -53,7 +54,7 @@ function boot(t, car, settingsOverride, dir) {
         onChange: fn => listeners.push(fn),
     };
     const watchers = {}, clicks = {};
-    let qrText = '', render = null;
+    let render = null, selectTab = null;
     let wheelUntil = null;
     class FakeDiag {
         constructor() { this.p = {}; this.available = true; }
@@ -82,10 +83,8 @@ function boot(t, car, settingsOverride, dir) {
     }
     const stubs = {
         './kit/mgu': { run: d => { stubs.def = d; } },
-        './kit/gauges': { frame() {}, panel() {} },
+        './kit/gauges': { frame, panel() {} },
         './kit/diag': Object.assign({}, realDiag, { Diag: FakeDiag }),
-        './qr_log': Object.assign({}, realQr, { createReport(ctx, d) {
-            qrText = realQr.diagnosticText(ctx, d); return realQr.createReport(ctx, d); } }),
     };
     const original = Module._load;
     Module._load = function (request, parent, ...rest) {
@@ -93,19 +92,20 @@ function boot(t, car, settingsOverride, dir) {
             return stubs[request];
         return original.call(this, request, parent, ...rest);
     };
-    for (const k of Object.keys(require.cache)) if (k.startsWith(APP) && !k.endsWith('qr_log.js')) delete require.cache[k];
+    for (const k of Object.keys(require.cache)) if (k.startsWith(APP)) delete require.cache[k];
     try { require(path.join(APP, 'main.js')); } finally { Module._load = original; }
     const drawn = [];
-    const cv = { clear() { return cv; }, fillRect() {}, text(s) { drawn.push(String(s)); }, image() {} };
+    const cv = { chrome: {}, clear() { return cv; }, fillRect() {}, text(s) { drawn.push(String(s)); }, image() {} };
     const ctx = {
         settings, dataDir: dir, app: { startReason: 'TEST' }, spec: { id: 'g21_wheelheat', version: 'test' },
         log: { info() {}, warn() {}, error() {} },
         signals: { watch: async (iface, _v, handlers) => { watchers[iface] = handlers; return { available: true }; } },
         ui: { onClick: (id, fn) => { clicks[id] = fn; }, onVisible() {}, isVisible: () => false,
             image() {}, onTouch() {}, onTap() {} },
+        onTab(fn) { selectTab = fn; },
         loop: (_name, _fps, fn) => { render = fn; }, theme: () => ({}), canvas: () => cv,
     };
-    stubs.def.start(ctx);
+    const started = stubs.def.start(ctx);
     const events = () => {
         try { return JSON.parse(fs.readFileSync(path.join(dir, 'heating_events.json'), 'utf8')); }
         catch (_) { return []; }
@@ -129,8 +129,8 @@ function boot(t, car, settingsOverride, dir) {
         return drawn.slice();
     };
     const writes = () => requests.filter(r => r.sid === 0x2E);
-    return { dir, values, settings, requests, writes, clicks, events, tick, drive, signal, screen,
-        qr: () => qrText, kinds: k => events().filter(e => e.kind === k) };
+    return { dir, values, settings, requests, writes, clicks, events, tick, drive, signal, screen, started,
+        header: () => cv.chrome.tabs, selectTab: i => selectTab(i), kinds: k => events().filter(e => e.kind === k) };
 }
 function withTimers(t) { t.mock.timers.enable({ apis: ['setInterval', 'setTimeout', 'Date'], now: T0 }); }
 const wrote = (app, did) => app.writes().filter(w => w.did === did);
@@ -160,6 +160,49 @@ function renewableSeats(initialLevel = 0) {
 }
 
 // --- scenarios -----------------------------------------------------------
+test('WheelHeat starts and navigates Comfort, Diagnostics, Log and native Settings', async t => {
+    withTimers(t);
+    const app = boot(t, G05, { autoEnabled: false, testNextStartup: false });
+    await app.started;
+    await app.tick(4000);
+    const page = () => { app.screen(); return app.header().sel; };
+    assert.equal(page(), 0);
+    app.clicks.BTN_PAGE();
+    assert.equal(page(), 1);
+    app.clicks.BTN_PAGE();
+    assert.equal(page(), 2);
+    app.clicks.BTN_PAGE();
+    assert.equal(page(), 0);
+
+    const display = Object.assign(Object.create(Display.prototype), {
+        own: () => true,
+        screen: require(path.join(APP, 'app.json')).screens[0],
+        tabInfo: app.header(),
+        onTab: app.selectTab,
+        log: { error: assert.fail },
+        _click(id) {
+            assert.equal(id, 'BTN_SETTINGS');
+            this.sheet = { settings: true };
+        },
+        closeSheet() { this.sheet = null; },
+    });
+    assert.deepEqual(display._tabList().tabs, ['Comfort', 'Diagnostics', 'Log', 'Settings']);
+    display._openTab(3);
+    assert.equal(display._tabList().sel, 3);
+    assert.equal(page(), 0, 'Settings is handled by the renderer');
+    display._openTab(2);
+    assert.equal(display.sheet, null);
+    assert.equal(page(), 2);
+    assert(app.screen().join('\n').includes('SWIPE UP/DOWN'));
+    display._openTab(1);
+    assert.equal(page(), 1);
+    assert(app.screen().join('\n').includes('RE-DETECT ECUs'));
+    display._openTab(0);
+    assert.equal(page(), 0);
+    app.selectTab(3);
+    assert.equal(page(), 0, 'the app rejects an out-of-range page index');
+});
+
 test('G05: wheel automated, seats skipped, no seat write and no seat retries', async t => {
     withTimers(t);
     const app = boot(t, G05);
@@ -190,13 +233,10 @@ test('G05: wheel automated, seats skipped, no seat write and no seat retries', a
     assert.match(diag, /OFF {2}\(SMBF D714\)/);
     assert.match(diag, /IHKA D8DB seat heat {2}left 2 {2}right 0/);
     assert.match(diag, /consistent: matches IHKA if driver sits left/);
-    // QR: complete replies, ECU info, no VIN request.
-    app.clicks.BTN_PAGE(); app.clicks.BTN_PAGE();
-    await app.tick(3000);
-    const qr = app.qr();
-    assert.match(qr, /SMFA 0x6D FAS_G11 22 D7 14 -> 62 D7 14 02 1F 28 1D 23 00 00 00 \[valid\] level=2/);
-    assert.match(qr, /IHKA 0x78 IHKA_G05 22 D8 DB -> 62 D8 DB( [0-9A-F]{2}){28} \[valid\] L=2 R=0/);
-    assert.match(qr, /compare: consistent/);
+    assert(app.kinds('READ SMFA').some(e =>
+        /FAS_G11 22 D7 14 -> 62 D7 14 02 1F 28 1D 23 00 00 00 \[valid\] level=2/.test(e.message)));
+    assert(app.kinds('READ IHKA').some(e =>
+        /IHKA_G05 22 D8 DB -> 62 D8 DB( [0-9A-F]{2}){28} \[valid\] L=2 R=0/.test(e.message)));
     assert(!app.requests.some(r => r.did === 0xF190 || r.did === 0xF18C), 'no VIN / serial number');
 });
 

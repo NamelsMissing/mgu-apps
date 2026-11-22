@@ -32,7 +32,8 @@ test('WheelHeat autostart and experimental seat-module control are opt-in', () =
     assert.match(main, /\[HEAT EVENT\]/);
     assert(app.screens[0].buttons.some(row => row[0] === 'BTN_STOP'));
     assert(app.screens[0].buttons.some(row => row[0] === 'BTN_LOG_UP'));
-    assert(app.screens[0].buttons.some(row => row[0] === 'BTN_QR_REFRESH'));
+    assert(app.screens[0].buttons.some(row => row[0] === 'BTN_SETTINGS'));
+    assert(!app.screens[0].buttons.some(row => /QR/i.test(row.join(' '))));
     assert(app.settings.some(s => s.key === 'minVehicleOffMins'));
     assert(!app.settings.some(s => s.key === 'cycleRepeatMins'));
     assert(app.screens[0].buttons.some(row => row[0] === 'BTN_DETECT'), 're-detect button');
