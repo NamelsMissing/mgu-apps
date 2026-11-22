@@ -29,7 +29,17 @@ for(const name of ['stopFail','defaultFail','badIdentity','lit','diskError']){
 }
 test('guard denied: no diagnostic commands',async()=>{const r=rig();await assert.rejects(r.f.recover(()=>false));assert.equal(r.calls.length,0);assert.equal(r.journal.exists(),true)});
 test('guard lost mid-recovery: returns touched ECU to default then remains locked',async()=>{const r=rig();await assert.rejects(r.f.recover(()=>r.calls.length<3));assert.ok(r.calls.some(x=>x[1]===0x10&&x[2]===1));assert.equal(r.journal.exists(),true)});
-test('recovery requires park and current zero speed',()=>{let t=1000;const g=new Guard(()=>t);assert.ok(g.recoveryReason());g.speedSub={available:true};g.gearSub={available:true};g.feedSpeed({speedVehicleCentreOfGravity:0});g.feedStage({statusActualStageDrive:'P'});assert.equal(g.recoveryReason(),null);g.feedSpeed({speedVehicleCentreOfGravity:64});assert.ok(g.recoveryReason());g.feedSpeed({speedVehicleCentreOfGravity:0});g.feedStage({statusActualStageDrive:'D'});assert.ok(g.recoveryReason());g.feedStage({statusActualStageDrive:'P'});t+=3000;assert.ok(g.recoveryReason())});
+test('current guard reports motion and gear but does not enforce stationary/P',()=>{
+ const g=new Guard(()=>1000);
+ g.feedSpeed({speedVehicleCentreOfGravity:64});g.feedStage({statusActualStageDrive:'D'});
+ assert.equal(g.recoveryReason(),null);
+ assert.equal(g.snapshot().speedKmh,1);
+ assert.equal(g.snapshot().stage,'D');
+});
 test('final successful STOP supersedes earlier failure',()=>{const trace=[{side:'left',tx:'1003',rx:'5003'},{side:'left',tx:'3101A54B',rx:'7101A54B'},{side:'left',tx:'3102A54B',rx:'TIMEOUT',error:'timeout'},{side:'left',tx:'3102A54B',rx:'7102A54B'},{side:'left',tx:'1001',rx:'5001'}];assert.equal(Release.summarize(trace,false).acknowledged,true)});
 
-test('recovery handler uses its dedicated parked guard',()=>{const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');assert.match(src,/const allowed=\(\)=>!closing&&ui\.isVisible\('MAIN'\)&&!guard\.recoveryReason\(\)/)});
+test('recovery requires current OFF, a live provider and TASU',()=>{
+ const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
+ assert.match(src,/const recoveryReady=\(\)=>!closing&&!guard.recoveryReason\(\)&&reader.diag.available&&lightProviderAvailable\(\)&&lastCombined==='AUS'/);
+ assert.match(src,/const allowed=\(\)=>recoveryReady\(\)&&\(automatic\|\|ui.isVisible\('MAIN'\)\)/);
+});
