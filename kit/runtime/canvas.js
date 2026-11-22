@@ -50,13 +50,29 @@ class Canvas {
     constructor(w, h) {
         this.w = w | 0; this.h = h | 0;
         this.d = new Uint8Array(this.w * this.h * 4);
+        this.noclip();
     }
+
+    clip(x, y, w, h) {
+        this.left = Math.max(0, Math.ceil(x - 0.5)); this.top = Math.max(0, Math.ceil(y - 0.5));
+        this.right = Math.min(this.w, Math.ceil(x + w - 0.5)); this.bottom = Math.min(this.h, Math.ceil(y + h - 0.5));
+        return this;
+    }
+    noclip() { this.left = this.top = 0; this.right = this.w; this.bottom = this.h; return this; }
 
     clear(c) {
         const v = rgba(c || [0, 0, 0, 0]);
         // one pixel, then doubling copies: a few memcpys instead of 4 writes per pixel
         const d = this.d, n = d.length;
         if (!n) return this;
+        if (this.left || this.top || this.right !== this.w || this.bottom !== this.h) {
+            for (let y = this.top; y < this.bottom; y++) {
+                for (let x = this.left, i = (y * this.w + x) * 4; x < this.right; x++, i += 4) {
+                    d[i] = v[0]; d[i + 1] = v[1]; d[i + 2] = v[2]; d[i + 3] = v[3];
+                }
+            }
+            return this;
+        }
         d[0] = v[0]; d[1] = v[1]; d[2] = v[2]; d[3] = v[3];
         for (let len = 4; len < n; len *= 2) d.copyWithin(len, 0, Math.min(len, n - len));
         return this;
@@ -64,8 +80,8 @@ class Canvas {
 
     /** Draw an opaque RGBA image (sw x sh bytes) scaled into x, y, w, h, nearest pixel. */
     drawImage(src, sw, sh, x, y, w, h) {
-        const x0 = Math.max(0, Math.round(x)), y0 = Math.max(0, Math.round(y));
-        const x1 = Math.min(this.w, Math.round(x + w)), y1 = Math.min(this.h, Math.round(y + h));
+        const x0 = Math.max(this.left, Math.round(x)), y0 = Math.max(this.top, Math.round(y));
+        const x1 = Math.min(this.right, Math.round(x + w)), y1 = Math.min(this.bottom, Math.round(y + h));
         if (x1 <= x0 || y1 <= y0) return this;
         const d = this.d, fx = sw / w, fy = sh / h;
         for (let py = y0; py < y1; py++) {
@@ -87,7 +103,7 @@ class Canvas {
     blit(src, x, y) {
         x = Math.round(x); y = Math.round(y);
         const sw = src.w, d = this.d, s = src.d;
-        const x0 = Math.max(0, x), y0 = Math.max(0, y), x1 = Math.min(this.w, x + sw), y1 = Math.min(this.h, y + src.h);
+        const x0 = Math.max(this.left, x), y0 = Math.max(this.top, y), x1 = Math.min(this.right, x + sw), y1 = Math.min(this.bottom, y + src.h);
         const px = [0, 0, 0, 255];
         for (let py = y0; py < y1; py++) {
             let si = ((py - y) * sw + (x0 - x)) * 4, di = (py * this.w + x0) * 4;
@@ -112,9 +128,9 @@ class Canvas {
     /** Copy an opaque canvas to (x, y) row by row (no blending: memcpy per row), clipped. */
     copyRows(src, x, y) {
         x = Math.round(x); y = Math.round(y);
-        const x0 = Math.max(0, x), x1 = Math.min(this.w, x + src.w);
+        const x0 = Math.max(this.left, x), x1 = Math.min(this.right, x + src.w);
         if (x1 <= x0) return this;
-        for (let py = Math.max(0, y); py < Math.min(this.h, y + src.h); py++) {
+        for (let py = Math.max(this.top, y); py < Math.min(this.bottom, y + src.h); py++) {
             const s = ((py - y) * src.w + (x0 - x)) * 4;
             this.d.set(src.d.subarray(s, s + (x1 - x0) * 4), (py * this.w + x0) * 4);
         }
@@ -123,7 +139,7 @@ class Canvas {
 
     /** src-over blend of colour c with coverage cov (0..1) at integer pixel. */
     _blend(x, y, c, cov) {
-        if (x < 0 || y < 0 || x >= this.w || y >= this.h) return;
+        if (x < this.left || y < this.top || x >= this.right || y >= this.bottom) return;
         const sa = (c[3] / 255) * cov;
         if (sa <= 0) return;
         const i = (y * this.w + x) * 4, d = this.d;
@@ -139,8 +155,8 @@ class Canvas {
 
     fillRect(x, y, w, h, c) {
         c = rgba(c);
-        const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y));
-        const x1 = Math.min(this.w, Math.ceil(x + w)), y1 = Math.min(this.h, Math.ceil(y + h));
+        const x0 = Math.max(this.left, Math.floor(x)), y0 = Math.max(this.top, Math.floor(y));
+        const x1 = Math.min(this.right, Math.ceil(x + w)), y1 = Math.min(this.bottom, Math.ceil(y + h));
         if (x1 <= x0 || y1 <= y0 || c[3] === 0) return this;
         const d = this.d, W4 = this.w * 4, r = c[0], g = c[1], b = c[2], ca = c[3] / 255;
         // the pixel loop is inlined (no call per pixel); edge pixels get fractional coverage

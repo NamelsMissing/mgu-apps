@@ -74,6 +74,8 @@ const FULL = {
     src: { x: 12, y: 38, w: 1576, h: 482 },
 };
 const LAYOUTS = ['full', 'standard'];
+const SWIPE_THRESHOLD = 14;
+const inside = (rect, x, y) => x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 
 class Display {
     constructor(ui, log, spec, settings, themeFn) {
@@ -229,6 +231,7 @@ class Display {
     }
     /** Open header tab i: the app's page, or the settings (Settings tab). */
     _openTab(i) {
+        if (this.scrollTouch) this.scrollTouch.cancelled = true;
         const tl = this._tabList();
         if (i === tl.settings) { if (!(this.sheet && this.sheet.settings)) this._click('BTN_SETTINGS'); return; }
         const closed = !!this.sheet;
@@ -243,11 +246,37 @@ class Display {
     _ring() {
         const tl = this._tabList();
         const tabs = tl.tabs.length > 1 || tl.settings >= 0 ? tl.tabs.map((x, i) => ({ k: 'tab:' + i, tab: i })) : [];
-        const scroll = this.pageScroll && this.onScroll ? [{ k: 'scroll', scroll: true }] : [];
-        const tgts = (this.pageTargets || []).map((q) => ({ k: 'tgt:' + q.key, tgt: q }));
-        const top = this.pageScroll && this.pageScroll.y != null ? this.pageScroll.y : -Infinity;
+        return tabs.concat(this._pageRing(), this.buttons().map((b) => ({ k: 'bar:' + b.id, bar: b.id })));
+    }
+
+    _pageRing() {
+        const s = this.pageScroll, targets = this.pageTargets || [];
+        let tgts = targets, scroll = [];
+        if (s && s.items) {
+            // The hit map only contains visible items. The knob can still reach every item.
+            const byKey = new Map(targets.map((q) => [q.key, q]));
+            const listKeys = new Set(s.items);
+            scroll = s.items.map((key, i) => ({ k: 'tgt:' + key, tgt: byKey.get(key), item: i, key }));
+            tgts = targets.filter((q) => !listKeys.has(q.key));
+        } else if (s && this.onScroll && (!s.bounds || s.bar)) scroll = [{ k: 'scroll', scroll: true }];
+        tgts = tgts.map((q) => ({ k: 'tgt:' + q.key, tgt: q }));
+        const top = s && s.bounds ? s.bounds.y : s && s.y != null ? s.y : -Infinity;
         const over = tgts.filter((p) => p.tgt.y + p.tgt.h <= top);
-        return tabs.concat(over, scroll, tgts.filter((p) => over.indexOf(p) < 0), this.buttons().map((b) => ({ k: 'bar:' + b.id, bar: b.id })));
+        return over.concat(scroll, tgts.filter((p) => over.indexOf(p) < 0));
+    }
+
+    /** Native HMI buttons can walk the same page controls when the renderer does not own the knob. */
+    pageInput(d) {
+        if (this.own()) return;
+        const ring = this._pageRing(), i = ring.findIndex((p) => p.k === this.pageFocusKey);
+        if (!ring.length) return;
+        if (d && i >= 0 && ring[i].scroll && this._scrollBy(d * 70)) return;
+        const start = i >= 0 ? i : (d < 0 ? ring.length : -1);
+        const next = Math.max(0, Math.min(ring.length - 1, start + d));
+        const p = ring[next];
+        this.pageFocusKey = p.k;
+        this._revealItem(p);
+        if (!d && i >= 0) this._activateTarget(p);
     }
     /** HMI back (the controller pushed left): the app's screen closes as with the HMI's back arrow. */
     _back() {
@@ -272,7 +301,14 @@ class Display {
         const sh = this.sheet;
         this.sheet = null; this.sheetTargets = null; this.sheetHead = false;
         if (this.sheetTimer) { clearInterval(this.sheetTimer); this.sheetTimer = null; }
-        if (this.saved) { this.app = this.saved; this.saved = null; }
+        if (this.saved) {
+            this.app = this.saved;
+            if (this.saved.targets) {
+                this.pageTargets = this.saved.targets;
+                this.pageScroll = this.saved.scroll;
+            }
+            this.saved = null;
+        }
         this.lastWords = null;
         this._repaint();
         this.tickHandlers.forEach((fn) => fn());         // the app draws its next frame
@@ -359,14 +395,22 @@ class Display {
         if (press && i >= 0) {
             const p = ring[i];
             if (p.tab != null) this._openTab(p.tab);
-            else if (p.tgt) { try { Promise.resolve(p.tgt.run()).catch((e) => this.log.error('target', e)); } catch (e) { this.log.error('target', e); } this.pressed = p.k; this.pressedT = Date.now(); this._repaint(); }
+            else if (p.item != null || p.tgt) {
+                this._activateTarget(p);
+                this.pressed = p.k; this.pressedT = Date.now(); this._repaint();
+            }
             else if (p.bar) this._click(p.bar);
         }
+    }
+    _activateTarget(p) {
+        if (p.item == null && !p.tgt) return;
+        try { Promise.resolve(p.item != null ? this.pageScroll.select(p.key) : p.tgt.run()).catch((e) => this.log.error('target', e)); }
+        catch (e) { this.log.error('target', e); }
     }
     /** A scrolling page (ctx.onScroll) moved by dy logical px; false when it was at its end already. */
     _scrollBy(dy) {
         let moved = false;
-        try { moved = !!this.onScroll(dy); } catch (e) { this.log.error('scroll', e); }
+        try { moved = !!this.onScroll(dy, this.pageScroll && this.pageScroll.id); } catch (e) { this.log.error('scroll', e); }
         if (moved) this.tickHandlers.forEach((fn) => fn());
         return moved;
     }
@@ -374,7 +418,8 @@ class Display {
     _rectOf(p) {
         const pl = this.place, k = pl.scale;
         if (p.tab != null) return ((this.chromeRec && this.chromeRec.tabRects) || []).find((q) => q.i === p.tab) || null;
-        if (p.tgt) return { x: p.tgt.x * k + pl.ox, y: p.tgt.y * k + pl.oy, w: p.tgt.w * k, h: p.tgt.h * k };
+        const bounds = p.tgt || (p.scroll && this.pageScroll.bounds);
+        if (bounds) return { x: bounds.x * k + pl.ox, y: bounds.y * k + pl.oy, w: bounds.w * k, h: bounds.h * k };
         if (p.bar) { const b = this.buttons().find((q) => q.id === p.bar); return b ? { x: b.x - this.barOff - pl.x, y: pl.h - this.barH(), w: b.w, h: this.barH() } : null; }
         if (p.scroll) { const hx = HMI.left - pl.x; return { x: hx, y: this.headH(), w: pl.w - hx, h: pl.h - this.barH() - this.headH() }; }
         return null;
@@ -384,13 +429,15 @@ class Display {
      * distance that way, the sideways one counting double. Nothing focused yet: the page's tab (left: none).
      */
     _toward(dir, here) {
-        const ring = this._ring().filter((p) => !p.scroll || this.focusKey === 'scroll');
-        const cur = ring.find((p) => p.k === this.focusKey), cr = cur && this._rectOf(cur);
+        const bounded = this.pageScroll && this.pageScroll.bounds;
+        const ring = this._ring().filter((p) => bounded || !p.scroll || this.focusKey === 'scroll');
+        const cur = ring.find((p) => p.k === this.focusKey);
+        const cr = cur && (this._rectOf(cur) || (cur.item != null && this._rectOf({ scroll: true })));
         if (!cr) return dir === 'W' ? null : ring.find((p) => p.tab === here) || ring[0] || null;
         const cx = cr.x + cr.w / 2, cy = cr.y + cr.h / 2;
         let best = null, score = Infinity;
         ring.forEach((p) => {
-            if (p === cur || p.scroll) return;
+            if (p === cur || (p.scroll && !bounded)) return;
             const r = this._rectOf(p);
             if (!r) return;
             const dx = r.x + r.w / 2 - cx, dy = r.y + r.h / 2 - cy;
@@ -407,6 +454,37 @@ class Display {
         this.focusTab = p && p.tab != null ? p.tab : null;
         this.focused = p && p.bar ? p.bar : null;
         if (this.focused) this._scroll();
+        this._revealItem(p);
+    }
+
+    _revealItem(p) {
+        if (p && p.item != null && this.pageScroll.reveal(p.item)) this.tickHandlers.forEach((fn) => fn());
+    }
+
+    /** A bounded list owns a swipe only if it began inside its viewport. A swipe never taps. */
+    _scrollTouch(phase, x, y) {
+        const s = this.pageScroll;
+        if (phase === 1) {
+            this.scrollTouch = !this.sheet && s && s.bounds
+                ? { id: s.id, x, y, lastY: y, inside: inside(s.bounds, x, y) } : null;
+            return false;
+        }
+        const g = this.scrollTouch;
+        if (!g) return false;
+        if (phase === 3) this.scrollTouch = null;
+        if (g.cancelled || this.sheet || !s || s.id !== g.id) {
+            this.ownDown = null; this.tabDown = -1;
+            return true;
+        }
+        const dx = Math.abs(x - g.x), dy = Math.abs(y - g.y);
+        if (!g.drag && Math.max(dx, dy) > SWIPE_THRESHOLD) {
+            g.drag = true; g.scroll = g.inside && dy >= dx;
+        }
+        if (!g.drag) return false;
+        this.ownDown = null; this.tabDown = -1;
+        if (g.scroll && this.onScroll && y !== g.lastY) this._scrollBy(g.lastY - y);
+        g.lastY = y;
+        return true;
     }
 
     /**
@@ -414,20 +492,27 @@ class Display {
      * running the screen also on a bar button (pressed), a sheet's targets, or the page (ctx.onTap).
      */
     _touch(phase, x, y) {
-        const inside = (r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h;
-        if (this.own()) {
+        const hit = (r) => inside(r, x, y);
+        const owns = this.own();
+        // Standard layout already routes the image area's touches for its tabs.
+        // A bounded page can use that same area while the HMI still owns its native bar.
+        const bounded = this.pageScroll && this.pageScroll.bounds && this.active() && this.gpu.touch;
+        if (!owns && !bounded && this.scrollTouch && this._scrollTouch(phase, x, y)) return;
+        if (owns || bounded) {
+            const reserved = this.scrollTouch && this.scrollTouch.inside;
+            if (this._scrollTouch(phase, x, y)) return;
             const pl = this.place, sx = x * pl.scale + pl.ox, sy = y * pl.scale + pl.oy;
-            const bar = sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
+            const bar = owns && sy >= pl.h - this.barH() ? this.buttons().find((b) => sx >= b.x - this.barOff - pl.x && sx < b.x - this.barOff - pl.x + b.w) : null;
             // the header's tabs (Settings among them) work over a sheet too
-            const tab = !bar && (this.tabs || []).find(inside);
-            const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(inside) : null;
+            const tab = !bar && (this.tabs || []).find(hit);
+            const tgt = !bar && !tab && !this.sheet ? (this.pageTargets || []).find(hit) : null;
             // Pass the entire touch sequence to custom continuous controls, such as
             // colour/brightness sliders. Tabs, the button bar and settings sheets
             // must retain their own touch behaviour.
-            if (this.onTouch && !bar && !tab && !this.sheet && !tgt) {
+            if (this.onTouch && !bar && !tab && !this.sheet && !tgt && !reserved && !(this.scrollTouch && this.scrollTouch.inside)) {
                 try { this.onTouch(phase, x, y); } catch (e) { this.log.error('touch', e); }
             }
-            const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(inside) : null;
+            const key = bar ? 'bar:' + bar.id : tab ? 'tab:' + tab.i : tgt ? 'tgt:' + tgt.key : this.sheet ? 'sheet:' + (this.sheetTargets || []).findIndex(hit) : null;
             if (phase === 3 && this.dragging && !this.sheet) { this.dragging = false; this.ownDown = null; return; }
             if (phase === 3 && !this.dragging && key && key === this.ownDown && (tab || tgt)) {
                 this.ownDown = null;
@@ -441,12 +526,12 @@ class Display {
             }
             // a finger moved on a sheet: its list follows (no tap then)
             if (phase === 1) { this.ownDown = key; this.downAt = { x, y }; this.lastY = y; this.dragging = false; } else if (phase === 2) {
-                if (!this.sheet && this.pageScroll && this.onScroll && !bar && !tab && this.downAt) {
-                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
+                if (!this.sheet && this.pageScroll && !this.pageScroll.bounds && this.onScroll && !bar && !tab && this.downAt) {
+                    if (!this.dragging && Math.abs(y - this.downAt.y) > SWIPE_THRESHOLD) this.dragging = true;
                     if (this.dragging) this._scrollBy(this.lastY - y);
                 }
                 if (this.sheet && this.sheet.scroll && !bar && this.downAt) {
-                    if (!this.dragging && Math.abs(y - this.downAt.y) > 14) this.dragging = true;
+                    if (!this.dragging && Math.abs(y - this.downAt.y) > SWIPE_THRESHOLD) this.dragging = true;
                     if (this.dragging) { this.sheet.scroll(this.lastY - y); this._paintSheet(); }
                 }
                 this.lastY = y;
@@ -456,7 +541,7 @@ class Display {
                 if (this.dragging) { this.dragging = false; if (this.sheet && this.sheet.release) this.sheet.release(); return; }
                 if (bar && was === key) { this._click(bar.id); return; }
                 if (this.sheet) {
-                    const i = (this.sheetTargets || []).findIndex(inside);
+                    const i = (this.sheetTargets || []).findIndex(hit);
                     if (i >= 0 && was === key) this._sheetResult(this.sheetTargets[i].act());
                     return;
                 }
@@ -464,7 +549,7 @@ class Display {
             }
             if (bar || this.sheet || tab || tgt) return;
         }
-        const at = (this.tabs || []).find(inside);
+        const at = (this.tabs || []).find(hit);
         if (!at && this.onTap && this.own() && phase === 3 && this.downAt && Math.abs(x - this.downAt.x) < 30 && Math.abs(y - this.downAt.y) < 30) {
             Promise.resolve().then(() => this.onTap(x, y)).catch((e) => this.log.error('tap', e));
         }
@@ -639,7 +724,7 @@ class Display {
             if (r.chrome) this.saved = Object.assign({}, this.saved || {}, {
                 name, softImage, w: r.w, h: r.h, textScale: r.textScale, words: new Uint32Array(r.words()),
                 atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), tabs: r.chrome.tabs,
-                reaches: r.extraUsed,
+                reaches: r.extraUsed, targets: r.targets || [], scroll: r.scroll || false,
             });
             return Promise.resolve();
         }
@@ -797,7 +882,12 @@ class Display {
         const sb = this.focusKey === 'scroll' && !this.sheet && this.pageScroll;
         if (sb === true) c.strokeRoundRect(hx + 6, FULL.headH + 6, W - hx - 12, H - this.barH() - FULL.headH - 12, 14, 3, G.withAlpha(t.sel || t.accent, 0.8));
         else if (sb && sb.bar) c.roundRect((sb.bar.x - 2) * k + pl.ox, sb.bar.y * k + pl.oy, (sb.bar.w + 4) * k, sb.bar.h * k, (sb.bar.w / 2 + 2) * k, t.sel || t.accent);
-        if (pt) c.strokeRoundRect(pt.x * k + pl.ox - 5, pt.y * k + pl.oy - 5, pt.w * k + 10, pt.h * k + 10, (pt.r != null ? pt.r : pt.h / 2) * k + 5, 3, t.sel || t.accent);
+        if (pt) {
+            const s = this.pageScroll, box = s && s.items && s.items.indexOf(pt.key) >= 0 && s.bounds;
+            if (box) c.clip(box.x * k + pl.ox, box.y * k + pl.oy, box.w * k, box.h * k);
+            c.strokeRoundRect(pt.x * k + pl.ox - 5, pt.y * k + pl.oy - 5, pt.w * k + 10, pt.h * k + 10, (pt.r != null ? pt.r : pt.h / 2) * k + 5, 3, t.sel || t.accent);
+            if (box) c.noclip();
+        }
         // the strip's bottom edge continues under the see-through part
         c.fillRect(sx, 0, W - sx, FULL.headH, HMI.headBg);
         c.fillRect(sx, FULL.headH - 2, W - sx, 2, G.withAlpha('#ffffff', 0.22));
