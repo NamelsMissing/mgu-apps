@@ -1,10 +1,6 @@
-# Light Flasher 0.1.25
+# Light Flasher 0.1.26
 
-The stalk trigger confirms OEM OFF after 400 ms using a dedicated timer. **Settings → Service / diagnostics → Start latency** shows the measured hold, release-to-trigger, trigger-to-UDS-dispatch, release-to-dispatch and release-to-positive-ECU-response times. Diagnostic Logs and JSON reports include the individual preparation stages and failures. For button runs the JSON report measures from the request to dispatch and response. The optical LED turn-on time requires a separate measurement.
-
-See the [start latency test report](START_LATENCY.md) for the simulated comparison, the automotive guard status and the vehicle test procedure.
-
-## 0.1.24
+This update restores the 0.1.24 behavior after a reported FLM identity timeout on 0.1.25.
 
 The high-beam stalk can start the 20–80 ms intervals when Fast Mode and the stalk trigger are enabled. The stalk can also start a pattern from Settings. The background trigger still requires its own setting, and the diagnostic screens remain passive.
 

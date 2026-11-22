@@ -106,7 +106,7 @@ test('main wires lever only through the guarded flash path', () => {
     for (const term of ["settings.get('manualFlash')===true", 'leverEnabled()', '!flash.running', '!isLocked()'])
         assert.ok(allowed.includes(term), 'leverAllowed lacks ' + term);
     assert.match(src, /startFlash\('lever'\)/);
-    assert.match(src, /flash\.run\(\{\.\.\.cfg,fast:settings\.get\('fastTest'\)===true\},runAllowed,undefined,latency\)/);
+    assert.match(src, /flash\.run\(\{\.\.\.cfg,fast:settings\.get\('fastTest'\)===true\},runAllowed,update\)/);
     assert.match(src, /const runAllowed=source==='lever'\?/);
     const enabled = src.match(/const leverEnabled=\(\)=>([^;]+);/)[1];
     for (const term of ["settings.get('leverTrigger')===true", 'leverScreenOk()', 'lightProviderAvailable()', 'lever.rangeValid'])
@@ -245,7 +245,6 @@ test('diagnostic display, exports and automatic recovery use current signals', a
                 return name.startsWith('./') ? require(path.join(appDir, name)) : require(name);
             },
             process: {pid: 1, on() {}},
-            setImmediate, setTimeout, clearTimeout,
             setInterval(callback) { runTick = callback; },
         });
         await started;
@@ -269,10 +268,8 @@ test('diagnostic display, exports and automatic recovery use current signals', a
         const light = status => receiveLight({statusMainBeam_headlightFlasher: status});
         light('AUS');
         light('EIN');
-        runTick();
         assert.match(labels.get('DIAG_LEVER'), /Pull detected/);
         light('AUS');
-        runTick();
         assert.match(labels.get('DIAG_LEVER'), /Released.*Last measured pull: [0-9]+ ms/);
         const lock = path.join(dataDir, 'manual-flash-pending.json');
         const tick = async () => { runTick(); await new Promise(resolve => setImmediate(resolve)); };

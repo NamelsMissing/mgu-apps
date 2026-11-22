@@ -66,7 +66,7 @@ class ManualFlash {
   }
   if(this.cleanupUnconfirmed)throw Error(this.status);
  }
- async run(requested,allowed,changed=()=>{},latency){
+ async run(requested,allowed,changed=()=>{}){
   if(this.running)throw Error('Flash already running');
   if(this.cleanupUnconfirmed||(this.journal&&this.journal.exists()))throw Error('Previous cleanup unconfirmed: verify normal lights; locked pending service inspection');
   if(!allowed()||!this.diag.available)throw Error('Enable flash control and wait for a current OEM high beam OFF signal');
@@ -79,59 +79,29 @@ class ManualFlash {
   const touched=[],affected=new Set();
   const targetSteps=cfg.cycleCount===null?null:cfg.cycleCount*cfg.steps.length;
   const check=()=>{if(this.cancelled||!allowed()||!this.diag.available)throw Error('Cancelled or flash guard changed')};
-  const mark=(name,detail)=>{if(latency)latency.mark(name,detail)};
   const send=async(m,sid,data,cleanup=false)=>{
    if(!cleanup)check();
    const sentAt=this.now();
    const rec={at:new Date().toISOString(),side:m.side,tx:hex([sid,...data]),elapsedMs:began===null?null:sentAt-began};this.trace.push(rec);
    try{
     if(!this.diag.available)throw Error('TASU unavailable');
-    const start=data===ON,session=sid===0x10&&data[0]===3;
-    const stage=start?'firstUdsStartDispatchedMs':session?'sessionDispatchedMs':null;
-    const firstStart=start&&latency&&latency.times.firstPositiveStartReplyMs===undefined;
-    const u=await this.diag.physical(m.address,sid,data,800,replyTo(sid,data),{
-     maxRetries:0,callTimeoutMs:1000,hardTimeoutMs:1800,pendingTimeoutMs:1000,
-     beforeDispatch:()=>{
-      if(!cleanup)check();
-      if(stage&&(session||latency&&latency.times.firstUdsStartDispatchedMs===undefined))mark(stage,{side:m.side});
-     },
-     onReply:reply=>{
-      if(reply[0]!==sid+0x40)return;
-      if(firstStart)mark('firstPositiveStartReplyMs',{side:m.side});
-      if(session)mark('sessionConfirmedMs',{side:m.side});
-     },
-    });
+    const u=await this.diag.physical(m.address,sid,data,800,replyTo(sid,data),{maxRetries:0,callTimeoutMs:1000,hardTimeoutMs:1800,pendingTimeoutMs:1000});
     rec.rx=u?hex(u):'TIMEOUT';
     if(!u||u[0]!==sid+0x40||!replyTo(sid,data)(u))throw Error('FLM '+m.side+' '+rec.tx+' reply '+rec.rx);
     return u;
-   }catch(e){rec.error=String(e.message||e);mark('requestErrorMs',{side:m.side,tx:rec.tx,error:rec.error});throw e}
+   }catch(e){rec.error=String(e.message||e);throw e}
    finally{rec.requestMs=Math.max(0,this.now()-sentAt);}
   };
   const delay=async(ms,limit=Infinity)=>{const until=Math.min(this.now()+ms,limit);while(this.now()<until){check();await this.sleep(Math.min(50,until-this.now()))}};
   const cleanup=async(m,sid,data)=>{try{await send(m,sid,data,true);return true}catch(e){this.cleanupUnconfirmed=true;this.log.warn(String(e));return false}};
   try{
    for(const m of units){
-    mark('identityBeginMs',{side:m.side});
-    let identityOk=false;
-    try{
-     const u=await send(m,0x22,[0xF1,0x50]);if(hex(u.slice(3))!==m.index)throw Error('Unsupported '+m.side+' FLM identity');
-     identityOk=true;
-    }finally{mark('identityEndMs',{side:m.side,ok:identityOk});}
-    mark('d6dbBeginMs',{side:m.side});
-    let offOk=false;
-    try{
-     const raw=await send(m,0x22,[0xD6,0xDB]);const channels=Feedback.decode(Array.from(raw).map(x=>x.toString(16).padStart(2,'0')).join(' '));
-     if(!channels||channels[7].pwmPercent!==0||channels[7].currentMa!==0)throw Error(m.side+' high beam OFF not confirmed');
-     offOk=true;
-    }finally{mark('d6dbEndMs',{side:m.side,ok:offOk});}
+    const u=await send(m,0x22,[0xF1,0x50]);if(hex(u.slice(3))!==m.index)throw Error('Unsupported '+m.side+' FLM identity');
+    const raw=await send(m,0x22,[0xD6,0xDB]);const channels=Feedback.decode(Array.from(raw).map(x=>x.toString(16).padStart(2,'0')).join(' '));
+    if(!channels||channels[7].pwmPercent!==0||channels[7].currentMa!==0)throw Error(m.side+' high beam OFF not confirmed');
    }
-   check();
-   if(this.journal){
-    mark('journalBeginMs');
-    try{this.journal.mark();marked=true;}
-    finally{mark('journalEndMs',{ok:marked});}
-   }
-   for(const m of units){check();touched.push(m);mark('sessionRequestedMs',{side:m.side});await send(m,0x10,[0x03]);}
+   check();if(this.journal){this.journal.mark();marked=true;}
+   for(const m of units){check();touched.push(m);await send(m,0x10,[0x03]);}
    began=this.now();deadline=began+cfg.durationMs;
    // Fast test: no STOP and no fixed dark gap between pulses. A side is switched off
    // by restarting the routine with PWM 0; the first OFF per side is read back via

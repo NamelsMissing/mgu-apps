@@ -49,8 +49,8 @@ class LeverObservation {
  }
 }
 class LeverTrigger {
- constructor(now=Date.now,opts={},wallNow=now){
-  this.now=now;this.wallNow=wallNow;this.milestones=null;this.lastSampleAt=null;this.opts={...DEFAULTS,...opts};this.rangeValid=true;
+ constructor(now=Date.now,opts={}){
+  this.now=now;this.opts={...DEFAULTS,...opts};this.rangeValid=true;
   this.enabled=false;this.state='disabled';this.offSince=null;this.lastOffAt=null;this.onSince=null;this.releasedAt=null;
   this.cooldownUntil=0;this.lastPulseMs=null;this.events=[];this.triggers=0;this.rejected=0;this.lastReason='Lever trigger off';
  }
@@ -64,25 +64,21 @@ class LeverTrigger {
  }
  setEnabled(on){on=on===true;if(on!==this.enabled){this.enabled=on;this.reset(on?'Armed after stable OEM beam OFF':'Lever trigger off');}}
  reset(reason,recordCancellation=true){
-  if(recordCancellation&&(this.state==='on'||this.state==='released'))this.record('cancelled',{why:reason,elapsedMs:this.now()-this.onSince});
-  this.lastSampleAt=null;this.state=this.enabled?'waitOff':'disabled';this.offSince=null;this.lastOffAt=null;this.onSince=null;this.releasedAt=null;this.lastReason=reason;}
- record(kind,extra){this.events.push({at:new Date(this.wallNow()).toISOString(),kind,...extra});if(this.events.length>30)this.events.shift();}
+  if(recordCancellation&&(this.state==='on'||this.state==='released'))this.record('cancelled',{why:reason});
+  this.state=this.enabled?'waitOff':'disabled';this.offSince=null;this.lastOffAt=null;this.onSince=null;this.releasedAt=null;this.lastReason=reason;}
+ record(kind,extra){this.events.push({at:new Date(this.now()).toISOString(),kind,...extra});if(this.events.length>30)this.events.shift();}
  // Start of a run (lever or button): ignore everything until cooldown after it ends.
  runStarted(){this.reset('Flash running');this.cooldownUntil=Infinity;}
  runEnded(){this.cooldownUntil=this.now()+this.opts.cooldownMs;this.reset('Cooldown after flash');}
  // status: 'EIN' | 'AUS' | other; statusAt: receive time; allowed: trigger permitted
  // and nothing else running. Returns true exactly once per accepted pulse.
- update(status,statusAt,allowed,source){
+ update(status,statusAt,allowed){
   const t=this.now(),o=this.opts;
   if(!this.enabled){this.state='disabled';return false;}
   if(!this.rangeValid){this.reset('Invalid lever pulse range');return false;}
   if(!allowed){this.reset('Blocked: setting, screen, signal provider or another operation');return false;}
   if(t<this.cooldownUntil){this.reset('Cooldown after flash');return false;}
   if(!currentLightStatus(status,statusAt,t,o.staleMs)){this.reset('OEM light status unknown or stale');return false;}
-  if(this.lastSampleAt!==null&&(statusAt<this.lastSampleAt||statusAt-this.lastSampleAt>o.staleMs)){
-   this.reset('OEM light signal discontinuity');return false;
-  }
-  this.lastSampleAt=statusAt;
   switch(this.state){
    case 'waitOff':
     if(status==='AUS'){
@@ -97,7 +93,7 @@ class LeverTrigger {
     // A pull can arrive between the end of the stable OFF period and the next tick.
     // Fall through to start timing at the received ON edge.
    case 'armed':
-    if(status==='EIN'){this.state='on';this.onSince=statusAt;this.milestones={oemOnReceivedMs:statusAt};this.record('pull',{receivedMs:statusAt,source});this.lastReason='Lever pulse seen';}
+    if(status==='EIN'){this.state='on';this.onSince=statusAt;this.record('pull',{signalAt:new Date(statusAt).toISOString()});this.lastReason='Lever pulse seen';}
     return false;
    case 'on':
     if(status==='EIN'){
@@ -105,17 +101,15 @@ class LeverTrigger {
      return false;
     }
     this.lastPulseMs=statusAt-this.onSince;
-    this.record('release',{onMs:this.lastPulseMs,receivedMs:statusAt,source});
+    this.record('release',{onMs:this.lastPulseMs,signalAt:new Date(statusAt).toISOString()});
     if(this.lastPulseMs>o.maxOnMs){this.rejected++;this.record('rejected',{onMs:this.lastPulseMs,why:'too long at release'});this.reset('Ignored: high beam held; re-arming',false);return false;}
     if(this.lastPulseMs<0||this.lastPulseMs<o.minOnMs){this.rejected++;this.record('rejected',{onMs:this.lastPulseMs,why:'too short'});this.state='armed';this.lastReason='Ignored: pulse below minimum';return false;}
-    this.milestones.oemOffReceivedMs=statusAt;this.milestones.pulseValidMs=t;
     this.state='released';this.releasedAt=statusAt;this.lastReason='Released; confirming OFF';
     return false;
    case 'released':
     if(status==='EIN'){this.rejected++;this.record('rejected',{why:'second pulse before settle'});this.reset('Ignored: repeated pulse; re-arming',false);return false;}
     if(t-this.releasedAt<o.settleOffMs)return false;
-    this.milestones.offConfirmedMs=t;this.milestones.triggerMs=this.now();
-    this.triggers++;this.record('trigger',{onMs:this.lastPulseMs,elapsedMs:t-this.releasedAt});
+    this.triggers++;this.record('trigger',{onMs:this.lastPulseMs});
     this.state='fired';this.lastReason='Triggered by lever pulse ('+this.lastPulseMs+' ms)';
     return true;
    case 'fired':
