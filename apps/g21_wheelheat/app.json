@@ -40,7 +40,7 @@
         ],
         [
           "BTN_ACTION",
-          "Read BDC status / Next QR page"
+          "Read BDC status"
         ],
         [
           "BTN_SETTINGS",
@@ -61,10 +61,6 @@
         [
           "BTN_LOG_LATEST",
           "Console: latest event"
-        ],
-        [
-          "BTN_QR_REFRESH",
-          "Refresh session QR snapshot"
         ],
         [
           "BTN_DETECT",

@@ -13,7 +13,6 @@ Automatically control the seat and steering-wheel heating on a compatible BMW. T
 | Heating duration | Configure the heating period and repeat-cycle delay. |
 | Manual stop | Stop the app's active heating cycle. |
 | Diagnostics | View heating commands, ECU responses and session logs in a scrollable console. |
-| QR logs | Export current-session diagnostic information locally using QR codes. |
 
 ## Control-unit detection (0.5.x, experimental)
 
@@ -63,8 +62,7 @@ Diagnostics tab: the steering wheel is read from the BDC (`D074`); BDC seat DIDs
 the route can use them. Seats on a seat module show the module's own `D714` value; the IHKA line
 shows `D8DB` left/right separately and compares it with the seat modules without guessing the driver
 side. Missing, stale, invalid or unreadable values are never shown as OFF. Variants other than
-`FAS_G11`, `BFS_G11` and `IHKA_G05` are captured raw only. The QR log contains the last 10 complete
-`D714` / `D8DB` replies (ECU address, SGBD index/variant, state, decoded values if valid).
+`FAS_G11`, `BFS_G11` and `IHKA_G05` are captured raw only.
 
 The DIDs come from the SGBDs. Grot110 confirmed both seat readbacks in Heating Comfort 0.5.2 and
 manually tested SMFA level 2, OFF and the renewable timeout on a 2021 G05. See
@@ -115,7 +113,6 @@ The app package includes the MGU **autostart** setting. This allows the process 
 - The Diagnostics tab displays the latest valid ECU response. Switching heating ON/OFF manually is not treated as unstable readback; raw replies are retained in the session log.
 - Available functions and ECU data may differ across BMW models and firmware.
 - Settings are intended to persist across app restarts and updates. Use the Log view to troubleshoot any saving or autostart problems.
-- QR logs are generated locally; they do not need an internet connection.
 
 **Safety:** Test and configure the app while parked. Do not assume a heating request was successful without checking the actual vehicle behavior.
 

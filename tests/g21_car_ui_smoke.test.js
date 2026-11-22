@@ -22,7 +22,7 @@ assert.deepStrictEqual([...ambientHmi.matchAll(/const TABS = \[([^\]]+)\]/g)].ma
     ["'Color', 'Favorites', 'Drive modes', 'Diagnostics', 'Log'"],
     'Ambient has color, favorites, drive-mode and diagnostic pages');
 assert.deepStrictEqual([...wheel.matchAll(/const TABS = \[([^\]]+)\]/g)].map(m => m[1]),
-    ["'Comfort', 'Diagnostics', 'Log', 'QR Log'"], 'WheelHeat includes live diagnostics and export logs');
+    ["'Comfort', 'Diagnostics', 'Log'"], 'WheelHeat includes live diagnostics and the session log');
 assert.match(ambient, /ctx\.onTouch\(\(phase, x, y\)/, 'Ambient continuous sliders');
 assert.match(ambient, /phase === 2/, 'Ambient slider must accept move events');
 assert.match(ambient, /colorNotice = ctl\.info/, 'Ambient displays apply result');

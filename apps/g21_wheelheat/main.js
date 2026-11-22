@@ -7,12 +7,12 @@ const G = require('./kit/gauges');
 const B = require('./logic');
 const { ComfortAuto, START_WINDOW_MS, SEAT_MODULE_MAX_RENEW_AGE_MS } = require('./comfort_auto');
 const { SafeDiag, bytes } = require('./safe_diag');
-const QR = require('./qr_log');
+const Log = require('./session_log');
 const Cycle = require('./cycle_policy');
 const E = require('./ecu_profile');
 
 // Settings is automatically provided as ONE native tab by the renderer.
-const TABS = ['Comfort', 'Diagnostics', 'Log', 'QR Log'];
+const TABS = ['Comfort', 'Diagnostics', 'Log'];
 const text = (cv, s, x, y, size, color, opts) =>
     cv.text(String(s), x, y, size, color, opts || {});
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -67,10 +67,8 @@ mgu.run({
         // A verified ignition OFF also begins a new log session.
         let sessionStartedAt = appStartedAt, sessionReason = 'MGU PROCESS START';
         let events = [], sawVehicleOn = false;
-        let qrReport = null, qrPage = 0, qrMatrix = null, qrError = '';
         let consoleOffset = 0, consoleTouchY = null;
         let warningCache = [], warningCacheAt = 0;
-        let eventWriteError = '';
         const record = (kind, message) => {
             const at = Date.now();
             if (events[0] && events[0].kind === kind &&
@@ -80,22 +78,17 @@ mgu.run({
             try {
                 // Event log uses the same app-private data dir; no directory creation.
                 fs.writeFileSync(eventFile, JSON.stringify(events), 'utf8');
-                eventWriteError = '';
-            } catch (e) { eventWriteError = String(e.message || e); }
+            } catch (_) {}
             ctx.log.info('[HEAT EVENT] ' + kind + ' ' + message);
         };
         const resetSession = reason => {
             sessionStartedAt = Date.now();
             sessionReason = reason;
             events = [];
-            qrReport = null;
-            qrMatrix = null;
-            qrPage = 0;
-            qrError = '';
             consoleOffset = 0;
             warningCache = [];
             warningCacheAt = 0;
-            record('SESSION START', reason + '; previous QR pages discarded');
+            record('SESSION START', reason);
         };
         function persistCycle() {
             const state = cycle.snapshot();
@@ -151,76 +144,6 @@ mgu.run({
             record('UI ALREADY VISIBLE', 'when app logic initialized; reason=' + startReason);
         let lastPlannerStatus = '';
 
-        function buildQrReport() {
-            try {
-                const now = Date.now();
-                const marker = Number(ctx.settings.get('_autoCycleAt'));
-                qrReport = QR.createReport(ctx, {
-                    events, eventWriteError, sessionStartedAt, sessionReason,
-                    seatReads: seatHistory.map(snap => ({ at: snap.at,
-                        lines: ['SMFA', 'SMBF', 'IHKA'].filter(id => snap[id])
-                            .map(id => E.measurementLine(id, snap[id])),
-                        comparison: snap.comparison })),
-                    state: {
-                        appStartedAt: new Date(appStartedAt).toISOString(),
-                        processStartReason: startReason, firstUiAt: firstUiAt ?
-                            new Date(firstUiAt).toISOString() : null, uiOpenCount,
-                        cycleReason, cycleAlreadyRun: auto.fired,
-                        vehicleCycle: cycle.snapshot(), vehicleMode: cycle.mode,
-                        vehicleCycleCanStart: cycle.canStart(),
-                        minVehicleOffMinutes: offMinutes(),
-                        oneShotTestRequestedAtStartup: testRequested,
-                        oneShotTestAppliedAtStartup: testConsumed,
-                        oneShotTestResetError: testError || null,
-                        previousPositiveAckOnAt: Number.isFinite(marker) && marker > 0 ?
-                            new Date(marker).toISOString() : null,
-                        markerAgeSeconds: Number.isFinite(marker) && marker > 0 ?
-                            Math.round((now - marker) / 1000) : null,
-                        noRepeatsWithinIgnition: true,
-                        manualStopPending: Array.from(pendingStops),
-                        coldDwellStart: auto.coldSince,
-                        activeHeaters: Array.from(auto.active).map(([name, state]) =>
-                            ({ name, deadline: state.deadline, nextRenewAt: state.nextRenewAt })),
-                        lastPlannerStatus, lastAction,
-                        outsideTemperature: outside,
-                        speedKmh: ctl.speed, speedAgeMs: ctl.speedAt ? now - ctl.speedAt : null,
-                        bdcOnline: ctl.online, bdcReadVerified: ctl.verified,
-                        speedFresh: ctl.motionKnown, bdcMessage: ctl.info,
-                        lastBdcWriteAt: ctl.lastBdcWriteAt, bdcReadbacks: ctl.readbacks,
-                        seatModuleActivations: Object.fromEntries(seatModuleActivations),
-                        oneShotTestArmed: cycle.testBypass,
-                        ecuProfileState: ecuState, ecuProfile,
-                        seatSourceComparison: seatSources && seatSources.comparison,
-                    },
-                });
-                qrPage = 0;
-                qrMatrix = QR.matrix(qrReport.pages[0]);
-                qrError = '';
-            } catch (e) {
-                qrReport = null;
-                qrMatrix = null;
-                qrError = String(e && e.message || e);
-                ctx.log.warn('QR diagnostic export failed: ' + qrError);
-            }
-        }
-        // Include the current measurement: one read-only refresh, then build.
-        // If the channel is busy or offline, build from what is there.
-        function freshQrReport() {
-            if (!ctl.online || statusBusy || busy) { buildQrReport(); return; }
-            refreshReadbacks().catch(e => ctx.log.warn('QR refresh: ' + e))
-                .then(() => { if (tab === 3) buildQrReport(); });
-        }
-        function nextQrPage() {
-            if (!qrReport) { buildQrReport(); return; }
-            try {
-                qrPage = (qrPage + 1) % qrReport.pages.length;
-                qrMatrix = QR.matrix(qrReport.pages[qrPage]);
-                qrError = '';
-            } catch (e) {
-                qrError = String(e && e.message || e);
-                ctx.log.warn('QR page encoding failed: ' + qrError);
-            }
-        }
         let testArmedAt = testConsumed ? Date.now() : 0;
         // Control-unit profile: loaded from settings, verified/detected once
         // TASU is online, stored again for the next start.
@@ -230,11 +153,8 @@ mgu.run({
         let ecuAttemptAt = 0, ecuAttempts = 0;
         let lastRouteNote = '';
         let lastSkipNote = '';
-        // Read-only seat sources (SMFA/SMBF D714, IHKA D8DB): latest snapshot
-        // plus a bounded history for the QR export (manual level changes).
+        // Latest read-only snapshot of the seat sources (SMFA/SMBF D714, IHKA D8DB).
         let seatSources = null, mismatchStreak = 0;
-        const seatHistory = [];
-        const SEAT_HISTORY_MAX = 10;
         record('ECU PROFILE', ecuProfile ? (ecuProfile.migratedFrom ?
             'migrated 0.5.1 profile, re-detection required: ' : 'loaded: ') + E.summary(ecuProfile) : 'none stored');
         if (ecuProfile && ecuProfile.migratedFrom) ecuState = 'MIGRATED (re-detecting)';
@@ -265,9 +185,7 @@ mgu.run({
         });
         const setTab = i => {
             if (Number.isInteger(i) && i >= 0 && i < TABS.length) {
-                const enteredQr = tab !== 3 && i === 3;
                 tab = i;
-                if (enteredQr) freshQrReport();
                 if (tab === 1) refreshReadbacks().catch(e => { ctl.info = 'BDC read error: ' + e.message; });
             }
         };
@@ -323,7 +241,7 @@ mgu.run({
                     acknowledged.clear();
                     wheelCheck = null;
                     seatModuleActivations.clear();
-                    // Only a real ON -> OFF cycle resets the QR log. An
+                    // Only a real ON -> OFF cycle resets the session log. An
                     // initial OFF observation at process boot is not a new
                     // journey; retain the PROCESS START evidence in that case.
                     if (observed.transition === 'off' && sawVehicleOn) {
@@ -685,8 +603,6 @@ mgu.run({
                     ecuProfile.ecus[id] && ecuProfile.ecus[id].presence === 'present')) {
                     const snap = await E.readSeatSources((addr, did) => ctl.probe(addr, did), ecuProfile);
                     seatSources = snap;
-                    seatHistory.push(snap);
-                    while (seatHistory.length > SEAT_HISTORY_MAX) seatHistory.shift();
                     for (const id of ['SMFA', 'SMBF', 'IHKA'])
                         if (snap[id]) record('READ ' + id, E.measurementLine(id, snap[id]).slice(9));
                     mismatchStreak = snap.comparison.verdict === 'differs' ? mismatchStreak + 1 : 0;
@@ -931,7 +847,6 @@ mgu.run({
         ctx.ui.onClick('BTN_ACTION', () => {
             if (tab === 0) setTab(1);
             else if (tab === 1) refreshReadbacks().catch(e => { ctl.info = 'Read error: ' + e.message; });
-            else if (tab === 3) nextQrPage();
         });
         ctx.ui.onClick('BTN_STOP', stopAutoHeating);
         let consoleTotal = 0;
@@ -942,16 +857,13 @@ mgu.run({
         ctx.ui.onClick('BTN_LOG_UP', () => { if (tab === 2) consoleMove(12); });
         ctx.ui.onClick('BTN_LOG_DOWN', () => { if (tab === 2) consoleMove(-12); });
         ctx.ui.onClick('BTN_LOG_LATEST', () => { if (tab === 2) consoleOffset = 0; });
-        ctx.ui.onClick('BTN_QR_REFRESH', () => { if (tab === 3) freshQrReport(); });
         ctx.ui.onClick('BTN_DETECT', redetect);
         if (typeof ctx.onTap === 'function') ctx.onTap((x, y) => {
             if (tab === 2 && y >= 121 && y <= 169) {
                 if (x >= 906 && x < 1092) consoleMove(12);
                 else if (x >= 1102 && x < 1288) consoleMove(-12);
                 else if (x >= 1298 && x < 1537) consoleOffset = 0;
-            } else if (tab === 3 && x >= 1275 && x < 1515 && y >= 112 && y <= 165)
-                freshQrReport();
-            else if (tab === 1 && x >= 1236 && x < 1546 && y >= 112 && y <= 165)
+            } else if (tab === 1 && x >= 1236 && x < 1546 && y >= 112 && y <= 165)
                 redetect();
         });
         if (typeof ctx.onTouch === 'function') ctx.onTouch((phase, x, y) => {
@@ -1124,9 +1036,9 @@ mgu.run({
                 G.panel(cv, t, 24, 62, 1552, 445, 'Live console / this vehicle session');
                 if (now - warningCacheAt > 2500) {
                     warningCacheAt = now;
-                    warningCache = QR.sessionWarnings(ctx, sessionStartedAt, 150);
+                    warningCache = Log.sessionWarnings(ctx, sessionStartedAt, 150);
                 }
-                const lines = QR.consoleLines(events, warningCache, sessionStartedAt);
+                const lines = Log.consoleLines(events, warningCache, sessionStartedAt);
                 consoleTotal = lines.length;
                 consoleOffset = Math.min(consoleOffset, Math.max(0, consoleTotal - 13));
                 const start = Math.max(0, lines.length - 13 - consoleOffset);
@@ -1150,28 +1062,6 @@ mgu.run({
                 text(cv, 'SWIPE UP/DOWN or use OLDER/NEWER | ' + lines.length +
                     ' lines | ' + (start + 1) + '-' + Math.min(start + 13, lines.length),
                 56, 495, 17, t.dim);
-            } else {
-                G.panel(cv, t, 24, 62, 540, 445, 'QR diagnostic export');
-                G.panel(cv, t, 584, 62, 992, 445, 'Compact current-session snapshot');
-                cv.fillRect(1275, 125, 240, 39, '#284354');
-                text(cv, 'REFRESH QR', 1295, 152, 21, t.text);
-                if (qrMatrix && qrReport) {
-                    QR.draw(cv, qrMatrix, 91, 107, 390);
-                    text(cv, 'REPORT ' + qrReport.id, 620, 197, 26, t.accent, { font: 'bold' });
-                    text(cv, 'QR ' + (qrPage + 1) + ' / ' + qrReport.pages.length,
-                        620, 249, 39, t.text, { font: 'bold' });
-                    text(cv, 'ACTION: next QR page', 620, 296, 27, t.text);
-                    text(cv, 'Only this ignition/HU session (' +
-                        Math.ceil(qrReport.totalBytes / 1024) + ' KiB).', 620, 352, 23, t.text);
-                    text(cv, 'Contains latest ECU replies, errors, current', 620, 391, 22, t.text);
-                    text(cv, 'settings and startup / ignition events.', 620, 424, 22, t.text);
-                    text(cv, 'Scan all pages; older sessions are automatically excluded.',
-                        620, 477, 19, t.warn);
-                } else {
-                    text(cv, 'QR export unavailable: ' + (qrError || 'no report').slice(0, 110),
-                        620, 190, 25, t.warn);
-                    text(cv, 'Switch tabs to retry.', 620, 250, 24, t.text);
-                }
             }
             return ctx.ui.image('MAIN_GFX', cv);
         });

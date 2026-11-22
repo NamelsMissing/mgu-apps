@@ -19,7 +19,6 @@ class SafeDiag {
         this.pending = null;
         this.busy = false;
         this.lastWriteAt = 0;
-        this.lastBdcWriteAt = 0;
         this.lastWriteAttempted = false;
         this.lastNrc = null; // diagnostic reason from the latest attempted 0x2E write
         this.readbacks = Object.create(null); // actual 0x22 replies, NEVER app-command state
@@ -134,7 +133,7 @@ class SafeDiag {
             const u = await this.diag.physical(this.target, 0x2E, data, 2300, replyTo(0x2E, data), { maxRetries: 0 });
             if (u && u[0] === 0x6E && u[1] === data[0] && u[2] === data[1]) {
                 this.info = 'ECU acknowledged 0x2E; vehicle effect UNVERIFIED';
-                this.lastWriteAt = this.lastBdcWriteAt = Date.now();
+                this.lastWriteAt = Date.now();
             } else this.info = errorFor(u);
         } catch (e) { this.info = 'Write error: ' + String(e.message || e); }
         finally { this.busy = false; }
@@ -163,7 +162,7 @@ class SafeDiag {
                 replyTo(0x2E, data), { maxRetries: 0 });
             if (u && u[0] === 0x6E && u[1] === data[0] && u[2] === data[1]) {
                 this.info = label + ': BDC acknowledged (physical result unverified)';
-                this.lastWriteAt = this.lastBdcWriteAt = Date.now();
+                this.lastWriteAt = Date.now();
                 return true;
             }
             if (u && u[0] === 0x7F && u[1] === 0x2E) this.lastNrc = u[2];

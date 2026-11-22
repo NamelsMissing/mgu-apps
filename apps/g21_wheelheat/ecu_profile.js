@@ -297,7 +297,7 @@ function decodeIhkaSeats(payload) {
     return out;
 }
 
-/** One read-only measurement with the complete UDS answer for the QR export. */
+/** One read-only measurement with the complete UDS answer. */
 async function measure(probe, ecu, did, decoder) {
     const at = Date.now();
     const p = await safeProbe(probe, ecu.addr, did);
@@ -353,7 +353,7 @@ function compareSources(s) {
 }
 const fmt = v => v === null || v === undefined ? '?' : String(v);
 
-/** Compact single-line text of one measurement for log and QR. */
+/** Compact single-line text of one measurement for the log. */
 function measurementLine(name, m) {
     if (!m) return name + ' not read';
     const t = new Date(m.at).toISOString().slice(11, 19);
@@ -496,7 +496,7 @@ function routeLabel(profile, key) {
     }
 }
 
-/** One-line summary for log, Diagnostics tab and QR export. */
+/** One-line summary for the log and Diagnostics tab. */
 function summary(profile) {
     if (!profile) return 'no control-unit profile';
     const ecu = CANDIDATES.map(c => {

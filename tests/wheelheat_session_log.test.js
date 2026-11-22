@@ -4,10 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const QR = require('../apps/g21_wheelheat/qr_log');
+const Log = require('../apps/g21_wheelheat/session_log');
 const { seatOnWithBusyRetry } = require('../apps/g21_wheelheat/seat_retry');
 
-test('session QR excludes previous SDK log rotations and stays compact', () => {
+test('session log shows current warnings and events and excludes previous sessions', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'g21-heat-session-test-'));
     const start = Date.parse('2026-11-11T07:00:00.000Z');
     try {
@@ -15,30 +15,15 @@ test('session QR excludes previous SDK log rotations and stays compact', () => {
         const latest = '2026-11-11T07:01:00.000Z SDK_WARN CURRENT_SESSION_SEAT_BUSY\n';
         fs.writeFileSync(path.join(dir, 'g21_wheelheat.log.1'), old.repeat(20000));
         fs.writeFileSync(path.join(dir, 'g21_wheelheat.log'), latest);
-        const ctx = {
-            dataDir: dir, spec: { id: 'g21_wheelheat', version: '0.4.17' },
-            settings: { values: { autoEnabled: true, seatDriver: true }, saveError: '' },
-        };
-        const report = QR.createReport(ctx, { sessionStartedAt: start,
-            sessionReason: 'MGU process restart', state: { bdcOnline: true },
-            events: [
-                { at: start - 5000, kind: 'ECU REJECT', message: 'PREVIOUS_DRIVE' },
-                { at: start + 1000, kind: 'ECU REJECT', message: 'Driver seat NRC 0x21 busy' },
-            ],
-        });
-        const payload = report.pages.join('\n');
-        assert.match(payload, /CURRENT_SESSION_SEAT_BUSY/);
-        assert.match(payload, /Driver seat NRC 0x21 busy/);
-        assert.doesNotMatch(payload, /OLD_SESSION_PRIVATE_MARKER|PREVIOUS_DRIVE/);
-        assert(report.pages.length < 20, 'one short session should not produce hundreds of QR pages');
-        assert(report.pages[0].startsWith('HCLOG2 '));
-        assert(QR.matrix(report.pages[0]).getModuleCount() > 0);
-        const lines = QR.consoleLines([
-            { at: start - 1, kind: 'ERROR', message: 'old' },
-            { at: start + 1, kind: 'ECU REJECT', message: 'new busy' },
-        ], QR.sessionWarnings(ctx, start), start);
-        assert(lines.some(x => x.text.includes('new busy')));
-        assert(!lines.some(x => x.text.includes('old')));
+        const ctx = { dataDir: dir, spec: { id: 'g21_wheelheat' } };
+        const lines = Log.consoleLines([
+            { at: start - 5000, kind: 'ECU REJECT', message: 'PREVIOUS_DRIVE' },
+            { at: start + 1000, kind: 'ECU REJECT', message: 'Driver seat NRC 0x21 busy' },
+        ], Log.sessionWarnings(ctx, start), start);
+        assert.equal(lines.length, 2);
+        assert.match(lines[0].text, /Driver seat NRC 0x21 busy/);
+        assert.match(lines[1].text, /CURRENT_SESSION_SEAT_BUSY/);
+        assert(lines.every(line => line.error));
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
