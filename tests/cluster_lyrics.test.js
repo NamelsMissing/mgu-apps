@@ -368,6 +368,31 @@ function testKombi() {
     assert.strictEqual(cr.closed, 1);
     assert.ok(traces.some(t => /layers created/.test(t)) && traces.some(t => /hidden: vehicle moving/.test(t)));
 
+    // Waze coexistence: background is non-exclusive, small and translucent.
+    const kw = new K.KombiLyrics(quiet, { ClusterRender: FakeRender });
+    kw.configure({ layoutMode: 'withWaze', fontSizePct: 75, takeOverBmwMap: true });
+    kw.start();
+    kw.show({ title: 'Demo', artist: 'Artist', current: 'One short line', next: 'Next one', gap: false });
+    kw.cr.hello('map:1088x480,panel:1920x720');
+    const wave = kw.cr.ops.filter(o => o[0] === 'image');
+    assert.strictEqual(wave.length, 4);
+    assert.strictEqual(wave[0][2].exclusive, false);
+    assert.strictEqual(wave[0][2].contend, false);
+    assert.ok(wave[0][2].y >= 250 && wave[0][2].h < K.MAP_H);
+    assert.ok(wave.every(o => o[2].x >= 0 && o[2].x + o[2].w <= K.MAP_W));
+    assert.ok(K.backgroundPixels(true)[3] < 255, 'alpha preserved');
+    assert.strictEqual(kw.status().fontSizePct, 75);
+    const originalRefs = wave.map(o => o[1]);
+    kw.configure({ layoutMode: 'exclusive' });
+    assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'drop').length, 4);
+    assert.ok(originalRefs.every(ref => !kw.cr.layers.has(ref)));
+    assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'image').slice(-4)[0][2].exclusive, true);
+    kw.configure({ fontSizePct: 50 });
+    assert.strictEqual(kw.status().fontSizePct, 50);
+    kw.show({ title: '', artist: '', current: '', next: '', gap: true, noteOnly: true });
+    assert.ok(kw.status().visible);
+    kw.close();
+
     // Another map size (iDrive 8) is not drawn on.
     const k8 = new K.KombiLyrics(quiet, { ClusterRender: FakeRender });
     k8.start();
@@ -548,7 +573,20 @@ async function testEngine() {
     waiting.trackB.resolve({ status: 'none', lines: [] });
     await flush();
     engine.tick();
-    assert.deepStrictEqual(last(), ['hide', 'no synchronised lyrics (none)']);
+    assert.strictEqual(last()[0], 'show', 'missing lyrics show a note');
+    assert.deepStrictEqual(last()[1], { title: '', artist: '', current: '', next: '', gap: true, noteOnly: true });
+    engine.lyricsState = 'plain';
+    engine.tick();
+    assert.strictEqual(last()[1].noteOnly, true);
+    engine.lyricsState = 'instrumental';
+    engine.tick();
+    assert.strictEqual(last()[1].noteOnly, true);
+    engine.lyricsState = 'unreadable';
+    engine.tick();
+    assert.strictEqual(last()[1].noteOnly, true);
+    engine.lyricsState = 'error';
+    engine.tick();
+    assert.deepStrictEqual(last(), ['hide', 'no synchronised lyrics (error)']);
     answer = Object.assign({}, answer, { id: 'trackC' });
     await engine.pollOnce();
     const lateC = waiting.trackC;
@@ -595,6 +633,10 @@ function testManifest() {
     assert.strictEqual(byKey.kombiOn.default, false, 'nothing reaches the cluster until switched on');
     assert.strictEqual(byKey.kombiMode.default, 'parked');
     assert.strictEqual(byKey.takeOverBmwMap.default, false);
+    assert.strictEqual(byKey.layoutMode.default, 'exclusive');
+    assert.ok(byKey.layoutMode.options.some(o => o[0] === 'withWaze'));
+    assert.strictEqual(byKey.kombiFontPct.default, 75);
+    assert.ok(byKey.kombiFontPct.steps.indexOf(50) >= 0 && byKey.kombiFontPct.steps.indexOf(120) >= 0);
     assert.ok(byKey.offsetMs.steps.indexOf(0) >= 0);
     assert.deepStrictEqual(Object.keys(spec.signals), ['de.bmw.infotainment.vehicle.Vehicle2']);
     const repo = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'mgu-repo.json'), 'utf8'));
