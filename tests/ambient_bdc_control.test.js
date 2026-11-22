@@ -77,3 +77,52 @@ test('missing visual confirmation or fresh speed-0 blocks vehicle writes', async
     await ctl.applyBdc({on: 1, rgb: [1, 2, 3]}, 50, 5, () => true);
     assert.equal(requests.length, 0);
 });
+
+test('experimental mode can select only a fresh valid BDC read slot even with 255 RGB sentinels', async () => {
+    const {ctl, requests} = harness([0x6E, 0xDA, 0x5E]);
+    ctl.wizard.physical = 'No';
+    ctl.bdc[0].read = {at: Date.now(), revision: ctl.connectionRevision, decoded: true};
+    ctl.bdc[0].valid = {at: Date.now(), revision: ctl.connectionRevision,
+        data: {records: [
+            {bus: 1, nad: 1, location: 5, rgbw: [255, 255, 255, 3], valid: true},
+            {bus: 1, nad: 2, location: 255, rgbw: [255, 255, 255, 3], valid: false},
+        ]}};
+    assert.equal(ctl.bdcTestTargets.length, 0, 'must default to verified-only mode');
+    await ctl.applyBdc({on: 1, rgb: [22, 33, 44]}, 50, 2, () => true);
+    assert.equal(requests.length, 0, 'no command before opt-in');
+    ctl.setExperimentalLin(true);
+    assert.equal(ctl.bdcCandidates.length, 1);
+    assert.deepEqual(ctl.bdcCandidates.map(x => [x.bus, x.nad]), [[1, 1]]);
+    assert(ctl.bdcGuidance.includes('UNVERIFIED'));
+    assert.equal(ctl.selectBdcTarget(1, 2), false, 'invalid location excluded');
+    assert.equal(ctl.selectBdcTarget(1, 1), true);
+    assert.match(ctl.info, /EXPERIMENTAL/);
+    await ctl.applyBdc({on: 1, rgb: [22, 33, 44]}, 50, 2, () => true);
+    assert.equal(requests.length, 0, 'first press only arms');
+    await ctl.applyBdc({on: 1, rgb: [22, 33, 44]}, 50, 2, () => true);
+    assert.deepEqual(requests, [[0x40, 0x2E, 0xDA, 0x5E, 1, 1, 50, 22, 33, 44, 2]]);
+    assert.equal(ctl.lastBdcWrite.experimental, true);
+    ctl.setExperimentalLin(false);
+    assert.equal(ctl.bdcTestTargets.length, 0);
+    ctl.lastBdcWriteAt -= 3000;
+    await ctl.applyBdc({on: 1, rgb: [22, 33, 44]}, 50, 2, () => true);
+    assert.equal(requests.length, 1, 'disabling experimental mode must prevent another write');
+});
+
+test('expired BDC record and lost standstill prohibit experimental writes', async () => {
+    const {ctl, requests} = harness([0x6E, 0xDA, 0x5E]);
+    ctl.wizard.physical = 'No';
+    ctl.bdc[0].read = {at: Date.now(), revision: ctl.connectionRevision, decoded: true};
+    ctl.bdc[0].valid = {at: Date.now(), revision: ctl.connectionRevision,
+        data: {records: [{bus: 1, nad: 2, location: 5, rgbw: [255, 255, 255, 3], valid: true}]}};
+    ctl.setExperimentalLin(true);
+    assert.equal(ctl.selectBdcTarget(1, 2), true);
+    ctl.updateSpeed(64); // 1 km/h, must not permit tests
+    await ctl.applyBdc({on: 1, rgb: [1, 2, 3]}, 40, 2, () => true);
+    assert.equal(requests.length, 0);
+    ctl.updateSpeed(0);
+    ctl.bdc[0].read.at -= 180000;
+    assert.equal(ctl.bdcTestTargets.length, 0);
+    await ctl.applyBdc({on: 1, rgb: [1, 2, 3]}, 40, 2, () => true);
+    assert.equal(requests.length, 0);
+});
