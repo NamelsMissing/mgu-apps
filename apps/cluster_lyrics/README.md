@@ -1,9 +1,9 @@
-# Cluster Lyrics 0.1.1 — BMW G21 / MGU iDrive 7
+# Cluster Lyrics 0.1.2 — BMW G21 / MGU iDrive 7
 
 Shows the synchronised lyrics of the song that is playing on **your own Spotify account**:
 
 - on the iDrive screen (title, artist, current line, next line), and
-- optionally in the **instrument cluster's map window**, in place of the Waze map.
+- optionally in the **instrument cluster's map window**, replacing the map or overlaying lyrics while Waze remains visible.
 
 **Status: built and tested on a PC only.** Nothing in this app has run on a vehicle yet. See
 [What is verified](#what-is-verified) before you rely on any part of it.
@@ -32,9 +32,9 @@ Spotify polling, lyrics download and the cluster layers run in the background pr
 | What is playing, and the position in the song | Spotify Web API, `GET /v1/me/player/currently-playing` | Read-only. Asked every 4 s while a song plays, every 8 s otherwise, and only while the app's screen is open or cluster lyrics are switched on. |
 | Lyrics with time stamps | [LRCLIB](https://lrclib.net) | Spotify's API does not hand out lyrics. LRCLIB is a free community database: many songs have synchronised lyrics, some have none. Only title, artist, album and length are sent. |
 | Internet | MGU Store uplink (`"mguInternet": true`) | Same mechanism as MGU Video Hub. Only `accounts.spotify.com`, `api.spotify.com` and `lrclib.net` can be reached, on port 443, with certificate checks. |
-| Cluster display | `cluster-render`, target `map` (1088x480) | Four image layers of class `overlay`. The background is opaque and `exclusive`, so the Waze map below it is hidden while lyrics are shown. |
+| Cluster display | `cluster-render`, target `map` (1088x480) | Four image layers of class `overlay`. In Lyrics only, the background is opaque and `exclusive`; in Lyrics + Waze, a small translucent footer has `exclusive: false` so Waze can remain visible. |
 
-When the lyrics are hidden (song paused, no lyrics found, vehicle moving in standstill mode, switch off), the
+When the lyrics are hidden (song paused, nothing playing, vehicle moving in standstill mode, switch off), the
 layers become invisible and the map window is released: the Waze map or BMW's map comes back by itself.
 This app never changes Waze's own setting and draws nothing on the speedometer/warning area (`panel`).
 BMW's turn box stays visible (`guide_hold` 0).
@@ -69,7 +69,9 @@ BMW's turn box stays visible (`guide_hold` 0).
 |---|---|---|
 | Show lyrics in the instrument cluster | Off | The same switch as the **KOMBI lyrics** button. While off, the app does not even connect to `cluster-render`. |
 | When lyrics may be shown | Only at a standstill | *Only at a standstill*: shown after the car has stood for 1.5 s with a fresh speed signal, hidden at once from 3 km/h or when the signal is missing. *Also while driving*: no speed condition. |
-| Also replace BMW's own map (not only Waze) | Off | Off: the lyrics appear when the map window is already used by an app such as Waze or is free. On: the window is also taken from BMW's own map (`contend`). |
+| Also replace BMW's own map (not only Waze) | Off | Applies to **Lyrics only**; ignored in **Lyrics + Waze** to avoid taking over BMW's map. |
+| KOMBI display: lyrics only or together with Waze | Lyrics only | **Lyrics only** replaces the map. **Lyrics + Waze** displays a compact translucent lyrics strip along the bottom while Waze continues underneath (Waze must already be running). |
+| KOMBI lyrics font size | 75% | Saved 50–120% scaling for the current and next lyric lines; the text is constrained to the cluster's central region. |
 | Show the next line | On | Second, dimmed line. |
 | Colour of the current line | White | White, green, amber or blue. |
 | Lyrics delay | 0 ms | Positive values show each line later. Use this if the sound in the car lags behind (wireless CarPlay usually does). −2000 … +3000 ms. |
@@ -84,7 +86,7 @@ standstill; choosing *Also while driving* is your own decision and responsibilit
 | `Internet: Store uplink offline` / `Store online - app not routed` | No hotspot connection, or the app was installed before the uplink (reinstall it). |
 | `Spotify sign-in expired` | Repeat setup steps 3 and 4. |
 | `Spotify refused the request (Premium / app user list?)` | The Spotify account is not Premium, or it is not the account that owns the Spotify app. |
-| `Lyrics: not found on LRCLIB` / `only unsynchronised text available` | Nothing can be shown in time with the music for this song. Asked again after a week. |
+| `Lyrics: not found on LRCLIB` / `only unsynchronised text available` | Only a music note is displayed in the cluster for that track, including instrumental and unreadable lyrics. Cache behaviour is unchanged. |
 | `Lyrics: in a script this display cannot draw` | The built-in font covers Latin (with umlauts and accents) and Cyrillic, not e.g. Chinese, Japanese, Korean or Arabic. |
 | `KOMBI: hidden - vehicle moving` / `no fresh speed signal` | Standstill mode is doing its job. |
 | `KOMBI: requested - map window waiting (held by stock)` | BMW's own map holds the window and *Also replace BMW's own map* is off. |
@@ -117,6 +119,8 @@ Verified on a PC:
   route guidance. Custom Cluster's own cluster output is also still unconfirmed on this car.
 - How far the lyrics are off against the sound with CarPlay (the *Lyrics delay* setting is for this).
 - That a USB stick is readable by the app under `/media`, `/run/media`, `/mnt/usb` or `/mnt/media_rw`.
+
+**Vehicle follow-up for 0.1.2:** The original exclusive lyric display was confirmed on a G21. The narrower text, note fallback and simultaneous Waze overlay have not yet been verified on the vehicle. Waze mode never starts or controls Waze itself.
 
 First test with the car parked: open the app, check **Setup** (steps 1, 2 and 4 green), play a song, then
 switch **KOMBI lyrics** on and take a photo of the cluster and of the **Log** page.

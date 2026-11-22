@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Cluster Lyrics 0.1.0 - the lyrics of the song playing on the user's Spotify
+ * Cluster Lyrics 0.1.2 - the lyrics of the song playing on the user's Spotify
  * account, on the iDrive screen and optionally in the instrument cluster's
  * map window (instead of the Waze map).
  *
@@ -66,7 +66,9 @@ mgu.run({
             engine.configure({ kombiOn: on, kombiMode: settings.get('kombiMode') === 'always' ? 'always' : 'parked',
                 offsetMs: Number(settings.get('offsetMs')) || 0 });
             kombi.configure({ accent: settings.get('accent'), showNext: settings.get('showNext') !== false,
-                takeOverBmwMap: !!settings.get('takeOverBmwMap') });
+                takeOverBmwMap: !!settings.get('takeOverBmwMap'),
+                layoutMode: settings.get('layoutMode') === 'withWaze' ? 'withWaze' : 'exclusive',
+                fontSizePct: Number(settings.get('kombiFontPct')) || 75 });
             // Without the switch the app does not even connect to the cluster renderer.
             if (on) kombi.start(); else kombi.close();
             engine.setActive(mainVisible() || on);
