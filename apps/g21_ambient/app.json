@@ -2,7 +2,7 @@
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
   "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",
@@ -269,6 +269,22 @@
         2,
         5,
         10
+      ]
+    },
+    {
+      "key": "experimentalLin",
+      "label": "Experimental single-NAD BDC test (unverified lighting hardware)",
+      "type": "choice",
+      "default": "off",
+      "options": [
+        [
+          "off",
+          "Off (verified targets only)"
+        ],
+        [
+          "on",
+          "On (allow observed BDC LIN records)"
+        ]
       ]
     }
   ]
