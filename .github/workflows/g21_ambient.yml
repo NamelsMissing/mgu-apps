@@ -5,6 +5,8 @@ on:
     paths:
       - 'apps/g21_ambient/**'
       - 'tests/ambient*.test.js'
+      - 'tests/g21_car_ui_smoke.test.js'
+      - 'tests/controls.test.js'
       - 'kit/runtime/**'
       - '.github/workflows/g21_ambient.yml'
   workflow_dispatch:
