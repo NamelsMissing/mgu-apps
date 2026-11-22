@@ -2,7 +2,7 @@
 
 Community-made apps for **BMW iDrive 7** head units (**MGU**). You install and update them through **[MGU Store](https://github.com/robertnisipeanu/mgu-store)** directly in the car.
 
-The apps are developed and tested on a BMW 3 Series Touring (G21). On other cars, some functions may behave differently or not work.
+The apps are developed primarily for a BMW 3 Series Touring (G21). Some behavior has been verified in the vehicle; other features have only offline tests or still need an on-car check. Hardware and software differences between vehicles can affect the results.
 
 ## Add this repository to MGU Store
 
@@ -124,6 +124,8 @@ These apps are **not** in the main MGU Store catalog. Add the linked repository 
 | [**Vehicle Data**](https://github.com/NamelsMissing/mgu-chatgpt-bridge/tree/main/apps/vehicle_data) | [BMW AI / MGU ChatGPT Bridge](https://github.com/NamelsMissing/mgu-chatgpt-bridge) | Vehicle mileage, service information and related BMW AI integration. |
 
 For Blitzer Status, first update Custom Cluster to **0.6.11** or newer if you use it, then reinstall Blitzer Status from **beta** and replace the two iPhone Shortcut URLs with those shown by the app. Keep both repository sources in MGU Store for other apps and shared components.
+
+**Avoid an older duplicate:** The beta catalog also contains Heating Comfort **0.5.1**. Install Heating Comfort **0.5.4** from this **main** source rather than the older beta entry.
 
 ## Good to know
 
