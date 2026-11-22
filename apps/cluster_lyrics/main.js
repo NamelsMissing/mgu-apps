@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Cluster Lyrics 0.1.2 - the lyrics of the song playing on the user's Spotify
+ * Cluster Lyrics 0.1.3 - the lyrics of the song playing on the user's Spotify
  * account, on the iDrive screen and optionally in the instrument cluster's
  * map window (instead of the Waze map).
  *
@@ -56,15 +56,20 @@ mgu.run({
             version: (ctx.spec && ctx.spec.version) || '', startReason: ctx.app && ctx.app.startReason });
 
         let page = spotify.signedIn() ? 'NOW' : 'SETUP', notice = '', signOutArmedUntil = 0;
-        let lastState = '', lastDrawAt = 0;
+        let lastState = '', lastDrawAt = 0, lastDelayMs = null;
         // MAIN's draw loop only runs while the screen is shown: that is the visibility signal
         // (it does not depend on an RHMI visibility event arriving).
         const mainVisible = () => Date.now() - lastDrawAt < 3000;
 
         function syncSettings() {
             const on = !!settings.get('kombiOn');
+            const delayMs = Number(settings.get('offsetMs')) || 0;
             engine.configure({ kombiOn: on, kombiMode: settings.get('kombiMode') === 'always' ? 'always' : 'parked',
-                offsetMs: Number(settings.get('offsetMs')) || 0 });
+                offsetMs: delayMs });
+            if (lastDelayMs !== null && delayMs !== lastDelayMs)
+                note('Lyrics delay ' + lastDelayMs + ' -> ' + delayMs + ' ms (' +
+                    (delayMs > 0 ? 'later' : delayMs < 0 ? 'earlier' : 'original timing') + ')');
+            lastDelayMs = delayMs;
             kombi.configure({ accent: settings.get('accent'), showNext: settings.get('showNext') !== false,
                 takeOverBmwMap: !!settings.get('takeOverBmwMap'),
                 layoutMode: settings.get('layoutMode') === 'withWaze' ? 'withWaze' : 'exclusive',
@@ -169,8 +174,13 @@ mgu.run({
                     font.draw(s, 'regular', sub.lines[0] || '', 0, 66, 24, t.dim);
                 });
                 cv.image(IMG_HEAD, 48, 66, HEAD_W, HEAD_H);
-                const pos = Math.max(0, engine.position() + (Number(settings.get('offsetMs')) || 0));
-                cv.text(clock(pos) + ' / ' + clock(track.durationMs), 1552, 100, 22, t.dim, { align: 'right', literal: true });
+                const timing = engine.timing();
+                const pos = Math.max(0, timing.trackMs);  // real song position, NOT delayed lyric time
+                cv.text('Song ' + clock(pos) + ' / ' + clock(track.durationMs),
+                    1552, 98, 22, t.dim, { align: 'right', literal: true });
+                const signedDelay = (timing.delayMs > 0 ? '+' : '') + timing.delayMs + ' ms';
+                cv.text('Lyrics ' + clock(Math.max(0, timing.lyricMs)) + '  |  Delay ' + signedDelay,
+                    1552, 131, 19, timing.delayMs ? t.text : t.dim, { align: 'right', literal: true });
                 cv.fillRect(48, 156, 1504, 3, t.track);
                 if (track.durationMs) cv.fillRect(48, 156, Math.round(1504 * Math.min(1, pos / track.durationMs)), 3, t.text);
                 // The same two lines the cluster shows.

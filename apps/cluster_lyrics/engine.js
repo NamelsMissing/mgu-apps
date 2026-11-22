@@ -154,9 +154,16 @@ class LyricsEngine {
         // Between the two thresholds the last decision stands.
     }
 
-    position() {
-        return this.track ? positionAt(this.track, this.now()) - (Number(this.options.offsetMs) || 0) : 0;
+    /** Spotify playback position before lyric offset (used for the song progress bar). */
+    rawPosition() { return this.track ? positionAt(this.track, this.now()) : 0; }
+    /** Inspect the exact lyric clock without accidentally cancelling the delay. */
+    timing() {
+        const trackMs = this.rawPosition();
+        const delayMs = Number(this.options.offsetMs) || 0;
+        return { trackMs, lyricMs: trackMs - delayMs, delayMs };
     }
+    /** Positive delay = display a lyric later; negative delay = earlier. */
+    position() { return this.timing().lyricMs; }
     /** { index, current, next, gap } for now, or null without synced lyrics. */
     frame() {
         if (!this.track || this.lyricsState !== 'synced' || this.lyricsFor !== this._key(this.track)) return null;

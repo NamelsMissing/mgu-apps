@@ -1,4 +1,4 @@
-# Cluster Lyrics 0.1.2 — BMW G21 / MGU iDrive 7
+# Cluster Lyrics 0.1.3 — BMW G21 / MGU iDrive 7
 
 Shows the synchronised lyrics of the song that is playing on **your own Spotify account**:
 
@@ -74,10 +74,18 @@ BMW's turn box stays visible (`guide_hold` 0).
 | KOMBI lyrics font size | 75% | Saved 50–120% scaling for the current and next lyric lines; the text is constrained to the cluster's central region. |
 | Show the next line | On | Second, dimmed line. |
 | Colour of the current line | White | White, green, amber or blue. |
-| Lyrics delay | 0 ms | Positive values show each line later. Use this if the sound in the car lags behind (wireless CarPlay usually does). −2000 … +3000 ms. |
+| Lyrics delay | 0 ms | Positive values show each line **later**, negative values **earlier** (−2000 … +3000 ms). On Now Playing the song clock and shifted lyric clock are shown separately. The progress bar continues to indicate the actual song position. |
 
 Reading text while driving takes your eyes off the road. The default therefore shows lyrics only at a
 standstill; choosing *Also while driving* is your own decision and responsibility as the driver.
+
+## Verifying the delay (0.1.3)
+
+- Open **Now playing** with a song that has synchronised lyrics. The two right-hand clocks show **Song** (Spotify playback, unchanged by delay) and **Lyrics** (playback minus delay).
+- Set **Lyrics delay = +2000 ms**. The lyric clock will run 2 seconds behind the song clock and lyrics will appear 2 seconds later.
+- Set **Lyrics delay = −2000 ms**. The lyric clock will run 2 seconds ahead and lyrics will appear earlier.
+- **Log** records each change to the delay setting. If both clocks move together or the log does not register a change, verify that the settings are being applied by the installed build.
+- Spotify provides periodic playback position snapshots; network latency and the cluster renderer's refresh interval may introduce residual jitter. The setting only shifts the lyric timestamp, not the audio itself.
 
 ## What you see when something is missing
 
