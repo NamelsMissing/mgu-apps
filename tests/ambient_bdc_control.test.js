@@ -93,7 +93,7 @@ test('experimental mode can select only a fresh valid BDC read slot even with 25
     ctl.setExperimentalLin(true);
     assert.equal(ctl.bdcCandidates.length, 1);
     assert.deepEqual(ctl.bdcCandidates.map(x => [x.bus, x.nad]), [[1, 1]]);
-    assert(ctl.bdcGuidance.includes('UNVERIFIED'));
+    assert.match(ctl.bdcGuidance, /not verified/i);
     assert.equal(ctl.selectBdcTarget(1, 2), false, 'invalid location excluded');
     assert.equal(ctl.selectBdcTarget(1, 1), true);
     assert.match(ctl.info, /EXPERIMENTAL/);
