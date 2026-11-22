@@ -47,7 +47,6 @@ mgu.run({async start(ctx){
  const observeBackground=()=>{monitor.observe(Date.now()-lastLightAt<=2500?{statusMainBeam_headlightFlasher:lastCombined}:null,lightProviderAvailable(),ui.isVisible('MAIN'));persistBackground();};
  const leverSignal=()=>leverObservation.snapshot(Date.now(),lightProviderAvailable());
  const serviceVisible=()=>ui.isVisible('DIAGNOSTICS')||ui.isVisible('ADVANCED')||ui.isVisible('LOGS');
- const menuVisible=()=>serviceVisible()||ui.isVisible('OPTIONS');
  const update=()=>{
    const locked=isLocked();
    const lockStatus=autoRecoveryAttempted?"Locked - use Restore normal lights":"Locked - waiting for automatic recovery";
@@ -97,15 +96,16 @@ mgu.run({async start(ctx){
    update();
  };
  const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()}));
- let runNeedsMain=true,runSub100=false,runCycles=false;
+ const mainVisible=()=>ui.isVisible('MAIN');
+ let runScreenAllowed=mainVisible,runSub100=false,runCycles=false;
  const fastIntervalAllowed=()=>(!(sub100()||runSub100)||(settings.get('fastTest')===true&&lightProviderAvailable()));
- const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&fastIntervalAllowed()&&(!(cycleSelected()||runCycles)||lightProviderAvailable());
- // Background lever mode: same fresh OEM beam OFF requirement, but no visible menu needed.
- // Never while the diagnostics page is open (shared TASU, read-only tests).
+ const flashReady=()=>!closing&&settings.get('manualFlash')===true&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&fastIntervalAllowed()&&(!(cycleSelected()||runCycles)||lightProviderAvailable());
+ const flashAllowed=()=>mainVisible()&&flashReady();
  const leverBackground=()=>settings.get('leverBackground')===true;
- const leverScreenOk=()=>ui.isVisible('MAIN')||(leverBackground()&&!menuVisible());
- const backgroundRunAllowed=()=>fastIntervalAllowed()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!menuVisible()&&lightProviderAvailable()&&lever.rangeValid&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
- const leverAllowed=()=>fastIntervalAllowed()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&lightProviderAvailable()&&lever.rangeValid&&!pending&&!capture.active&&!flash.running&&!isLocked();
+ const leverForeground=()=>mainVisible()||ui.isVisible('OPTIONS');
+ const leverScreenOk=()=>!serviceVisible()&&(leverForeground()||leverBackground());
+ const leverEnabled=()=>settings.get('leverTrigger')===true&&leverScreenOk()&&lightProviderAvailable()&&lever.rangeValid;
+ const leverAllowed=()=>fastIntervalAllowed()&&!closing&&settings.get('manualFlash')===true&&leverEnabled()&&!pending&&!capture.active&&!flash.running&&!isLocked();
  const feedLever=()=>{const fired=lever.update(lastCombined,lastLightAt,leverAllowed());persistBackground();if(fired)startFlash('lever').catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()});};
  async function startFlash(source){
    if(pending||capture.active||flash.running){if(source==='lever')lever.runEnded();throw Error('Another operation in progress');}
@@ -120,8 +120,9 @@ mgu.run({async start(ctx){
    try{
      const cfg=getConfig();attempt.requested={...cfg,fast:settings.get('fastTest')===true};
      runSub100=cfg.intervalMs<100;runCycles=cfg.cycleCount!==null;
-     const background=source==='lever'&&leverBackground();attempt.background=background;
-     const runAllowed=source==='lever'?()=>lever.rangeValid&&settings.get('leverTrigger')===true&&lightProviderAvailable()&&(background?backgroundRunAllowed():flashAllowed()):flashAllowed;runNeedsMain=!background;
+     attempt.background=source==='lever'&&!leverForeground();
+     const runAllowed=source==='lever'?()=>leverEnabled()&&flashReady():flashAllowed;
+     runScreenAllowed=source==='lever'?leverScreenOk:mainVisible;
      if(!runAllowed())throw Error('Enable manual flash and wait for a current OEM high beam OFF signal');
      attempt.outcome='started';
      task=flash.run({...cfg,fast:settings.get('fastTest')===true},runAllowed,update);
@@ -145,7 +146,7 @@ mgu.run({async start(ctx){
    const allowed=()=>recoveryReady()&&(automatic||ui.isVisible('MAIN'));
    if(!allowed())throw Error('Switch OEM high beam OFF and wait for fresh signals and TASU');
    autoRecoveryAttempted=true;
-   pending=true;runNeedsMain=!automatic;lever.runStarted();lastError='';flashExport='';flashExportError='';
+   pending=true;runScreenAllowed=automatic?()=>!serviceVisible()&&!ui.isVisible('OPTIONS'):mainVisible;lever.runStarted();lastError='';flashExport='';flashExportError='';
    const attempt={id:++flashAttempt,source,at:new Date().toISOString(),requested:null,outcome:'not started',error:null};
    const previousTrace=flash.trace;let finishAttempt;
    flashTask=new Promise(resolve=>{finishAttempt=resolve});
@@ -289,7 +290,7 @@ mgu.run({async start(ctx){
    return sampleFeedback(lastCombined==='EIN'?'OEM steady high beam on':'OEM high beam off');
  });
  settings.onChange(()=>{syncLever();persistBackground();if(!valid()&&capture.active)stop('Left advanced tests');if(flash.running||settings.get('manualFlash')!==true)flash.cancel();update()});
- ui.onVisible(()=>{if(ui.isVisible('MAIN'))monitor.seeMain();else if(runNeedsMain||menuVisible())flash.cancel();persistBackground();if((capture.active||pending&&!flash.running)&&!ui.isVisible('ADVANCED'))stop('Left advanced tests');update()});
+ ui.onVisible(()=>{if(mainVisible())monitor.seeMain();else if(!runScreenAllowed())flash.cancel();persistBackground();if((capture.active||pending&&!flash.running)&&!ui.isVisible('ADVANCED'))stop('Left advanced tests');update()});
  if(ctx.app&&ctx.app.on)ctx.app.on('shutdown',()=>{closing=true;flash.cancel();stop('Shutdown')});
  process.on('SIGTERM',()=>{closing=true;flash.cancel();stop('Shutdown');if(flashTask){const timer=setTimeout(()=>process.exit(1),10000);flashTask.catch(()=>{}).then(()=>{clearTimeout(timer);process.exit(0)});}else process.exit(0)});
  guard.init(ctx.signals,log,v=>{lastCombined=v&&v.statusMainBeam_headlightFlasher;lastLightAt=Date.now();leverObservation.observe(lastCombined,lastLightAt);observeBackground();capture.status(v);feedLever();if(ui.isVisible('DIAGNOSTICS'))update()}).catch(e=>log.warn(String(e)));
