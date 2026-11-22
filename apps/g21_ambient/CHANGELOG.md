@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.6
+
+- Correct silent BDC test lockout: clear Guided-test progress, target counts, explicit block reasons, and direct Guided test navigation.
+- Allow opt-in experimental one-at-a-time BDC LIN testing for individual NADs present in fresh decoded LIN status records, even when RGB fields are sentinel 255.
+- Keep new capability off by default; no guessed or broadcast NADs, no in-motion writes, short <=10-second pulses and explicit double confirmation.
+- Make Color page Setup action navigate to BDC diagnostics when no target has been selected.
+
+
 ## 0.4.5
 
 - Introduced PRG-documented BDC LIN 1/2 temporary RGB testing (DA5E/E3D1) with guarded, single-NAD writes only after guided comparison and visual confirmation.
