@@ -2,7 +2,7 @@
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
   "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",
@@ -22,6 +22,15 @@
     "de.bmw.infotainment.drivingexcitement.FES": {
       "_optional": "Read the driving mode to preview saved RGB profiles; no automatic ECU writes",
       "statusFESVehicleDynamicSwitchHMI": "rs"
+    },
+    "de.bmw.infotainment.misc.ComfortFunctionIuK": {
+      "ambientLightInteriorColour": "w",
+      "statusAmbientLightInteriorColour": "rs"
+    },
+    "de.bmw.body.interiorillumination.AmbientLight": {
+      "_optional": "Read-only ambient profile and brightness, availability may vary by vehicle",
+      "currentInteriorLightProfile": "rs",
+      "brightnessAmbientLight": "rs"
     }
   },
   "screens": [
