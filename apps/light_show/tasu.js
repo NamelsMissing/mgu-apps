@@ -32,7 +32,7 @@ const hex = (n, w) => n.toString(16).toUpperCase().padStart(w || 2, '0');
 const NRC = {
     0x10: 'general reject', 0x11: 'service not supported', 0x12: 'sub-function not supported', 0x13: 'bad length',
     0x21: 'busy', 0x22: 'conditions not correct', 0x31: 'out of range', 0x33: 'security access denied',
-    0x72: 'programming failure', 0x78: 'pending', 0x7E: 'not supported in session', 0x7F: 'not supported in session',
+    0x35: 'invalid key (invalidKey)', 0x72: 'programming failure', 0x78: 'pending', 0x7E: 'not supported in session', 0x7F: 'not supported in session',
 };
 
 class Diag extends EventEmitter {
@@ -148,13 +148,16 @@ class Diag extends EventEmitter {
      * talking to the same ECU at the same time.
      */
     async physical(target, sid, data, timeoutMs, accept, opts) {
-        let t, hardTimer, onFrame, finish, done = false;
+        let t, hardTimer, onFrame, finish, done = false, transportError;
+        const onError = (code) => { transportError = 'TASU broadcast error ' + code; };
+        const onReject = (code) => { transportError = 'TASU header rejection 0x' + hex(code); };
         const got = new Promise((resolve) => {
             finish = (v) => {
                 if (done) return;
                 done = true;
                 clearTimeout(t); clearTimeout(hardTimer);
-                this.removeListener('frame', onFrame); resolve(v);
+                this.removeListener('frame', onFrame);
+                this.removeListener('tasError', onError); this.removeListener('tasReject', onReject); resolve(v);
             };
             onFrame = (f) => {
                 if (f.ecu !== target) return;
@@ -168,11 +171,14 @@ class Diag extends EventEmitter {
                 finish(f.uds);
             };
             this.on('frame', onFrame);
+            this.on('tasError', onError); this.on('tasReject', onReject);
             if (opts && opts.hardTimeoutMs) hardTimer = setTimeout(() => finish(null), opts.hardTimeoutMs);
         });
         try { this._check(await this.send(target, sid, data, opts)); } catch (e) { finish(null); throw e; }
         if (!done && !t) t = setTimeout(() => finish(null), timeoutMs || 4000); // from when the transport took it
-        return got;
+        const result = await got;
+        if (!result && transportError) throw new Error('Reply timed out (' + transportError + ' observed; source not correlated)');
+        return result;
     }
 }
 
@@ -183,7 +189,7 @@ const ECHO = { 0x10: 1, 0x11: 1, 0x27: 1, 0x28: 1, 0x22: 2, 0x2E: 2, 0x2F: 3, 0x
  * only this request's positive reply with its echo, or a refusal of this service, is the answer. */
 function replyTo(sid, data) {
     const echo = (data || []).slice(0, ECHO[sid] || 0);
-    return (u) => (u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) || (u[0] === 0x7F && u[1] === sid);
+    return (u) => (u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) || (u.length === 3 && u[0] === 0x7F && u[1] === sid && Number.isInteger(u[2]));
 }
 
 /**

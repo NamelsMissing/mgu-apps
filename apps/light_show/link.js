@@ -34,7 +34,13 @@ class Link {
         });
         return this;
     }
-    async request(sid, data, release, address) {
+    record(entry) {
+        const row = Object.assign({ at: new Date().toISOString() }, entry);
+        this.trace.push(row);
+        if (this.trace.length > 200) this.trace.shift();
+        return row;
+    }
+    async request(sid, data, release, address, step) {
         address = address === undefined ? P.ADDRESS : address;
         const identityOnly = sid === 0x22 && (P.hex(data) === 'F1 50' || (address === 0x10 && P.hex(data) === '3F 06'));
         const session = (sid === 0x10 && (P.hex(data) === '03' || P.hex(data) === '01'))
@@ -60,19 +66,24 @@ class Link {
         this._busy = true;
         const generation = this.generation;
         const controller = '0x' + address.toString(16).toUpperCase();
-        const record = { address, at: new Date().toISOString(), tx: P.hex([sid].concat(data)) };
-        this.trace.push(record); if (this.trace.length > 80) this.trace.shift();
+        const record = this.record({ address, step, tx: P.hex([sid].concat(data)) });
         const start = Date.now();
         try {
             const timing = identityOnly ? { maxRetries: 0, callTimeoutMs: 1200, hardTimeoutMs: 3200, pendingTimeoutMs: 2200 } : {
                 maxRetries: 0, callTimeoutMs: 700, hardTimeoutMs: 1200, pendingTimeoutMs: 800,
             };
             const u = await this.diag.physical(address, sid, data, identityOnly ? 1400 : release ? 800 : 400, replyTo(sid, data), timing);
-            record.ms = Date.now() - start; record.rx = u ? P.hex(u) : 'TIMEOUT';
+            record.ms = Date.now() - start; record.rx = u ? (sid === 0x22 && data[0] === 0x3F && u[0] === 0x62 ? '62 3F 06 [vehicle order redacted]' : P.hex(sid === 0x22 && data[0] === 0xF1 && u[0] === 0x62 ? u.slice(0, 6) : u)) : 'TIMEOUT';
             if (generation !== this.generation) throw new Error('Diagnostic connection changed during request to ' + controller);
             if (!u || !u.length) throw new Error(controller + ' reply timed out');
-            if (u[0] === 0x7F) throw new Error(controller + ' NRC ' + P.hex([u[2]]) + ': ' + (NRC[u[2]] || 'request refused'));
-            if (!replyTo(sid, data)(u) || u[0] !== sid + 0x40) throw new Error('Unexpected ' + controller + ' reply');
+            if (!replyTo(sid, data)(u) || (u[0] === 0x7F && u[2] === 0x78))
+                throw new Error('Unexpected ' + controller + ' reply to ' + record.tx);
+            if (u[0] === 0x7F) {
+                const error = new Error(controller + ' SID 0x' + P.hex([sid]) + ' NRC 0x' + P.hex([u[2]]) +
+                    ' (' + (NRC[u[2]] || 'unmapped UDS code') + '), reply ' + record.rx);
+                Object.assign(error, { address, sid, nrc: u[2] });
+                throw error;
+            }
             return u;
         } catch (e) {
             record.error = String(e.message || e); this.log.warn('Light Show ' + controller + ' ' + record.tx + ': ' + record.error); throw e;
@@ -130,8 +141,7 @@ class Link {
         if (!this.available) throw new Error('No diagnostic connection (TASU unavailable)');
         this._busy = true;
         const generation = this.generation;
-        const record = { address: 0xDF, at: new Date().toISOString(), tx: '22 F1 50' };
-        this.trace.push(record); if (this.trace.length > 80) this.trace.shift();
+        const record = this.record({ address: 0xDF, tx: '22 F1 50' });
         const start = Date.now();
         try {
             const replies = await this.diag.functional(0x22, IDENTITY_DID, Object.assign({ idleMs: 3000, maxMs: 15000,
@@ -174,7 +184,7 @@ class Link {
     async timed(lights, ms) {
         if (!this.body) throw new Error('Body controller has not been identified');
         if (this.body.functions.indexOf(lights) < 0) throw new Error(this.body.name + ' has no light function ' + lights);
-        return this.request(0x2E, P.timedControl(lights, ms), ms === 0); }
+        return this.request(0x2E, P.timedControl(lights, ms), ms === 0, P.ADDRESS, lights + (ms ? ' on' : ' off')); }
     async session() { return this.request(0x10, [0x03]); }
     async set(output, on) {
         if (!this.body || !this.body.outputs) throw new Error('Single BDC outputs need BDC_G05');

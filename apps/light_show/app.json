@@ -2,7 +2,7 @@
   "id": "light_show",
   "title": "Light Show",
   "description": "Exterior light shows for BMW G-series: vehicle scan, headlamp LEDs and body-controller lights, effect library, 3D car and phone remote via QR code. Parked in P only.",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "vendor": "custom",
   "loggingId": "OAL9",
   "iconGlyph": "LS",

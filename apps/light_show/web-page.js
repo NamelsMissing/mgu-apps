@@ -17,12 +17,14 @@ header h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.2px;flex:1}
 .pill.ok{color:var(--ok);border-color:#1e5b39}.pill.warn{color:var(--warn);border-color:#6a4b10}.pill.bad{color:var(--bad);border-color:#6a1d1d}
 #stage{position:relative;height:250px;margin:0 8px;border-radius:18px;background:radial-gradient(ellipse at 50% 70%,#1a2433 0,#0b0f15 70%);overflow:hidden;touch-action:none}
 #car-preview{width:100%;height:100%;display:block}
-#runinfo{position:absolute;left:14px;right:14px;bottom:10px;font-size:13px;color:var(--dim)}
+#runinfo{margin:8px 16px 0;font-size:13px;color:var(--dim)}
 #bar{height:3px;background:#1d2532;border-radius:2px;margin-top:6px;overflow:hidden}#bar i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
 .main{display:flex;gap:10px;padding:12px 16px}
 button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;cursor:pointer}
 button:active{transform:scale(.98)}
 button.primary{background:var(--accent);border-color:var(--accent);font-weight:650}
+#diaglog{box-sizing:border-box;width:100%;height:50vh;white-space:pre-wrap;overflow:auto;background:#131821;color:inherit;padding:10px}
+#runtext,#rec{overflow-wrap:anywhere}
 button.stop{background:#3a1012;border-color:#7a2025;color:#ffd6d6;font-weight:650}
 button:disabled{opacity:.4}
 .main button{flex:1;padding:14px;font-size:16px}
@@ -52,7 +54,7 @@ label.sw{display:flex;align-items:center;gap:10px;margin:10px 0}
 
 const SCRIPT = `
 var $=function(s){return document.querySelector(s)};var T=new URLSearchParams(location.search).get('t');
-var S=null,tab='shows',yaw=0.75,pitch=-0.32,drag=null,showAll=false;
+var S=null,readingLog=false,tab='shows',yaw=0.75,pitch=-0.32,drag=null,showAll=false;
 function api(p,b){return fetch(p+'?t='+encodeURIComponent(T),b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()})}
 function toast(m){var t=$('#toast');t.textContent=m;t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(function(){t.style.display='none'},3500)}
 function act(p,b){return api(p,b).then(function(r){if(r&&r.ok===false)toast(r.error||'Refused');poll();return r}).catch(function(){toast('No connection to the car')})}
@@ -61,11 +63,13 @@ function poll(){api('/api/state').then(function(s){S=s;render()}).catch(function
 setInterval(poll,800);poll();
 function render(){
  if(!S)return;var r=S.runner,g=S.guard;
- $('#conn').className='pill '+(r.busy?'warn':g.ok?'ok':'bad');$('#conn').textContent=r.busy?(r.state==='RUNNING'?'Playing':'Working'):g.ok?'Parked':'Not ready';
- var p=r.progress;$('#runtext').textContent=r.busy?(r.title+(r.note&&r.note!==r.title?' - '+r.note:'')+(p?' ('+p.step+'/'+p.steps+')':'')):(g.ok?r.note:g.reason);
+ var alert=r.recoveryPending||r.state==='ERROR'||r.state==='STOPPING';
+ $('#conn').className='pill '+(alert?'bad':r.busy?'warn':g.ok?'ok':'bad');
+ $('#conn').textContent=alert||r.busy?r.state:g.ok?'READY':'Not ready';
+ var p=r.progress;$('#runtext').textContent=r.busy?(r.title+(r.note&&r.note!==r.title?' - '+r.note:'')+(p?' ('+p.step+'/'+p.steps+')':'')):(alert||g.ok?r.note:g.reason);
  $('#bar i').style.width=p?Math.round(100*p.step/p.steps)+'%':'0';
  $('#go').disabled=r.busy||r.recoveryPending||!g.ok||!S.plan||!!S.plan.error;$('#stop').disabled=!r.busy&&!r.recoveryPending;
- if(tab==='shows')renderShows();if(tab==='lights')renderLights();if(tab==='car')renderCar();
+ if(tab==='shows')renderShows();if(tab==='lights')renderLights();if(tab==='car')renderCar();if(tab==='diagnostics')renderDiagnostics();
 }
 function chips(el,list,cur,key,fmt){el.innerHTML=list.map(function(v){return '<button class="'+(v===cur?'on':'')+'" data-v="'+v+'">'+fmt(v)+'</button>'}).join('');
  Array.prototype.forEach.call(el.children,function(b){b.onclick=function(){var c={};c[key]=Number(b.dataset.v);save(c)}})}
@@ -110,8 +114,15 @@ function renderCar(){
   h+='<h2>All control units</h2>'+p.units.map(function(u){return '<div class="unit"><code>'+u.addressHex+'</code><span>'+esc(u.name||u.index||'no identity')+'</span><span class="s note">'+esc(u.role||'')+'</span></div>'}).join('');}
  $('#units').innerHTML=h;$('#comm').checked=!!S.commOff;$('#comm').disabled=S.runner.busy;
  $('#scan').disabled=S.runner.busy||S.runner.recoveryPending||!S.guard.ok;
- $('#rec').innerHTML=S.runner.recoveryPending?'<div class="note warn">A previous run is not released yet. Press STOP.</div>':'';
+ $('#rec').textContent=S.runner.recoveryPending?S.runner.note:'';
 }
+function renderDiagnostics(){
+ if(readingLog)return;readingLog=true;
+ api('/api/diagnostics').then(function(r){
+  var field=$('#diaglog');if(r.text!==undefined&&field.value!==r.text){var top=field.scrollTop;field.value=r.text;field.scrollTop=top}
+ },function(){toast('Could not read diagnostics')}).then(function(){readingLog=false});
+}
+$('#diag-download').href='/api/diagnostics?t='+encodeURIComponent(T)+'&download=1';
 document.querySelectorAll('nav button').forEach(function(b){b.onclick=function(){tab=b.dataset.t;document.querySelectorAll('nav button').forEach(function(x){x.classList.toggle('on',x===b)});document.querySelectorAll('section').forEach(function(s){s.classList.toggle('on',s.id===tab)});render()}});
 $('#go').onclick=function(){act('/api/show',{})};$('#stop').onclick=function(){act('/api/stop',{})};
 $('#clear').onclick=function(){save({selection:[]})};
@@ -135,9 +146,9 @@ module.exports = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07090d">
 <title>Light Show</title><style>${CSS}</style></head><body>
 <header><h1>Light Show</h1><span id="conn" class="pill">Connecting</span></header>
-<div id="stage"><canvas id="car-preview"></canvas><div id="runinfo"><span id="runtext">Connecting to the car...</span><div id="bar"><i></i></div></div></div>
+<div id="stage"><canvas id="car-preview"></canvas></div><div id="runinfo"><span id="runtext">Connecting to the car...</span><div id="bar"><i></i></div></div>
 <div class="main"><button id="go" class="primary">Start show</button><button id="stop" class="stop">STOP</button></div>
-<nav><button data-t="shows" class="on">Shows</button><button data-t="lights">Lights</button><button data-t="car">Car</button></nav>
+<nav><button data-t="shows" class="on">Shows</button><button data-t="lights">Lights</button><button data-t="car">Car</button><button data-t="diagnostics">Diagnostics</button></nav>
 <section id="shows" class="on"><h2>Effect</h2><div id="effects" class="grid"></div>
 <h2>Lights in this show</h2><div id="sel" class="note"></div><button id="clear" hidden>Clear lights</button>
 <h2>Step time</h2><div id="step" class="chips"></div><h2>Pause between steps</h2><div id="gap" class="chips"></div>
@@ -148,5 +159,6 @@ module.exports = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <label class="sw"><input type="checkbox" id="comm"> Test option: headlamp modules ignore the car's own light messages during a show (28 02 01, like BimmerLight)</label>
 <div class="note">Supported = tested in a car. From BMW data = telegram from the BMW PRG, not yet tested in a car: test each light once while you watch.</div>
 <div id="units"></div></section>
+<section id="diagnostics"><a id="diag-download">Download report</a><textarea id="diaglog" readonly aria-label="Diagnostic report"></textarea></section>
 <div id="toast"></div>
 <script>${car3d}</script><script>${SCRIPT}</script></body></html>`;

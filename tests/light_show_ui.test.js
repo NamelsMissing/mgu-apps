@@ -8,6 +8,7 @@ const vm = require('vm');
 const APP = path.join(__dirname, '../apps/light_show');
 const KIT = path.join(__dirname, '../kit/runtime');
 const Scan = require(APP + '/ecu-scan');
+const Journal = require(APP + '/journal');
 const Lamps = require(APP + '/lamps');
 const { Observations } = require(APP + '/store');
 const { PAGE, LIGHTS_BOX, UNITS_BOX } = require(APP + '/ui');
@@ -26,8 +27,14 @@ function identities(count, missing) {
     return result;
 }
 
-async function fixture() {
+async function fixture(recovery) {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'light-show-ui-'));
+    if (recovery) {
+        fs.writeFileSync(path.join(temp, 'light-show-recovery.json'), JSON.stringify({
+            version: 2, index: '0F2680', at: '2026-11-22T15:51:45.826Z', flmSides: [],
+            fns: ['locator'], outputs: [], bdcSession: true, rlm: [], commOff: [],
+        }));
+    }
     const observations = new Observations(temp);
     observations.record('flm:left:1', 'visible', true);
     observations.record('flm:left:2', 'none', true);
@@ -58,7 +65,11 @@ async function fixture() {
             async init() { this.available = true; this.generation = 0; }
             async scan() { seen.push('scan'); return new Map(nextScan); }
             async readIdentity(address) { seen.push('identity:' + address); throw new Error('No identity in fixture'); }
-            async identify() { seen.push('control'); throw new Error('Unexpected light control'); }
+            async identify(expected) {
+                if (recovery) { assert.strictEqual(expected, '0F2680'); this.index = expected; return expected; }
+                seen.push('control'); throw new Error('Unexpected light control');
+            }
+            async defaultSession() { return recovery(); }
         },
         './ecu-scan': Object.assign({}, Scan, { load: () => saved }),
     };
@@ -125,7 +136,7 @@ async function fixture() {
         fs.writeFileSync(path.join(out, name + '.png'), canvas.png());
     }
     return {
-        display, seen, errors, handlers, visible, draw, key, tap, swipe, ccu, setLayout, snapshot, saved,
+        display, seen, errors, handlers, visible, actions: serverActions, temp, draw, key, tap, swipe, ccu, setLayout, snapshot, saved,
         scan(next) { nextScan = next; return serverActions.scan(); },
         close() { display.closeSheet(); clearInterval(display.keepTimer); },
     };
@@ -298,5 +309,28 @@ function clippedPlayback() {
         console.log('ok: actual Light Show UI with Display/Recorder, bounded touch, iDrive, scans and native fallback');
     } finally {
         h.close();
+    }
+    let rejectDefault;
+    const recovery = await fixture(() => new Promise((resolve, reject) => { rejectDefault = reject; }));
+    try {
+        recovery.setLayout('full', { w: 1920, h: 720 });
+        while (!rejectDefault) await new Promise((resolve) => setImmediate(resolve));
+        const request = recovery.actions.stop();
+        assert.strictEqual(recovery.actions.stop(), request);
+        assert.strictEqual(recovery.actions.state().runner.state, 'STOPPING');
+        rejectDefault(new Error('0x40 SID 0x10 NRC 0x22 (conditions not correct)'));
+        const outcome = await request;
+        assert.ok(!outcome.ok);
+        assert.ok(/BDC 0x40 default session/.test(outcome.error));
+        assert.ok(new Journal(recovery.temp).pending());
+        const view = recovery.draw();
+        assert.ok(view.labels.includes('ERROR'));
+        assert.ok(!view.labels.includes('READY'));
+        recovery.tap(recovery.key('DIAG_SHOW'));
+        assert.ok(recovery.draw().labels.some((label) => label.includes('NRC 0x22')));
+        assert.ok(/Last STOP.*Release not confirmed/.test(recovery.actions.diagnostics().text));
+        assert.ok(!require(APP + '/web-page').includes('A previous run is not released yet: press STOP.'));
+    } finally {
+        recovery.close();
     }
 })().catch((e) => { console.error(e); process.exitCode = 1; });

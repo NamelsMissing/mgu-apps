@@ -457,7 +457,8 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         await w3.r.test(byId['flm:left:3'], {});
         assert.ok(w3.journal.pending() && w3.journal.control().commOff[0] === 'left', 'marker keeps the silenced side');
         both.o.failOn = null; await w3.r.stop();
-        assert.ok(both.log.slice(-2)[0] === 'left:28 00 03' && !w3.journal.pending(), 'STOP turns communication back on');
+        assert.strictEqual(both.log.filter((line) => line === 'left:28 00 03').length, 1, 'confirmed communication restoration is retained');
+        assert.ok(both.log.slice(-1)[0] === 'left:01' && !w3.journal.pending(), 'STOP completes the outstanding default session');
         const Link = require(APP + '/link');
         const ln = new Link({}, { warn() {}, info() {} });
         ln.available = true; ln.verifiedFlm[0x43] = '0F26C0';
@@ -468,6 +469,115 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         await assert.rejects(ln.request(0x28, [0x03, 0x03], false, 0x43), /Unsupported FLM/);
         await assert.rejects(ln.request(0x28, [0x02, 0x01], false, 0x17), /not allowed/);
         console.log('ok: test option silences only the used headlamp modules and always turns them back on');
+    }
+
+    {
+        const P = require(APP + '/protocol');
+        const log = { info() {}, warn() {} };
+        const link = new Link({}, log);
+        link.available = true;
+        link.diag.p = {};
+        const packets = [];
+        let refuseOff = false, badDefault = false, timeoutOff = false;
+        link.diag.send = async (target, sid, data) => {
+            packets.push([target, sid].concat(data));
+            if (sid === 0x2E && data[5] === 0 && timeoutOff) {
+                link.diag.emit('tasReject', 0x35);
+                return 'NO_ERROR';
+            }
+            const payload = sid === 0x22 ? [0x62, 0xF1, 0x50, 0x0F, 0x26, 0x80]
+                : sid === 0x10 && data[0] === 1 && badDefault ? [0x7F, 0x10, 0x22]
+                : sid === 0x10 ? [0x50, data[0]]
+                : refuseOff && data[5] === 0 ? [0x7F, 0x2E, 0x35] : [0x6E, 0xD5, 0x42];
+            const emit = (address, body) => {
+                const header = Array(9).fill(0); header[6] = address;
+                link.diag._onResponse({ errorCode: 0, udsResponse: header.concat(body) });
+            };
+            if (sid === 0x2E) {
+                emit(0x44, [0x7F, 0x2E, 0x35]);
+                emit(0x40, [0x7F, 0x10, 0x35]);
+                emit(0x40, [0x7F, 0x2E]);
+            }
+            emit(target, payload);
+            return 'NO_ERROR';
+        };
+        const dir = tmp(), journal = new Journal(dir);
+        let waits = [], gate = null;
+        const makeRunner = (j) => new Runner({ link, journal: j, log, guard: { reason: () => null },
+            sleep(ms) { if (ms === P.MAX_TIMED_MS) { waits.push(ms); if (gate) return gate.promise; } return Promise.resolve(); } });
+        const lamp = byId['fn:locator'], r = makeRunner(journal);
+        assert.ok((await r.test(lamp, { ms: 500 })).ok);
+        assert.ok(!journal.pending());
+        assert.ok(packets.some((u) => P.hex(u) === '40 2E D5 42 00 15 00 32'));
+        assert.ok(packets.some((u) => P.hex(u) === '40 2E D5 42 00 15 00 00'));
+
+        refuseOff = true;
+        const refusal = await r.test(lamp, { ms: 500 });
+        assert.ok(!refusal.ok && /NRC 0x35.*invalidKey.*7F 2E 35/.test(refusal.error));
+        assert.ok(!journal.pending(), 'bounded locator recovery requires positive default and full expiry');
+        assert.deepStrictEqual(waits, [2000]);
+        assert.ok(r.status().cleanup.locatorOffRejected);
+
+        badDefault = true;
+        await r.test(lamp, { ms: 500 });
+        assert.ok(journal.pending());
+        assert.match(r.status().note, /locator off.*NRC 0x35.*default session.*NRC 0x22/);
+        assert.deepStrictEqual(waits, [2000], 'failed default never authorizes the expiry path');
+
+        const restarted = makeRunner(new Journal(dir));
+        assert.strictEqual(restarted.status().state, 'RECOVERY REQUIRED');
+        badDefault = false;
+        let finish;
+        gate = { promise: new Promise((resolve) => { finish = resolve; }) };
+        const before = packets.length, stop = restarted.stop();
+        assert.strictEqual(restarted.stop(), stop, 'duplicates share the actual STOP promise');
+        while (waits.length < 2) await new Promise((resolve) => setImmediate(resolve));
+        assert.strictEqual(restarted.status().state, 'STOPPING');
+        assert.ok(restarted.journal.pending());
+        finish(); gate = null;
+        assert.ok((await stop).ok);
+        assert.deepStrictEqual(packets.slice(before).map((u) => P.hex(u)), ['40 22 F1 50', '40 10 01']);
+        refuseOff = false;
+        assert.ok((await restarted.test(lamp, { ms: 500 })).ok, 'works again without restarting the recovered app');
+
+        timeoutOff = true;
+        const timedOut = await restarted.test(lamp, { ms: 500 });
+        assert.match(timedOut.error, /timed out.*TASU header rejection 0x35.*not correlated/);
+        assert.ok(restarted.journal.pending(), 'a TASU rejection is never treated as a matching UDS NRC');
+        assert.ok(restarted.journal.confirmed().has('BDC 0x40 default session'));
+        assert.strictEqual(waits.length, 2);
+
+        const retryOffset = packets.length;
+        const retry = await restarted.stop();
+        assert.ok(!retry.ok, 'STOP waits for the failed retry and reports its error');
+        assert.match(retry.error, /locator off.*timed out/);
+        assert.ok(packets.slice(retryOffset).some((u) => P.hex(u) === '40 10 03'), 'a timeout-only marker requires a fresh OFF');
+        assert.ok(restarted.journal.pending());
+        timeoutOff = false;
+        assert.ok((await restarted.stop()).ok);
+        assert.ok(!restarted.journal.pending());
+        console.log('ok: locator wire format, correlated NRC, timeout, restart, duplicate STOP and confirmed expiry');
+    }
+    {
+        const link = new FakeLink({ failOn: 'left:01' }), { r, journal } = runnerWith(link);
+        journal.mark('0F2680', { flmSides: ['left', 'right'] });
+        assert.ok(!(await r.stop()).ok);
+        assert.ok(journal.pending() && journal.confirmed().has('FLM right default session'));
+        link.o.failOn = null;
+        link.log.length = 0;
+        assert.ok((await r.stop()).ok);
+        assert.deepStrictEqual(link.log, ['id:bdc', 'id:left', 'left:01']);
+        assert.ok(!journal.pending());
+    }
+
+    {
+        const dir = tmp(), file = path.join(dir, 'light-show-recovery.json');
+        fs.writeFileSync(file, 'null');
+        const journal = new Journal(dir), link = new FakeLink();
+        const r = new Runner({ link, journal, guard: { reason: () => null } });
+        assert.match((await r.stop()).error, /unreadable/);
+        assert.ok(journal.pending() && fs.existsSync(file));
+        assert.deepStrictEqual(link.log, []);
     }
 
     /* ---------- car3d ---------- */
@@ -483,7 +593,8 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
     /* ---------- phone server ---------- */
     assert.ok(privateAddress('172.16.222.5') && privateAddress('192.168.1.2') && !privateAddress('8.8.8.8'));
     let shown = 0;
-    const srv = new WebServer({ state: () => ({ hello: 1 }), stop: () => ({ ok: true }), show: (b) => { shown = b.effect; return { ok: true }; } },
+    const srv = new WebServer({ state: () => ({ hello: 1 }), diagnostics: () => ({ text: 'BDC 0x40 locator off' }),
+        stop: async () => ({ ok: false, error: 'BDC default session timed out' }), show: (b) => { shown = b.effect; return { ok: true }; } },
         { warn() {} }, { port: 0, token: 'abc', address: () => '127.0.0.1' });
     srv.start();
     await new Promise((res) => srv.http.on('listening', res));
@@ -506,6 +617,13 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
     assert.strictEqual((await get('/api/scan?t=abc', { method: 'POST', body: '{}' })).status, 404, 'unknown action refused');
     assert.strictEqual((await get('/api/show?t=abc', { method: 'POST', body: 'x'.repeat(9000) })).status, 413);
     assert.ok(/:18880\/\?t=/.test(new WebServer({}, null, { token: 't', address: () => '172.16.222.97' }).url()));
+    const stopReply = await get('/api/stop?t=abc', { method: 'POST' });
+    assert.deepStrictEqual(JSON.parse(stopReply.body), { ok: false, error: 'BDC default session timed out' });
+    assert.strictEqual((await get('/api/diagnostics?t=wrong')).status, 403);
+    assert.deepStrictEqual(JSON.parse((await get('/api/diagnostics?t=abc')).body), { text: 'BDC 0x40 locator off' });
+    const download = await get('/api/diagnostics?t=abc&download=1');
+    assert.match(download.headers['content-disposition'], /attachment/);
+    assert.strictEqual(download.body, 'BDC 0x40 locator off');
     srv.stop();
     console.log('ok: phone server needs the pairing token, answers the helper probe, limits requests');
 })().catch((e) => { console.error(e); process.exit(1); });
