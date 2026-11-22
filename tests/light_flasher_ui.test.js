@@ -14,9 +14,9 @@ test('raw logs absent from UI while reports retain traces',()=>{
  assert.ok(!src.includes("ui.text('DIAG_LOG'"));
  for(const key of ['trace:flash.trace.slice()','trace:reader.trace.slice()','saveFlashAttempt(attempt)','writeReport(file,buildReport())'])assert.ok(src.includes(key));
 });
-test('advanced diagnostics and latency summary are reachable through Service',()=>{
+test('advanced diagnostics are reachable through Service',()=>{
  assert.match(src,/const valid=\(\)=>!closing&&ui.isVisible\('ADVANCED'\)/);
- for(const id of ['BTN_ADVANCED','DIAG_LATENCY'])assert.ok(screen('DIAGNOSTICS').items.some(x=>x[1]===id));
+ for(const id of ['BTN_ADVANCED'])assert.ok(screen('DIAGNOSTICS').items.some(x=>x[1]===id));
  assert.ok(screen('OPTIONS').items.some(x=>x[1]==='BTN_DIAG'));
 });
 test('all manifest buttons have registered handlers',()=>{

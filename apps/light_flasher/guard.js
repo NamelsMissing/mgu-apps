@@ -26,18 +26,18 @@ class Guard {
         this.stage = n === 3 ? 'P' : n === 2 ? 'R' : n === 1 ? 'N' : n >= 5 && n <= 13 ? 'D' : null;
         this.changed();
     }
-    async init(signals, log, lightStatus, lightAvailability) {
+    async init(signals, log, lightStatus) {
         this.speedSub = await signals.watch('de.bmw.infotainment.vehicle.Vehicle2', '1', {
             statusCarSpeed2: (v) => this.feedSpeed(v),
-            statusLightStatus: (v, meta) => { if (typeof lightStatus === 'function') lightStatus(v, meta); },
-        }, log, { pollMs: 500, onAvailability: up => {
-            if (!up) { this.speed = null; this.speedAt = 0; this.changed(); }
-            if (lightAvailability) lightAvailability(up);
-        } });
+            statusLightStatus: (v) => { if (typeof lightStatus === 'function') lightStatus(v); },
+        }, log, { pollMs: 500 });
         this.gearSub = await signals.watch('de.bmw.infrastructure.VehicleInformation', '1', {
             statusGearboxDrive: (v) => this.feedStage(v),
             DataPowerTrain2: (v) => this.feedSelection(v),
         }, log);
+        if (this.speedSub.proxy) await signals.onAvailable(this.speedSub.proxy, (up) => {
+            if (!up) { this.speed = null; this.speedAt = 0; this.changed(); }
+        });
         if (this.gearSub.proxy) await signals.onAvailable(this.gearSub.proxy, (up) => {
             if (!up) { this.stage = null; this.changed(); }
         });

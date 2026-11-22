@@ -88,9 +88,9 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
 | [**Light Show**](apps/light_show/README.md) | **0.4.7** | Experimental | Scans supported lighting control units, lets you test visible lamp channels and create lighting effects with a 3D vehicle view and optional phone remote. Requires parked/P checks and careful recovery. |
-| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.25** | Experimental | Configurable headlamp strobe sequences with a button or short high-beam stalk pulse, start latency diagnostics, recovery and background observation. |
+| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.26** | Experimental | Configurable headlamp strobe sequences with a button or short high-beam stalk pulse, recovery and background observation. |
 
-Use lighting effects only while safely parked in P on private ground, with nobody in front of the car. **Light Flasher 0.1.25 does not enforce P or zero speed**, so this is a user safety requirement, not a claim that the software blocks operation while moving. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
+Use lighting effects only while safely parked in P on private ground, with nobody in front of the car. **Light Flasher 0.1.26 does not enforce P or zero speed**, so this is a user safety requirement, not a claim that the software blocks operation while moving. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
 
 ### Tools
 

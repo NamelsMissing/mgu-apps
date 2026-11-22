@@ -282,7 +282,7 @@
       "id": "light_flasher",
       "kind": "app",
       "title": "Light Flasher",
-      "version": "0.1.25",
+      "version": "0.1.26",
       "path": "apps/light_flasher",
       "mguHmi": [
         "ID7"

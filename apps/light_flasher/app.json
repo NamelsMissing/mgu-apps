@@ -2,7 +2,7 @@
   "id": "light_flasher",
   "title": "Light Flasher",
   "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -362,11 +362,6 @@
           "text3",
           "DIAG_LEVER",
           "Lever signal and hold time"
-        ],
-        [
-          "text3",
-          "DIAG_LATENCY",
-          "Start latency (software / ECU)"
         ],
         [
           "button",

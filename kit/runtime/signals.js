@@ -59,35 +59,22 @@ async function watch(iface, instance, handlers, log, opts) {
         res.proxy = p;
         res.shutdown = () => Promise.resolve().then(() => p.shutdown && p.shutdown()).catch(() => {});
         const fields = Object.keys(handlers || {});
-        const reading = new Set(), revisions = new Map();
-        let epoch = 0;
-        const availability = (a) => {
-            if (res.available === a) return;
-            res.available = a;
-            epoch++;
-            if (opts && opts.onAvailability) opts.onAvailability(a);
-            if (a) setImmediate(fetchAll);
-        };
         const fetchAll = () => fields.forEach((f) => {
-            if (res.available && !reading.has(f) && cfg.fields && cfg.fields[f] && cfg.fields[f].getter) {
-                reading.add(f);
-                const startedIn = epoch, revision = revisions.get(f);
-                p.getValue(f, 3000).then((v) => {
-                    if (startedIn === epoch && revision === revisions.get(f)) handlers[f](v, { source: 'poll', available: true });
-                }).catch(() => {}).then(() => reading.delete(f));
+            if (cfg.fields && cfg.fields[f] && cfg.fields[f].getter) {
+                p.getValue(f, 3000).then((v) => handlers[f](v)).catch(() => {});
             }
         });
         await nativeTick(() => {
-            try { return p.subscribeToAvailability((a) => availability(!!a)); } catch (e) { return null; /* older binding */ }
+            try { return p.subscribeToAvailability((a) => { res.available = !!a; if (a) setImmediate(fetchAll); }); } catch (e) { return null; /* older binding */ }
         });
         for (const f of fields) {
             try {
-                await nativeTick(() => p.subscribe({ name: f, onReceive: (v) => { try { revisions.set(f, (revisions.get(f) || 0) + 1); handlers[f](v, { source: 'notification', available: res.available }); } catch (e) { if (log) log.warn(iface + '.' + f + ': ' + e); } } }));
+                await nativeTick(() => p.subscribe({ name: f, onReceive: (v) => { try { handlers[f](v); } catch (e) { if (log) log.warn(iface + '.' + f + ': ' + e); } } }));
             } catch (e) {
                 if (log) log.warn('subscribe ' + iface + '.' + f + ': ' + e);
             }
         }
-        if (p.isAvailable && p.isAvailable()) availability(true);
+        if (p.isAvailable && p.isAvailable()) { res.available = true; fetchAll(); }
         if (opts && opts.pollMs) setInterval(() => { if (res.available) setImmediate(fetchAll); }, opts.pollMs);
     } catch (e) {
         res.error = String(e);
@@ -104,11 +91,8 @@ async function proxy(iface, instance) {
 }
 
 /** Call a method on a proxy from proxy(); params = the method's argument struct. */
-function call(p, method, params, timeoutMs, beforeDispatch) {
-    return nativeTick(() => {
-        if (beforeDispatch) beforeDispatch();
-        return p.callMethod(method, params || {}, timeoutMs || 5000);
-    });
+function call(p, method, params, timeoutMs) {
+    return nativeTick(() => p.callMethod(method, params || {}, timeoutMs || 5000));
 }
 
 /**

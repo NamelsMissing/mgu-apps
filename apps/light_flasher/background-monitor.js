@@ -8,14 +8,14 @@ class Monitor {
  }
  setEnabled(on){on=on===true;if(this.enabled!==on){this.enabled=on;this.last=null;this.events=[];this.observedBeforeOpen=0;}}
  seeMain(){if(this.firstVisibleAt===null)this.firstVisibleAt=this.now();}
- observe(v,signalAvailable,mainVisible,source){
+ observe(v,signalAvailable,mainVisible){
   if(!this.enabled||!signalAvailable){this.last=null;return;}
   const s=v&&v.statusMainBeam_headlightFlasher;
   if(s!=='EIN'&&s!=='AUS'){this.last=null;return;}
   if(s===this.last)return;
   this.last=s;
   if(this.firstVisibleAt===null&&!mainVisible)this.observedBeforeOpen++;
-  this.events.push({at:new Date(this.now()).toISOString(),combinedSignal:s,source,mainVisible:!!mainVisible});
+  this.events.push({at:new Date(this.now()).toISOString(),combinedSignal:s,mainVisible:!!mainVisible});
   if(this.events.length>40)this.events.shift();
  }
  snapshot(){return {mode:'passive only',scope:'valid light signal, independent of gear or speed',enabled:this.enabled,startedAt:new Date(this.startedAt).toISOString(),

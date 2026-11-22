@@ -85,7 +85,7 @@ class Diag extends EventEmitter {
             const r = await this.signals.call(this.p, 'sendTasuRequest', {
                 sourceAddress: TESTER, targetAddress: target, serviceID: sid, subroutineID: 0,
                 udsDataLength: d.length, udsData: Buffer.from(d), deadlockTime: 0,
-            }, callTimeoutMs, opts && opts.beforeDispatch);
+            }, callTimeoutMs);
             const v = r && typeof r === 'object' ? (r.TasuErrorEnum || Object.keys(r).map((k) => r[k]).find((x) => typeof x === 'string')) : r;
             const verdict = v === undefined ? 'NO_ERROR' : String(v);
             if (!/TEMPORARILY_NOT_ACCEPTED|BUSY/i.test(verdict) || attempt >= maxRetries) return verdict;
@@ -136,7 +136,6 @@ class Diag extends EventEmitter {
      */
     async physical(target, sid, data, timeoutMs, accept, opts) {
         let t, hardTimer, onFrame, finish, done = false;
-        let dispatched = !(opts && opts.beforeDispatch);
         const got = new Promise((resolve) => {
             finish = (v) => {
                 if (done) return;
@@ -145,7 +144,7 @@ class Diag extends EventEmitter {
                 this.removeListener('frame', onFrame); resolve(v);
             };
             onFrame = (f) => {
-                if (!dispatched || f.ecu !== target) return;
+                if (f.ecu !== target) return;
                 if (f.uds[0] === 0x7F && f.uds[2] === 0x78) {      // response pending: never the reply itself
                     if (f.uds[1] !== sid) return;                       // another request's (another app's) 78
                     clearTimeout(t);
@@ -153,18 +152,12 @@ class Diag extends EventEmitter {
                     return;
                 }
                 if (accept && !accept(f.uds)) return;
-                if (opts && opts.onReply) opts.onReply(f.uds);
                 finish(f.uds);
             };
             this.on('frame', onFrame);
             if (opts && opts.hardTimeoutMs) hardTimer = setTimeout(() => finish(null), opts.hardTimeoutMs);
         });
-        const sendOpts = dispatched ? opts : {...opts, beforeDispatch: () => {
-            if (done) throw new Error('TASU request expired before dispatch');
-            opts.beforeDispatch();
-            dispatched = true;
-        }};
-        try { this._check(await this.send(target, sid, data, sendOpts)); } catch (e) { finish(null); throw e; }
+        try { this._check(await this.send(target, sid, data, opts)); } catch (e) { finish(null); throw e; }
         if (!done && !t) t = setTimeout(() => finish(null), timeoutMs || 4000); // from when the transport took it
         return got;
     }
