@@ -10,35 +10,45 @@ const LIMIT = { bytes: 6 * 1024 * 1024, width: 640, height: 360, frames: 90, pix
 function decodeLzw(data, minBits, count) {
     if (minBits < 2 || minBits > 8) throw new Error('Invalid GIF LZW code size');
     const clear = 1 << minBits, end = clear + 1;
-    let dict, size, next, prev;
-    function reset() {
-        dict = new Array(4096);
-        for (let i = 0; i < clear; i++) dict[i] = [i];
-        size = minBits + 1;
-        next = end + 1;
-        prev = null;
-    }
-    reset();
-    let bit = 0, out = new Uint8Array(count), pos = 0;
-    while (bit + size <= data.length * 8 && pos < count) {
-        let code = 0;
-        for (let b = 0; b < size; b++) code |= ((data[(bit + b) >> 3] >> ((bit + b) & 7)) & 1) << b;
+    const prefix = new Uint16Array(4096), suffix = new Uint8Array(4096), stack = new Uint8Array(4096);
+    const out = new Uint8Array(count);
+    let size = minBits + 1, next = end + 1, previous = -1, first = 0;
+    let bit = 0, pos = 0;
+    while (bit + size <= data.length * 8) {
+        const offset = bit >> 3;
+        const word = data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16);
+        const input = (word >> (bit & 7)) & ((1 << size) - 1);
         bit += size;
-        if (code === clear) { reset(); continue; }
-        if (code === end) break;
-        let entry;
-        if (code < next && dict[code]) entry = dict[code];
-        else if (code === next && prev) entry = prev.concat(prev[0]);
-        else throw new Error('Corrupt GIF LZW stream');
-        for (let i = 0; i < entry.length && pos < count; i++) out[pos++] = entry[i];
-        if (prev && next < 4096) {
-            dict[next++] = prev.concat(entry[0]);
+        if (input === clear) {
+            size = minBits + 1;
+            next = end + 1;
+            previous = -1;
+            continue;
+        }
+        if (input === end) {
+            if (pos !== count) throw new Error('Truncated GIF image');
+            return out;
+        }
+        if (input > next || (input === next && previous < 0)) throw new Error('Corrupt GIF LZW stream');
+        let code = input, top = 0;
+        if (code === next) { stack[top++] = first; code = previous; }
+        while (code >= clear) {
+            if (code <= end || code >= next || top >= stack.length - 1) throw new Error('Corrupt GIF LZW dictionary');
+            stack[top++] = suffix[code];
+            code = prefix[code];
+        }
+        first = code;
+        stack[top++] = first;
+        if (pos + top > count) throw new Error('GIF image has excess pixels');
+        while (top) out[pos++] = stack[--top];
+        if (previous >= 0 && next < 4096) {
+            prefix[next] = previous;
+            suffix[next++] = first;
             if (next === (1 << size) && size < 12) size++;
         }
-        prev = entry;
+        previous = input;
     }
-    if (pos !== count) throw new Error('Truncated GIF image');
-    return out;
+    throw new Error('Missing GIF LZW end code');
 }
 
 function decode(buf) {
@@ -48,16 +58,23 @@ function decode(buf) {
     let p = 6;
     const u8 = () => { if (p >= buf.length) throw new Error('Truncated GIF'); return buf[p++]; };
     const u16 = () => u8() | (u8() << 8);
-    function block() {
-        const out = [];
+    function block(collect) {
+        const start = p;
         let len, total = 0;
         while ((len = u8()) !== 0) {
             if (p + len > buf.length) throw new Error('Truncated GIF sub-block');
-            out.push(buf.slice(p, p + len)); p += len;
+            p += len;
             total += len;
-            if (total > LIMIT.bytes) throw new Error('GIF sub-block too large');
         }
-        return Buffer.concat(out, total);
+        if (!collect) return null;
+        const out = Buffer.allocUnsafe(total);
+        let offset = start, written = 0;
+        while ((len = buf[offset++]) !== 0) {
+            buf.copy(out, written, offset, offset + len);
+            offset += len;
+            written += len;
+        }
+        return out;
     }
     function palette(n) {
         if (p + n * 3 > buf.length) throw new Error('Truncated GIF colour table');
@@ -81,7 +98,7 @@ function decode(buf) {
                 const flags = u8(), hundredths = u16(), transparentIndex = u8();
                 if (u8() !== 0) throw new Error('Invalid GIF graphic-control terminator');
                 gce = { disposal: (flags >> 2) & 7, transparent: (flags & 1) ? transparentIndex : -1,
-                    delay: Math.max(80, hundredths * 10) };
+                    delay: hundredths ? hundredths * 10 : 100 };
             } else block();
             continue;
         }
@@ -90,7 +107,9 @@ function decode(buf) {
         if (!w || !h || left + w > width || top + h > height) throw new Error('Invalid GIF frame bounds');
         const colors = flags & 128 ? palette(1 << ((flags & 7) + 1)) : globalColors;
         if (!colors) throw new Error('Missing GIF colour table');
-        const minBits = u8(), indices = decodeLzw(block(), minBits, w * h);
+        if (frames.length + 1 > LIMIT.frames || (frames.length + 1) * rgba.length > LIMIT.pixels)
+            throw new Error('GIF has too many frames for the MGU');
+        const minBits = u8(), indices = decodeLzw(block(true), minBits, w * h);
         const saved = gce.disposal === 3 ? rgba.slice() : null;
         const rows = [];
         if (flags & 64) {
@@ -110,7 +129,6 @@ function decode(buf) {
         }
         frames.push({ data: rgba.slice(), delay: gce.delay });
         duration += gce.delay;
-        if (frames.length > LIMIT.frames || frames.length * rgba.length > LIMIT.pixels) throw new Error('GIF has too many frames for the MGU');
         if (gce.disposal === 2) {
             const bc = globalColors && background * 3 + 2 < globalColors.length ? background * 3 : -1;
             for (let y = top; y < top + h; y++) for (let x = left; x < left + w; x++) {

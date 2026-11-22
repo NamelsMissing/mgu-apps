@@ -142,14 +142,24 @@
       "uninstallable": true
     },
     {
+      "id": "mgu-gif-net",
+      "kind": "tool",
+      "title": "GIF Home Network Bridge",
+      "version": "0.1.0",
+      "path": "native/gif-net",
+      "mguHmi": ["ID7"],
+      "uninstallable": true
+    },
+    {
       "id": "gif_home",
       "kind": "app",
       "title": "GIF Home",
-      "version": "0.3.1",
+      "version": "0.4.0",
       "path": "apps/gif_home",
       "mguHmi": [
         "ID7"
       ],
+      "requires": {"mgu-gif-net": "0.1.0"},
       "build": {
         "python": "tools/build_gif_home.py",
         "args": [

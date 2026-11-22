@@ -65,7 +65,7 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**GIF Home**](apps/gif_home/README.md) | **0.3.1** | Stable | Animated GIFs in the iDrive home tile: included animations or uploads from a phone via QR code. |
+| [**GIF Home**](apps/gif_home/README.md) | **0.4.0** | Vehicle verification pending | Animated iDrive home widget with a local GIF library, phone management, groups and playlists. |
 | [**Custom Cluster**](apps/custom_cluster/README.md) | **0.6.11** | Experimental | Alternative instrument-cluster layouts, navigation-related controls and diagnostics. KOMBI overlay tests are guarded by parked / selected-layout conditions; background startup does not activate an overlay by itself. |
 | [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | **0.1.4** | Experimental | Spotify lyrics on the iDrive screen, optionally in the cluster map region, including an overlay mode with Waze visible. The app supports background startup; display and lyric availability depend on Spotify data and network access. |
 

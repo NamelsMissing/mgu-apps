@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+'use strict';
+const network = require('./server').makeNetwork();
+let exiting = false;
+function shutdown() {
+    if (exiting) return;
+    exiting = true;
+    const fallback = setTimeout(() => process.exit(1), 18000);
+    network.stop().then(() => {
+        clearTimeout(fallback); process.exit(0);
+    }, error => {
+        console.error('[mgu-gif-net] shutdown:', error.stack || error);
+        process.exit(1);
+    });
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+network.start().catch(error => {
+    console.error('[mgu-gif-net] fatal:', error.stack || error);
+    shutdown();
+});

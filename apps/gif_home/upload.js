@@ -1,173 +1,284 @@
 'use strict';
-/** Ephemeral, token-protected HTTP upload for a phone on the same reachable car network. */
+
 const http = require('http');
 const crypto = require('crypto');
 const os = require('os');
 const { URL } = require('url');
+const { LIMIT } = require('./gif');
+const { page } = require('./phone_page');
 
-const MAX_BYTES = 6 * 1024 * 1024;
-const SESSION_MS = 10 * 60 * 1000;
-
-function localAddresses() {
+const PORT = 18883, STATUS_PORT = 18983, IFACE = 'wlan_bridge';
+const SESSION_MS = 30 * 60 * 1000, MAX_BYTES = LIMIT.bytes;
+const octets = address => String(address || '').split('.').map(Number);
+function privateAddress(address) {
+    if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(address)) return false;
+    const p = octets(address);
+    return p.every(n => n <= 255) && (p[0] === 10 || p[0] === 127 ||
+        (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+        (p[0] === 192 && p[1] === 168) || (p[0] === 169 && p[1] === 254));
+}
+function localAddresses(interfaces) {
+    let all = interfaces;
+    if (!all) { try { all = os.networkInterfaces(); } catch (_) { return []; } }
     const list = [];
-    // Some software-only emulators block interface enumeration; the car normally does not.
-    let all;
-    try { all = os.networkInterfaces(); } catch (e) { all = {}; }
-    Object.keys(all).forEach((name) => {
-        (all[name] || []).forEach((it) => {
-            const ipv4 = it.family === 'IPv4' || it.family === 4;
-            if (!ipv4 || it.internal || !it.address || /^169\.254\./.test(it.address)) return;
-            if (list.some((item) => item.ip === it.address)) return;
-            const priority = /p2p|wlan|wifi|wl/i.test(name) ? 0 : /eth|en/i.test(name) ? 1 : 2;
-            list.push({ interface: name, ip: it.address, priority });
-        });
-    });
-    if (process.env.GIF_HOME_DEV_IP && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(process.env.GIF_HOME_DEV_IP)) {
-        const ip = process.env.GIF_HOME_DEV_IP;
-        if (!list.some((item) => item.ip === ip)) list.unshift({ interface: 'preview', ip, priority: -1 });
-    }
-    return list.sort((a, b) => a.priority - b.priority || a.interface.localeCompare(b.interface));
+    Object.keys(all).forEach(name => (all[name] || []).forEach(it => {
+        if ((it.family !== 'IPv4' && it.family !== 4) || it.internal || !privateAddress(it.address)) return;
+        if (!/^(?:\d{1,3}\.){3}\d{1,3}$/.test(it.netmask || '') || it.netmask === '0.0.0.0') return;
+        const priority = name === IFACE ? (it.address.indexOf('172.16.222.') === 0 ? 0 : 1) :
+            /p2p|wlan|wifi|^wl/i.test(name) ? 2 : 3;
+        list.push({ interface: name, ip: it.address, netmask: it.netmask, priority });
+    }));
+    return list.sort((a, b) => a.priority - b.priority).filter((a, i, all) =>
+        all.findIndex(other => other.ip === a.ip) === i);
+}
+function sameSubnet(remote, target) {
+    const ip = octets(remote), mask = octets(target.netmask);
+    return privateAddress(remote) && privateAddress(target.ip) && octets(target.ip).every((p, i) =>
+        (p & mask[i]) === (ip[i] & mask[i]));
 }
 
-function uploadPage(token) {
-    // Token consists exclusively of crypto-generated hexadecimal digits.
-    return `<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>GIF Home — Upload</title>
-<style>
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#080d1a;color:#edf4ff;
-font:16px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;display:flex;align-items:center;justify-content:center;padding:22px}
-.box{width:min(440px,100%);padding:30px;border-radius:24px;background:#151d30;border:1px solid #2d3c60;
-box-shadow:0 20px 70px #0007}h1{font-size:27px;margin:0 0 8px}p{color:#aab9d3;line-height:1.5}
-.mark{color:#58adff;letter-spacing:3px;font-size:12px;font-weight:800;margin-bottom:12px}
-input{width:100%;margin:16px 0;padding:18px;background:#0b1120;border:1px dashed #3e6085;border-radius:12px;color:#fff}
-button{width:100%;background:#2679e8;color:white;border:0;border-radius:12px;padding:15px 18px;
-font-weight:750;font-size:16px}button:disabled{background:#39455d}#result{margin-top:16px;min-height:40px;
-color:#a9c5ff}small{display:block;color:#8091af;margin-top:18px;line-height:1.5}
-</style></head><body><main class="box"><div class="mark">BMW MGU / IDRIVE 7</div>
-<h1>GIF Home</h1><p>Choose a GIF from your phone. It will appear in the BMW home-screen widget.</p>
-<input id="file" type="file" accept=".gif,image/gif" aria-label="Select GIF">
-<button id="send">Upload GIF</button><div id="result" role="status">Ready to upload.</div>
-<small>Offline transfer to your own car. Maximum 6 MB, 640 × 360 pixels and 90 frames.
-This QR session expires after 10 minutes.</small></main>
-<script>
-(function(){'use strict';
-var button=document.getElementById('send'),result=document.getElementById('result');
-button.addEventListener('click',function(){
-var file=document.getElementById('file').files[0];
-if(!file){result.textContent='Choose a GIF first.';return;}
-if(file.size> ${MAX_BYTES}){result.textContent='GIF exceeds the 6 MB limit.';return;}
-button.disabled=true;result.textContent='Uploading...';
-var xhr=new XMLHttpRequest();
-xhr.open('POST','/upload?t=${token}',true);
-xhr.setRequestHeader('Content-Type','image/gif');
-xhr.upload.onprogress=function(e){if(e.lengthComputable)result.textContent='Uploading '+Math.round(e.loaded/e.total*100)+'%';};
-xhr.onload=function(){
-button.disabled=false;
-try{var data=JSON.parse(xhr.responseText);result.textContent=data.message||'Done';}
-catch(e){result.textContent='Upload failed (HTTP '+xhr.status+').';}
-if(xhr.status===200)button.disabled=true;
-};
-xhr.onerror=function(){button.disabled=false;result.textContent='Cannot reach the car. Check Wi-Fi connection.';};
-xhr.send(file);
-});
-})();</script></body></html>`;
+function bridgeStatus() {
+    return new Promise(resolve => {
+        const failed = () => resolve({ ready: false, error: 'GIF Home network helper unavailable' });
+        const request = http.get({ hostname: '127.0.0.1', port: STATUS_PORT, path: '/status', agent: false }, res => {
+            let text = '';
+            res.on('data', b => {
+                text += b.toString();
+                if (text.length > 4096) { request.destroy(); failed(); }
+            });
+            res.on('error', failed);
+            res.on('end', () => {
+                try {
+                    const s = JSON.parse(text);
+                    if (res.statusCode !== 200 || s.interface !== IFACE || s.port !== PORT) return failed();
+                    resolve(s);
+                } catch (_) { failed(); }
+            });
+        });
+        request.setTimeout(1200, () => { request.destroy(); failed(); });
+        request.on('error', failed);
+    });
 }
 
 class GifUploadServer {
     constructor(options) {
-        this.port = options.port === undefined ? 18883 : options.port;
-        this.onUpload = options.onUpload;
-        this.log = options.log || { info() {}, warn() {} };
-        this.token = null;
+        this.bind = options.bind || '0.0.0.0';
+        this.port = options.port === undefined ? PORT : options.port;
+        this.api = options.api;
+        this.record = options.record || (() => {});
+        this.clock = options.clock || Date.now;
+        this.target = null;
+        this.token = '';
         this.expires = 0;
-        this.listening = false;
-        this.uploading = false;
+        this.lastRequest = '';
+        this.lastError = '';
+        this.phoneAt = null;
+        this.serverError = '';
+        this.busy = false;
+        this.previews = 0;
+        this.sockets = new Set();
         this.server = http.createServer((req, res) => this.handle(req, res));
-        this.server.on('clientError', (e, socket) => { try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch (_) {} });
+        this.server.maxConnections = 20;
+        this.server.setTimeout(15000);
+        this.server.on('connection', socket => {
+            this.sockets.add(socket);
+            socket.on('error', () => {});
+            socket.on('close', () => this.sockets.delete(socket));
+        });
+        this.server.on('error', e => {
+            this.serverError = 'HTTP server error (' + (e.code || 'unknown') + ')';
+            this.record(this.serverError);
+        });
+        this.server.on('clientError', (_, socket) => {
+            this.lastError = 'Malformed HTTP request';
+            this.record(this.lastError);
+            socket.destroy();
+        });
     }
 
+    get listening() { return this.server.listening; }
+
     start() {
+        if (this.stopping) return this.stopping.then(() => this.start());
         if (this.listening) return Promise.resolve(this.port);
-        return new Promise((resolve, reject) => {
-            const failed = (err) => { this.server.removeListener('listening', ready); reject(err); };
+        if (this.starting) return this.starting;
+        this.starting = new Promise((resolve, reject) => {
+            const failed = err => { this.server.removeListener('listening', ready); reject(err); };
             const ready = () => {
                 this.server.removeListener('error', failed);
-                this.listening = true;
                 this.port = this.server.address().port;
+                this.serverError = '';
+                this.record('HTTP listening on TCP ' + this.port);
                 resolve(this.port);
             };
             this.server.once('error', failed);
             this.server.once('listening', ready);
-            this.server.listen(this.port, '0.0.0.0');
+            this.server.listen(this.port, this.bind);
+        }).then(port => { this.starting = null; return port; }, error => {
+            this.starting = null;
+            throw error;
         });
+        return this.starting;
     }
 
-    begin() {
-        this.token = crypto.randomBytes(16).toString('hex');
-        this.expires = Date.now() + SESSION_MS;
-        return this.token;
+    begin(target) {
+        this.target = target;
+        this.token = crypto.randomBytes(24).toString('hex');
+        this.expires = this.clock() + SESSION_MS;
+        this.lastRequest = this.lastError = '';
+        this.phoneAt = null;
+        this.record('QR session opened on ' + target.interface + ' ' + target.ip);
     }
-    end() { this.token = null; this.expires = 0; }
-    valid(token) { return !!(this.token && Date.now() < this.expires &&
-        typeof token === 'string' && token.length === this.token.length &&
-        crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.token))); }
-    link(ip) { return this.token && Date.now() < this.expires ? 'http://' + ip + ':' + this.port + '/?t=' + this.token : ''; }
-    close() { this.end(); return new Promise((done) => this.server.close(() => { this.listening = false; done(); })); }
-    headers(res, code, kind) {
-        res.writeHead(code, { 'Content-Type': kind, 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
-            'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY',
-            'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'" });
+    end() { this.token = ''; this.target = null; this.expires = 0; this.phoneAt = null; }
+    get active() { return !!this.target && this.clock() < this.expires; }
+    valid(token) {
+        return this.active && typeof token === 'string' && /^[a-f0-9]{48}$/.test(token) &&
+            crypto.timingSafeEqual(Buffer.from(token), Buffer.from(this.token));
     }
-    json(res, code, message) {
-        this.headers(res, code, 'application/json; charset=utf-8');
-        res.end(JSON.stringify({ ok: code === 200, message }));
+    link(route) {
+        return this.active && this.listening ? 'http://' + this.target.ip + ':' + this.port +
+            (route || '/') + '?t=' + this.token : '';
     }
-    handle(req, res) {
-        let route;
-        try { route = new URL(req.url || '/', 'http://localhost'); }
-        catch (e) { this.json(res, 400, 'Invalid URL.'); req.resume(); return; }
-        if (!this.valid(route.searchParams.get('t'))) { this.json(res, 403, 'QR session is not active or has expired.'); req.resume(); return; }
-        if (req.method === 'GET' && route.pathname === '/') {
-            this.headers(res, 200, 'text/html; charset=utf-8'); res.end(uploadPage(this.token)); return;
+    close() {
+        this.end();
+        this.sockets.forEach(socket => socket.destroy());
+        if (!this.stopping) {
+            this.stopping = new Promise(resolve => this.server.close(() => resolve()))
+                .then(() => { this.stopping = null; });
         }
-        if (req.method !== 'POST' || route.pathname !== '/upload') {
-            this.json(res, 404, 'Page not found.'); req.resume(); return;
-        }
-        if (this.uploading) { this.json(res, 409, 'An upload is already running.'); req.resume(); return; }
+        return this.stopping;
+    }
+    statusCode(req, res, code, route, value, mime, extra) {
+        const headers = Object.assign({
+            'Content-Type': mime || 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+            'Connection': 'close', 'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'Content-Security-Policy': "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'"
+        }, extra);
+        const result = mime ? value : JSON.stringify(value);
+        headers['Content-Length'] = Buffer.byteLength(result);
+        res.writeHead(code, headers);
+        res.end(result);
+        const message = req.method + ' ' + route + ' HTTP ' + code;
+        if (code >= 400) this.lastError = value.error || message;
+        if (code < 400) this.lastRequest = new Date(this.clock()).toISOString() + ' ' + message;
+        if (route !== 'state' || code >= 400 || this.phoneAt === null) this.record(message + (code >= 400 ? ' ' + this.lastError : ''));
+        if (code < 400 && (route === 'library' || route === 'state') &&
+            !/^127\./.test(req.socket.remoteAddress || '') && /iPhone|iPad|iPod|Android|Mobile/i.test(req.headers['user-agent'] || ''))
+            this.phoneAt = this.clock();
+    }
+
+    body(req, limit, done, fail) {
+        if (this.busy) { req.resume(); return fail(409, 'Another request is being processed'); }
         const advertised = Number(req.headers['content-length'] || 0);
-        if (advertised > MAX_BYTES) { this.json(res, 413, 'GIF is larger than 6 MB.'); req.resume(); return; }
-        this.uploading = true;
-        let total = 0, chunks = [], finished = false;
-        req.on('data', (chunk) => {
-            if (finished) return;
-            total += chunk.length;
-            if (total > MAX_BYTES) {
-                finished = true; chunks = [];
-                this.uploading = false;
-                this.json(res, 413, 'GIF is larger than 6 MB.');
-                return;
+        if (advertised > limit) { req.resume(); return fail(413, 'Request too large'); }
+        this.busy = true;
+        let chunks = [], size = 0, complete = false;
+        const settle = () => {
+            if (complete) return false;
+            complete = true;
+            clearTimeout(deadline);
+            chunks = [];
+            this.busy = false;
+            return true;
+        };
+        const abort = () => {
+            if (settle()) {
+                this.lastError = 'Request interrupted';
+                this.record(this.lastError);
             }
+        };
+        const deadline = setTimeout(() => {
+            if (settle() && !req.destroyed) fail(408, 'Request timed out');
+        }, 30000);
+        req.on('aborted', abort);
+        req.on('close', abort);
+        req.on('error', abort);
+        req.on('data', chunk => {
+            if (complete) return;
+            size += chunk.length;
+            if (size > limit) { settle(); return fail(413, 'Request too large'); }
             chunks.push(chunk);
         });
         req.on('end', () => {
-            if (finished) return;
-            finished = true;
-            if (!total) { this.uploading = false; this.json(res, 400, 'No GIF data received.'); return; }
-            const data = Buffer.concat(chunks, total);
-            Promise.resolve().then(() => this.onUpload(data)).then(() => {
-                this.uploading = false;
-                this.end();
-                this.json(res, 200, 'Uploaded! The new GIF is now active in the car.');
-            }).catch((e) => {
-                this.uploading = false;
-                this.log.warn('Phone GIF rejected: ' + (e && e.message || e));
-                this.json(res, 422, 'GIF rejected: ' + (e && e.message || 'Invalid format'));
-            });
+            if (complete) return;
+            try { done(Buffer.concat(chunks, size)); }
+            finally { settle(); }
         });
-        req.on('aborted', () => { if (!finished) { finished = true; this.uploading = false; } });
-        req.on('error', () => { if (!finished) { finished = true; this.uploading = false; if (!res.headersSent) this.json(res, 400, 'Upload interrupted.'); } });
+    }
+
+    handle(req, res) {
+        let url;
+        const remote = String(req.socket.remoteAddress || '');
+        let route = 'unknown';
+        const send = (code, value, mime, extra) => this.statusCode(req, res, code, route, value, mime, extra);
+        const fail = (code, error) => send(code, { error });
+        try { url = new URL(req.url, 'http://localhost'); }
+        catch (_) { req.resume(); return fail(400, 'Invalid URL'); }
+        if (req.method === 'GET' && url.pathname === '/.mgu-gif-health' && remote === '127.0.0.1') {
+            res.writeHead(this.active && (this.target.interface === IFACE || this.target.priority === 2) ? 200 : 503,
+                { 'X-MGU-GIF-Home': '1', Connection: 'close', 'Content-Length': '0' });
+            return res.end();
+        }
+        if (!this.valid(url.searchParams.get('t'))) {
+            req.resume();
+            return fail(403, 'Invalid or expired QR session. Scan a new code.');
+        }
+        if (req.socket.localAddress !== this.target.ip || !sameSubnet(remote, this.target) ||
+            req.headers.host !== this.target.ip + ':' + this.port) {
+            req.resume();
+            return fail(403, 'Selected local network only');
+        }
+        if (req.method === 'POST' && req.headers['x-gif-home'] !== '1') {
+            req.resume();
+            return fail(403, 'Application request header required');
+        }
+        const routes = { '/': 'library', '/state': 'state', '/action': 'action', '/upload': 'upload',
+            '/preview': 'preview', '/diagnostics': 'diagnostics', '/renew': 'renew' };
+        route = Object.prototype.hasOwnProperty.call(routes, url.pathname) ? routes[url.pathname] : 'unknown';
+        const publicError = e => e.code ? 'Storage operation failed (' + e.code + ')' : e.message;
+        if (req.method === 'GET') {
+            try {
+                if (route === 'library') return send(200, page, 'text/html; charset=utf-8');
+                if (route === 'state') return send(200, Object.assign({ expires: this.expires }, this.api.state()));
+                if (route === 'preview') {
+                    if (this.previews >= 2) return fail(429, 'Too many GIF previews in progress');
+                    const bytes = this.api.preview(url.searchParams.get('id'));
+                    this.previews++;
+                    const release = () => {
+                        res.removeListener('close', release);
+                        res.removeListener('finish', release);
+                        this.previews--;
+                    };
+                    res.once('close', release);
+                    res.once('finish', release);
+                    return send(200, bytes, 'image/gif');
+                }
+                if (route === 'diagnostics') return send(200, JSON.stringify(this.api.diagnostics(), null, 2),
+                    'application/json; charset=utf-8', { 'Content-Disposition': 'attachment; filename="gif-home-log.json"' });
+            } catch (e) { return fail(422, publicError(e)); }
+        }
+        if (req.method === 'POST' && ['upload', 'action', 'renew'].includes(route)) {
+            const mime = String(req.headers['content-type'] || '').split(';')[0];
+            if (mime !== (route === 'upload' ? 'image/gif' : 'application/json')) {
+                req.resume();
+                return fail(415, 'Unsupported request content type');
+            }
+            const token = url.searchParams.get('t');
+            return this.body(req, route === 'upload' ? MAX_BYTES : 16384, bytes => {
+                if (!this.valid(token)) return fail(403, 'Session expired during request');
+                try {
+                    if (route === 'upload') this.api.upload(bytes, url.searchParams.get('name'));
+                    if (route === 'action') this.api.action(JSON.parse(bytes.toString('utf8')));
+                    if (route === 'renew') this.expires = this.clock() + SESSION_MS;
+                    return send(200, Object.assign({ expires: this.expires }, this.api.state()));
+                } catch (e) { return fail(e.status || 422, (route === 'upload' ? 'Upload rejected: ' : '') + publicError(e)); }
+            }, fail);
+        }
+        req.resume();
+        return fail(404, 'Page not found');
     }
 }
 
-module.exports = { GifUploadServer, localAddresses, uploadPage, MAX_BYTES, SESSION_MS };
+module.exports = { GifUploadServer, localAddresses, bridgeStatus, PORT, IFACE, SESSION_MS, MAX_BYTES };

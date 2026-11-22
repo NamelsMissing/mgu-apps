@@ -1,0 +1,17 @@
+{
+  "id": "mgu-gif-net",
+  "kind": "tool",
+  "version": "0.1.0",
+  "title": "GIF Home Network Bridge",
+  "description": "Scoped firewall access for GIF Home phone management on wlan_bridge",
+  "mguHmi": ["ID7"],
+  "files": [
+    {"path": "mgu-gif-net", "mode": "0755"},
+    {"path": "firewall.js", "mode": "0644"},
+    {"path": "server.js", "mode": "0644"}
+  ],
+  "units": [{"name": "mgu-gif-net.service", "from": "mgu-gif-net.service"}],
+  "enable": [{"unit": "mgu-gif-net.service", "target": "multi-user.target"}],
+  "recmgr": ["mgu-gif-net"],
+  "restart": ["mgu-gif-net.service"]
+}
