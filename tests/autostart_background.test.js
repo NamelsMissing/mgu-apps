@@ -9,19 +9,18 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const app = (id) => JSON.parse(read('apps/' + id + '/app.json'));
 const setting = (spec, key) => spec.settings.find((s) => s.key === key);
 
-for (const id of ['custom_cluster', 'cluster_lyrics', 'blitzer_status']) {
+for (const id of ['custom_cluster', 'cluster_lyrics']) {
     assert.strictEqual(app(id).mguAppStartType, 'autostart', id + ' starts with the car');
     assert.ok(new RegExp('AUTOSTART_APPS = \\([^)]*"' + id + '"').test(read('tools/build_wheelheat_autostart.py')), id + ' is on the build list');
     assert.ok(fs.existsSync(path.join(root, 'apps', id, 'background_status.js')));
 }
 // Starting with the car must change nothing visible by itself.
-const cc = app('custom_cluster'), cl = app('cluster_lyrics'), bs = app('blitzer_status');
+const cc = app('custom_cluster'), cl = app('cluster_lyrics');
 assert.strictEqual(setting(cc, 'kombiAuto').default, 'off');
 assert.strictEqual(setting(cc, 'layout').default, 'stock');
 assert.strictEqual(setting(cc, 'enablePanelTests').default, false);
 for (const key of ['phoneBridge', 'phoneBadge']) {
     assert.strictEqual(setting(cc, key), undefined, key + ' moved out of Custom Cluster');
-    assert.strictEqual(setting(bs, key).default, false);
 }
 assert.strictEqual(setting(cl, 'kombiOn').default, false);
 assert.strictEqual(setting(cl, 'autoStartOnBoot').default, true,

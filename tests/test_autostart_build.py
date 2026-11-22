@@ -88,7 +88,7 @@ class AutostartPackageTests(unittest.TestCase):
             builder.patch_artifacts(self.repo, "autostart", app_id="other")
 
     def test_app_autostart_is_scoped(self):
-        for app_id in ("light_flasher", "blitzer_status"):
+        for app_id in ("light_flasher",):
             with self.subTest(app_id=app_id):
                 spec_dir = SCRIPT.parents[1] / "apps" / app_id
                 version = builder._read_json(spec_dir / "app.json")["version"]

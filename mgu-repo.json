@@ -51,7 +51,7 @@
       "id": "g21_wheelheat",
       "kind": "app",
       "title": "G21 Heating Comfort",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "path": "apps/g21_wheelheat",
       "icon": "icon.png",
       "mguHmi": [
@@ -131,17 +131,6 @@
       "uninstallable": true
     },
     {
-      "id": "mgu-cluster-net",
-      "kind": "tool",
-      "title": "Blitzer Status Phone Port",
-      "version": "0.1.1",
-      "path": "native/cluster-net",
-      "mguHmi": [
-        "ID7"
-      ],
-      "uninstallable": true
-    },
-    {
       "id": "mgu-game-net",
       "kind": "tool",
       "title": "GameStation Phone Port",
@@ -182,28 +171,6 @@
       ],
       "requires": {
         "cluster-render": "0.4.0"
-      },
-      "build": {
-        "python": "tools/build_store_app.py",
-        "args": [
-          "{id}"
-        ],
-        "sdk": "oap-sdk",
-        "output": "dist/{id}@{version}.tgz"
-      }
-    },
-    {
-      "id": "blitzer_status",
-      "kind": "app",
-      "title": "Blitzer Status",
-      "version": "0.1.0",
-      "path": "apps/blitzer_status",
-      "mguHmi": [
-        "ID7"
-      ],
-      "requires": {
-        "cluster-render": "0.4.0",
-        "mgu-cluster-net": "0.1.1"
       },
       "build": {
         "python": "tools/build_store_app.py",

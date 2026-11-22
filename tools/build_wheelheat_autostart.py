@@ -18,7 +18,7 @@ import tempfile
 
 
 APP_ID = "g21_wheelheat"
-AUTOSTART_APPS = (APP_ID, "light_flasher", "custom_cluster", "cluster_lyrics", "blitzer_status")
+AUTOSTART_APPS = (APP_ID, "light_flasher", "custom_cluster", "cluster_lyrics")
 START_TYPES = ("autostart", "manually")
 MGU_MEMBERS = ("meta.json", "source", "rhmiData", "rhmiDataStartWidget", "oapgen")
 

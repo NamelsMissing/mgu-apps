@@ -3,7 +3,7 @@
 
 ## 0.6.11 — Blitzer Status moves to its own app
 
-The iPhone Shortcuts bridge, setup screen and status line moved to [Blitzer Status](../blitzer_status/README.md). Update Custom Cluster first, then install Blitzer Status and update both iPhone automations with the new links.
+The iPhone Shortcuts bridge, setup screen and status line moved to [Blitzer Status](https://github.com/NamelsMissing/mgu-apps-beta/blob/main/apps/blitzer_status/README.md). Update Custom Cluster first, then install Blitzer Status from the **mgu-apps-beta** store source and update both iPhone automations with the new links.
 
 ## 0.6.10 — selector text: D or gear (D1, D2 ...)
 
