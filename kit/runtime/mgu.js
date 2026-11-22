@@ -605,6 +605,10 @@ async function runInner(impl) {
          * cv.scroll = { y, bar: { x, y, w, h } } for a list on the page (from y down) with its scroll bar: the
          * controller goes through the page's targets over y (its buttons) before the list, and shows it is on
          * the list with the bar in the colour of the selection (no frame round the page).
+         * A bounded list uses { id, bounds: { x, y, w, h }, bar }; a swipe must start inside those bounds.
+         * Its id is passed as the second argument to onScroll(fn).
+         * With items (ordered target keys), reveal(index) and select(key), the knob focuses individual items.
+         * Only register actual hit targets for the visible part. reveal returns true if it moved the list.
          */
         onScroll(fn) { display.onScroll = fn; },
         /**

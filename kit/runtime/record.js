@@ -307,7 +307,6 @@ function play(words, real) {
     const f = new Float32Array(u.buffer, u.byteOffset, u.length);
     let alpha = 1;
     const col = (v) => { const a = unpack(v); if (alpha < 1) a[3] = Math.round(a[3] * alpha); return a; };
-    let clip = null;
     let i = 0;
     const n = u.length;
     while (i < n) {
@@ -354,15 +353,14 @@ function play(words, real) {
         }
         case OP.LAYER: { const L = layerById.get(u[i]); if (L) cv.blit(softLayer(L), f[i + 1], f[i + 2]); i += 3; break; }
         case OP.IMAGE: { const im = imageById.get(u[i]); if (im && cv.drawImage) cv.drawImage(im.data, im.w, im.h, f[i + 2], f[i + 3], f[i + 4], f[i + 5]); i += 6; break; }
-        case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;     // (software path: ignored)
-        case OP.NOCLIP: clip = null; break;
+        case OP.CLIP: cv.clip(f[i], f[i + 1], f[i + 2], f[i + 3]); i += 4; break;
+        case OP.NOCLIP: cv.noclip(); break;
         case OP.ALPHA: alpha = f[i]; i += 1; break;
         case OP.XF: cv = f[i] > 0 ? NOP : real; i += 3; break;
-        default: return real;
+        default: return real.noclip();
         }
     }
-    void clip;
-    return real;
+    return real.noclip();
 }
 
 module.exports = { Recorder, OP, pack, unpack, rampId, rampList, atlasId, atlasList, atlasById, makeLayer, dropLayer, layerById, play, softLayer, setImage, imageById };

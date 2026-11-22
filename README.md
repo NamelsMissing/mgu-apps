@@ -90,7 +90,7 @@ You don't have to type on the car at all:
 
 | App | Status | What it's for |
 | --- | --- | --- |
-| [**Light Show**](apps/light_show/README.md) | Experimental | Exterior light shows while parked in P: automatic vehicle scan, headlamp LEDs, body-controller light functions and rear light modules, effect library, 3D car and phone remote via QR code (needs **Light Show Phone Port**). |
+| [**Light Show**](apps/light_show/README.md) | Experimental | Exterior light shows while parked in P, with filterable light lists, automatic vehicle scan, headlamp and rear lights, effect library, 3D car and phone remote via QR code (needs **Light Show Phone Port**). |
 | [**Light Flasher**](apps/light_flasher/README.md) | Experimental | Makes the headlights flash rapidly like a strobe while parked. Starts with a button in the app or a short pull on the headlight-flasher stalk. |
 
 **How Light Flasher works:** instead of one normal flash, the headlights flash on and off several times in quick succession, like a strobe light. You set the rhythm in the app (from very fast, 100 ms, to slower, 1 second, between flashes) and how long the strobe runs (2–5 seconds). You start it in one of two ways:

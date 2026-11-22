@@ -4,12 +4,18 @@
 // (left to right, top to bottom: the order the iDrive knob walks them).
 const qrcode = require('./qr_vendor');
 const Car3D = require('./car3d');
+const { FILTERS } = require('./lists');
 
 const W = 1600, H = 520;
 const TABS = ['Show', 'Lights', 'Vehicle', 'Phone'];
 const PAGE = { SHOW: 0, LIGHTS: 1, VEHICLE: 2, PHONE: 3 };
 const TOP = 52, EDGE = 24, FOOT_Y = 452, FOOT_H = 52;
-const LIGHT_ROWS = 6, LIGHT_COLS = 2, LIGHTS_PER_PAGE = LIGHT_ROWS * LIGHT_COLS;
+const LIGHT_PANEL_WIDTH = 520, VEHICLE_LEFT_WIDTH = 760;
+const LIGHTS_BOX = Object.freeze({ id: 'light-show-lights', x: EDGE, y: TOP + 54,
+    w: W - 2 * EDGE - LIGHT_PANEL_WIDTH - 16, h: FOOT_Y - TOP - 62, columns: 2, columnGap: 12, rowHeight: 60, rowGap: 8 });
+const UNITS_BOX = Object.freeze({ id: 'light-show-units', x: EDGE + VEHICLE_LEFT_WIDTH + 16 + 24, y: TOP + 46,
+    w: W - 2 * EDGE - VEHICLE_LEFT_WIDTH - 16 - 48, h: 206, columns: 2, columnGap: 16, rowHeight: 36, rowGap: 4 });
+const TEST_LABEL = { visible: 'Visible', untested: 'Not tested', 'not-visible': 'No visible effect', noise: 'Noise' };
 
 const FOLD = { 'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss', '–': '-', '—': '-', '…': '...' };
 function ascii(value) {
@@ -101,6 +107,28 @@ function makeUi(G, colors) {
     }
     const statusColor = (t, s) => s === 'visible' ? (t.ok || t.accent) : s === 'noise' ? t.crit : s === 'not-visible' ? t.warn : t.dim;
 
+    function drawList(cv, t, scroll, drawItem, navigation) {
+        const b = scroll.box, gutter = 14, bottom = b.y + b.h;
+        const w = (b.w - gutter - b.columnGap * (b.columns - 1)) / b.columns;
+        const range = scroll.visible();
+        cv.clip(b.x, b.y, b.w - gutter, b.h);
+        for (let i = range.first; i < range.end; i++) {
+            const x = b.x + (i % b.columns) * (w + b.columnGap);
+            const y = b.y + Math.floor(i / b.columns) * (b.rowHeight + b.rowGap) - scroll.offset;
+            const hitY = Math.max(b.y, y), hitH = Math.min(bottom, y + b.rowHeight) - hitY;
+            drawItem(i, x, y, w, b.rowHeight, hitY, hitH);
+        }
+        cv.noclip();
+        let bar = null;
+        if (scroll.max) {
+            const h = Math.max(24, b.h * b.h / scroll.contentHeight), x = b.x + b.w - 7;
+            bar = { x, y: b.y + (b.h - h) * scroll.offset / scroll.max, w: 5, h };
+            cv.roundRect(x, b.y, bar.w, b.h, 2.5, withAlpha(t.text, 0.08));
+            cv.roundRect(bar.x, bar.y, bar.w, bar.h, 2.5, withAlpha(t.text, 0.38));
+        }
+        cv.scroll = Object.assign({ id: b.id, bounds: b, bar }, navigation);
+    }
+
     /* ---------------- Show ---------------- */
     function drawShow(cv, t, m, a) {
         const r = m.runner, carBox = { x: EDGE, y: TOP, w: 640, h: FOOT_Y - TOP - 14 };
@@ -149,58 +177,84 @@ function makeUi(G, colors) {
 
     /* ---------------- Lights ---------------- */
     function drawLights(cv, t, m, a) {
-        const list = m.lightList, panelW = 520, listW = W - 2 * EDGE - panelW - 16, colW = (listW - 12) / LIGHT_COLS, rowH = 60;
-        const start = m.lightsPage * LIGHTS_PER_PAGE;
-        list.slice(start, start + LIGHTS_PER_PAGE).forEach((l, k) => {
-            const x = EDGE + (k % LIGHT_COLS) * (colW + 12), y = TOP + Math.floor(k / LIGHT_COLS) * (rowH + 8), on = l.id === m.selectedLamp;
-            tile(cv, t, x, y, colW, rowH, on, () => a.pickLamp(l.id), 'LAMP_' + l.id);
-            cv.circle(x + 24, y + rowH / 2, 8, l.hex);
-            cv.circle(x + 24, y + rowH / 2, 13, withAlpha(l.hex, 0.25));
-            label(cv, l.label, x + 46, y + 26, 18, t.text, colW - 200, { font: 'bold' });
-            label(cv, l.module + (l.experimental ? ' (exp.)' : ''), x + 46, y + 47, 13.5, t.dim, colW - 200);
-            const n = m.config.selection.indexOf(l.id);
-            if (n >= 0) { cv.circle(x + colW - 28, y + rowH / 2, 15, t.sel || t.accent); cv.text(String(n + 1), x + colW - 28, y + rowH / 2 + 6, 16, inkOn(t.sel || t.accent), { align: 'center', font: 'bold', literal: true }); }
-            const st = l.statusText;
-            const sw = cv.textWidth(ascii(st).toUpperCase(), 12, { font: 'bold', spacing: 1, literal: true }) + 18;
-            chip(cv, x + colW - (n >= 0 ? 56 : 14) - sw, y + 18, st, statusColor(t, l.status), 12);
+        const lights = m.lights, list = lights.items, panelW = LIGHT_PANEL_WIDTH;
+        let filterX = LIGHTS_BOX.x, menuX;
+        FILTERS.forEach((filter, i) => {
+            const current = lights.filters[filter.key], active = filter.options.find((option) => option[0] === current);
+            const w = [212, 255, 315][i];
+            if (m.filterMenu === filter) menuX = filterX;
+            button(cv, t, filterX, TOP, w, 42, filter.label + ' / ' + active[1], () => a.openFilter(filter), 'FILTER_' + filter.key,
+                { size: 14, on: current !== 'all' || m.filterMenu === filter });
+            filterX += w + 10;
         });
-        if (!list.length) paragraph(cv, m.profile ? 'No light is available on this car with the current settings. See VEHICLE.' : 'The car is scanned by itself once it is parked in P (read-only, a few seconds). Then Light Show knows which control units and lights this car has.', EDGE + 10, TOP + 40, 20, t.dim, listW - 20, 4);
+        label(cv, list.length + ' of ' + lights.catalog.length + ' lights', LIGHTS_BOX.x + LIGHTS_BOX.w - 4, TOP + 27, 16, t.text,
+            LIGHTS_BOX.x + LIGHTS_BOX.w - filterX - 8, { align: 'right' });
+        drawList(cv, t, lights.scroll, (i, x, y, w, h, hitY, hitH) => {
+            const l = list[i], on = l === lights.selected;
+            tile(cv, t, x, y, w, h, on);
+            if (!m.filterMenu && hitH > 0) cv.target(x, hitY, w, hitH, () => a.pickLamp(l.id), l.id, 8);
+            const color = l.available ? l.hex : t.dim;
+            cv.circle(x + 22, y + h / 2, 7, color);
+            cv.circle(x + 22, y + h / 2, 12, withAlpha(color, 0.25));
+            const n = m.config.selection.indexOf(l.id);
+            const right = x + w - (n >= 0 ? 48 : 14);
+            const st = TEST_LABEL[l.status] || l.statusText;
+            const sw = cv.textWidth(ascii(st).toUpperCase(), 12, { font: 'bold', spacing: 1, literal: true }) + 18;
+            label(cv, l.label, x + 43, y + 25, 18, t.text, right - sw - x - 53, { font: 'bold' });
+            label(cv, l.module + (l.experimental ? ' (exp.)' : ''), x + 43, y + 47, 13.5, t.dim, right - x - 170);
+            chip(cv, right - sw, y + 6, st, statusColor(t, l.status), 12);
+            label(cv, l.available ? 'Controllable' : 'Unavailable', right, y + 47, 13, l.available ? t.dim : t.warn, 120, { align: 'right' });
+            if (n >= 0) {
+                cv.circle(x + w - 22, y + h / 2, 14, t.sel || t.accent);
+                cv.text(String(n + 1), x + w - 22, y + h / 2 + 5, 15, inkOn(t.sel || t.accent), { align: 'center', font: 'bold', literal: true });
+            }
+        }, m.filterMenu ? null : { items: lights.keys, reveal: a.revealLight, select: a.pickLamp });
+        if (m.filterMenu) {
+            const f = m.filterMenu, y = LIGHTS_BOX.y, w = 354;
+            cv.scroll = { id: 'light-show-filter', bounds: LIGHTS_BOX };
+            cv.roundRect(menuX, y, w, f.options.length * 48 + 16, 12, t.panelTop);
+            cv.strokeRoundRect(menuX, y, w, f.options.length * 48 + 16, 12, 2, t.panelEdge);
+            f.options.forEach(([value, name], i) => button(cv, t, menuX + 8, y + 10 + i * 48, w - 16, 44, name,
+                () => a.applyFilter(f.key, value), 'FILTER_OPTION_' + value, { size: 16, on: lights.filters[f.key] === value }));
+        } else if (!list.length) {
+            paragraph(cv, 'No lights match the selected filters.', EDGE + 10, LIGHTS_BOX.y + 38, 20, t.text, LIGHTS_BOX.w - 20, 2);
+            if (!m.profile) paragraph(cv, 'Park in P to scan the vehicle for available lights.', EDGE + 10, LIGHTS_BOX.y + 70, 16, t.dim, LIGHTS_BOX.w - 20, 2);
+            button(cv, t, EDGE + 10, LIGHTS_BOX.y + 88, 200, 46, 'Reset filters', a.resetFilters, 'FILTER_RESET', { size: 16 });
+        }
         // detail panel with a small 3D car
-        const px = W - EDGE - panelW, l = list.find((x) => x.id === m.selectedLamp);
+        const px = W - EDGE - panelW, l = lights.selected;
         car(cv, t, { x: px, y: TOP, w: panelW, h: 196 }, m, l ? [{ points: l.points, hex: l.hex, on: true }] : [], { pitch: -0.42 });
         if (l) {
             label(cv, l.label, px + 4, TOP + 226, 22, t.text, panelW - 8, { font: 'bold' });
-            label(cv, l.statusText + ' - ' + l.module, px + 4, TOP + 250, 15, statusColor(t, l.status), panelW - 8);
+            const status = TEST_LABEL[l.status] || l.statusText;
+            const sw = chip(cv, px + 4, TOP + 233, status, statusColor(t, l.status), 12);
+            label(cv, (l.available ? 'Controllable' : 'Unavailable') + ' / ' + l.module,
+                px + sw + 16, TOP + 250, 15, l.available ? t.text : t.warn, panelW - sw - 24);
             const bw = (panelW - 24) / 3;
             const tested = m.lastTested === l.id && !m.runner.busy;
             if (tested) {
                 cv.text('WHAT DID YOU SEE AND HEAR?', px + 4, TOP + 282, 13, t.dim, { font: 'bold', spacing: 1.5, literal: true });
-                button(cv, t, px, TOP + 292, bw, 46, 'Lit, quiet', () => a.observe('visible'), 'OBS_OK', { size: 16 });
-                button(cv, t, px + bw + 12, TOP + 292, bw, 46, 'Nothing', () => a.observe('none'), 'OBS_NONE', { size: 16 });
-                button(cv, t, px + 2 * (bw + 12), TOP + 292, bw, 46, 'Noise', () => a.observe('noise'), 'OBS_NOISE', { size: 16, color: t.warn });
+                button(cv, t, px, TOP + 292, bw, 46, 'Lit, quiet', () => a.observe(l.id, 'visible'), 'OBS_OK', { size: 16 });
+                button(cv, t, px + bw + 12, TOP + 292, bw, 46, 'Nothing', () => a.observe(l.id, 'none'), 'OBS_NONE', { size: 16 });
+                button(cv, t, px + 2 * (bw + 12), TOP + 292, bw, 46, 'Noise', () => a.observe(l.id, 'noise'), 'OBS_NOISE', { size: 16, color: t.warn });
             } else {
                 paragraph(cv, !l.available ? l.why : l.status === 'visible' ? 'Tested: it lit up without noise. Add it to the show or test again.'
                     : 'Test it once while you watch the car. Only lights that lit up without unusual noise can join a show.', px + 4, TOP + 286, 15, t.dim, panelW - 8, 3);
             }
             const inShow = m.config.selection.indexOf(l.id) >= 0;
-            button(cv, t, px, TOP + 350, bw, 46, 'Test', a.test, 'TEST', { primary: true, off: !l.available || m.runner.busy || !m.allowed || m.runner.recoveryPending, size: 17 });
-            button(cv, t, px + bw + 12, TOP + 350, bw, 46, inShow ? 'Remove' : 'Add to show', a.toggle, 'TOGGLE', { off: (!l.available || l.status !== 'visible') && !inShow, size: 15, on: inShow });
-            button(cv, t, px + 2 * (bw + 12), TOP + 350, bw, 46, 'Rename', a.rename, 'RENAME', { size: 16 });
+            button(cv, t, px, TOP + 350, bw, 46, 'Test', () => a.test(l.id), 'TEST', { primary: true, off: !l.available || m.runner.busy || !m.allowed || m.runner.recoveryPending, size: 17 });
+            button(cv, t, px + bw + 12, TOP + 350, bw, 46, inShow ? 'Remove' : 'Add to show', () => a.toggle(l.id), 'TOGGLE', { off: (!l.available || l.status !== 'visible') && !inShow, size: 15, on: inShow });
+            button(cv, t, px + 2 * (bw + 12), TOP + 350, bw, 46, 'Rename', () => a.rename(l.id), 'RENAME', { size: 16 });
         }
-        const pages = Math.max(1, Math.ceil(list.length / LIGHTS_PER_PAGE));
-        footer(cv, t, !m.allowed ? m.lockText : m.notice || ('Page ' + (m.lightsPage + 1) + ' of ' + pages + ', ' + list.length + ' lights. Test: P, standstill, nobody in front.'),
+        footer(cv, t, !m.allowed ? m.lockText : m.notice || 'Test while parked in P. Keep the area in front of the car clear.',
             !m.allowed ? t.crit : null, [
-                { text: m.groupFilter ? m.groupFilter + ' lights' : 'All lights', w: 190, key: 'GROUP', run: a.nextGroup, on: !!m.groupFilter },
-                { text: m.showAll ? 'Usable only' : 'Show all', w: 180, key: 'ALL', run: a.toggleAll },
-                { text: 'Previous', w: 150, key: 'PREV', run: a.prevLights, off: m.lightsPage === 0 },
-                { text: 'Next', w: 130, key: 'NEXT', run: a.nextLights, off: m.lightsPage >= pages - 1 },
                 { text: 'Stop', w: 150, key: 'STOP_L', run: a.stop, color: t.crit, off: !m.runner.busy && !m.runner.recoveryPending },
             ]);
     }
 
     /* ---------------- Vehicle ---------------- */
     function drawVehicle(cv, t, m, a) {
-        const p = m.profile, lw = 760;
+        const p = m.profile, lw = VEHICLE_LEFT_WIDTH;
         G.panel(cv, t, EDGE, TOP, lw, FOOT_Y - TOP - 14, '');
         cv.text('EXTERIOR LIGHT CONTROL UNITS', EDGE + 24, TOP + 34, 14, t.dim, { font: 'bold', spacing: 2, literal: true });
         if (!p) paragraph(cv, 'Not scanned yet. The scan asks every control unit for its identity (22 F1 50, read-only). Nothing is switched.', EDGE + 24, TOP + 74, 19, t.text, lw - 48, 4);
@@ -235,22 +289,23 @@ function makeUi(G, colors) {
         const rx = EDGE + lw + 16, rw = W - EDGE - rx;
         G.panel(cv, t, rx, TOP, rw, FOOT_Y - TOP - 14, '');
         cv.text('ALL CONTROL UNITS', rx + 24, TOP + 34, 14, t.dim, { font: 'bold', spacing: 2, literal: true });
-        const units = p ? p.units : [], cols = 2, per = 12, cw = (rw - 48 - 16) / cols, start = m.unitsPage * per;
-        units.slice(start, start + per).forEach((u, k) => {
-            const x = rx + 24 + (k % cols) * (cw + 16), y = TOP + 64 + Math.floor(k / cols) * 34;
-            cv.text(u.addressHex, x, y, 15, u.light ? (t.sel || t.accent) : t.dim, { font: 'bold', literal: true });
-            label(cv, (u.name || u.index || 'no identity') + (u.role ? '  ' + u.role : ''), x + 56, y, 15, t.text, cw - 60);
+        const units = p ? p.units : [];
+        label(cv, units.length ? String(units.length) : '', W - EDGE - 24, TOP + 34, 14, t.dim, 70, { align: 'right' });
+        drawList(cv, t, m.unitsScroll, (i, x, y, w) => {
+            const u = units[i], unconfirmed = u.supportText === 'Last seen';
+            cv.text(u.addressHex, x, y + 18, 15, u.light ? (t.sel || t.accent) : t.dim, { font: 'bold', literal: true });
+            label(cv, u.name || u.index || 'No identity', x + 55, y + 18, 15, u.index ? t.text : t.warn, w - 60, { font: 'bold' });
+            const meta = [unconfirmed ? 'Last seen' : '', u.name ? u.index : '', u.role].filter(Boolean).join(' / ');
+            label(cv, meta, x + 55, y + 32, 12, unconfirmed ? t.warn : t.dim, w - 60);
         });
         if (!units.length) paragraph(cv, 'The list appears after the scan.', rx + 24, TOP + 74, 17, t.dim, rw - 48, 2);
         button(cv, t, rx + 20, TOP + 264, rw - 40, 46, (m.commOff ? 'On' : 'Off') + ': test - headlamps ignore car messages', a.toggleCommOff, 'COMM',
             { on: m.commOff, size: 15, color: m.commOff ? t.warn : null, off: m.runner.busy });
         paragraph(cv, 'Test option (like BimmerLight, 28 02 01): during a show the headlamp modules ignore the car\'s own light requests; normal communication returns at the end. SUPPORTED = tested in a car, FROM BMW DATA = from the BMW PRG.',
             rx + 24, TOP + 330, 13.5, t.dim, rw - 48, 3);
-        const pages = Math.max(1, Math.ceil(units.length / per));
         footer(cv, t, m.notice || (m.recoveryUnreadable ? 'Recovery file unreadable: check every normal light with the car\'s own switches, then confirm.' : m.runner.state === 'SCANNING' ? m.runner.note : 'Park in P to scan. The scan only reads identities and vehicle order.'),
             m.recoveryUnreadable ? t.crit : null, [
                 m.recoveryUnreadable ? { text: 'Lights checked', w: 230, key: 'ACK', run: a.acknowledge, color: t.warn } : null,
-                pages > 1 ? { text: 'More units', w: 190, key: 'UNITS', run: a.nextUnits } : null,
                 { text: m.runner.state === 'SCANNING' ? 'Scanning...' : p ? 'Scan again' : 'Scan vehicle', w: 240, key: 'SCAN', run: a.scan, primary: true, off: m.runner.busy || m.runner.recoveryPending || !m.allowed },
             ]);
     }
@@ -305,9 +360,21 @@ function makeUi(G, colors) {
         else if (m.page === PAGE.VEHICLE) drawVehicle(cv, t, m, a);
         else if (m.page === PAGE.PHONE) drawPhone(cv, t, m, a);
         else drawShow(cv, t, m, a);
+        if (!cv.own && m.nativeFocus) {
+            const b = cv.scroll && cv.scroll.bounds;
+            const target = cv.targets.find((entry) => 'tgt:' + entry.key === m.nativeFocus);
+            if (target) {
+                if (b && cv.scroll.items && cv.scroll.items.indexOf(target.key) >= 0) cv.clip(b.x, b.y, b.w, b.h);
+                cv.strokeRoundRect(target.x, target.y, target.w, target.h, target.r || 8, 3, t.sel || t.accent);
+                cv.noclip();
+            } else if (m.nativeFocus === 'scroll' && cv.scroll && cv.scroll.bar) {
+                const bar = cv.scroll.bar;
+                cv.roundRect(bar.x - 1, bar.y, bar.w + 2, bar.h, 3, t.sel || t.accent);
+            }
+        }
         return cv;
     }
     return { draw, fit };
 }
 
-module.exports = { makeUi, ascii, TABS, PAGE, LIGHTS_PER_PAGE, W, H };
+module.exports = { makeUi, ascii, TABS, PAGE, LIGHTS_BOX, UNITS_BOX, W, H };

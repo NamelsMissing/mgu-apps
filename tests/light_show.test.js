@@ -18,11 +18,85 @@ const Guard = require(APP + '/guard');
 const Link = require(APP + '/link');
 const { Diag } = require(APP + '/tasu');
 const Car3D = require(APP + '/car3d');
+const { FILTERS, LightList, ListScroll } = require(APP + '/lists');
 const { WebServer, privateAddress } = require(APP + '/web-server');
 const page = require(APP + '/web-page');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'light-show-'));
 const ids = (pairs) => new Map(pairs);
+
+/* ---------- independent filter dimensions and scroll geometry ---------- */
+{
+    const box = { columns: 2, rowHeight: 60, rowGap: 8, h: 196 };
+    const scroll = new ListScroll(box);
+    scroll.resize(3);
+    assert.strictEqual(scroll.contentHeight, 128);
+    assert.strictEqual(scroll.max, 0);
+    assert.strictEqual(scroll.move(100), false);
+    scroll.resize(6);
+    assert.strictEqual(scroll.contentHeight, box.h);
+    assert.strictEqual(scroll.max, 0);
+    assert.deepStrictEqual(scroll.visible(), { first: 0, end: 6 });
+    scroll.resize(7);
+    assert.strictEqual(scroll.max, 68);
+    assert.strictEqual(scroll.move(400), true);
+    assert.deepStrictEqual(scroll.visible(), { first: 2, end: 7 });
+    assert.strictEqual(scroll.move(1), false);
+    assert.strictEqual(scroll.move(-400), true);
+    assert.strictEqual(scroll.move(-1), false);
+    assert.deepStrictEqual(scroll.visible(), { first: 0, end: 6 });
+    assert.strictEqual(scroll.reveal(6), true);
+    assert.strictEqual(scroll.offset, scroll.max);
+    assert.strictEqual(scroll.reveal(0), true);
+    assert.strictEqual(scroll.offset, 0);
+
+    const lights = new LightList(box);
+    const entries = [];
+    for (const group of ['front', 'side', 'rear']) {
+        for (const available of [true, false]) {
+            for (const status of ['visible', 'untested', 'not-visible', 'noise']) {
+                entries.push({ id: [group, available, status].join(':'), group, available, status });
+            }
+        }
+    }
+    lights.sync(entries);
+    assert.strictEqual(lights.items.length, 12, 'technical default includes every observation status');
+    for (const { key, options } of FILTERS) {
+        lights.resetFilters();
+        for (const [value] of options) {
+            lights.filter(key, value);
+            const expected = entries.filter((l) => value === 'all' || (key === 'position' ? l.group === value
+                : key === 'availability' ? l.available === (value === 'controllable') : l.status === value));
+            assert.deepStrictEqual(lights.items, expected, key + ' ' + value);
+        }
+    }
+    lights.resetFilters();
+    const pick = 'front:true:visible';
+    assert.ok(lights.pick(pick) || lights.selected.id === pick);
+    lights.scroll.move(400);
+    lights.filter('position', 'front');
+    assert.strictEqual(lights.scroll.offset, 0);
+    assert.strictEqual(lights.selected.id, pick);
+    lights.filter('availability', 'controllable');
+    lights.filter('status', 'visible');
+    assert.deepStrictEqual(lights.keys, [pick]);
+    lights.filter('status', 'not-visible');
+    assert.deepStrictEqual(lights.keys, ['front:true:not-visible']);
+    assert.strictEqual(lights.selected.id, lights.keys[0]);
+    lights.filter('position', 'side');
+    lights.filter('position', 'rear');
+    lights.filter('availability', 'all');
+    lights.filter('status', 'untested');
+    assert.deepStrictEqual(lights.keys, ['rear:true:untested', 'rear:false:untested']);
+    lights.sync(entries.filter((l) => l.group !== 'rear'));
+    assert.strictEqual(lights.items.length, 0);
+    assert.strictEqual(lights.selected, null);
+    assert.strictEqual(lights.pick(pick), false);
+    lights.resetFilters();
+    assert.strictEqual(lights.items.length, 16);
+    assert.strictEqual(lights.selected.id, pick);
+    console.log('ok: independent filters, retained selection and scroll bounds');
+}
 
 /* ---------- vehicle scan ---------- */
 {

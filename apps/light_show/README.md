@@ -1,4 +1,4 @@
-# Light Show 0.4.6
+# Light Show 0.4.7
 
 Exterior light shows for BMW G-series cars with the iDrive 7 head unit (MGU), in the spirit of
 Bimmerlight: pick lights, pick an effect, start, from the BMW screen or from your phone.
@@ -40,6 +40,36 @@ Names and test results from 0.3.x are taken over (same app id, same data folder)
   body controller and both headlamp modules, the list of all units, the switch for experimental
   headlamp modules, and the manual "lights checked" confirmation if a recovery file is unreadable.
 - **Phone** - QR code, status of the firewall helper, the server and the phone connection.
+
+## Finding and browsing lights
+
+**Lights** has three independent filters. Open each filter to choose one value. The button
+shows the active value, and the count shows matching lights out of all entries in the catalog.
+
+| Filter | Options |
+|---|---|
+| Position | All, Front, Side, Rear |
+| Availability | All, Controllable, Unavailable |
+| Test status | All, Visible, Not tested, No visible effect, Noise |
+
+The initial view shows controllable lights in every position and with every test status.
+**Controllable** describes the control route available on the scanned vehicle. **Visible**
+requires a stored, confirmed test with visible light and no unusual noise. The list shows both
+values separately. The catalog includes only the channels it can describe for each module.
+
+Changing a filter moves to the top and keeps the selected light when it still matches. Otherwise
+the first match becomes selected. **Reset filters** in the empty view sets all three filters to
+**All**. Filtering and browsing do not send diagnostic commands.
+
+- **Touchscreen** - Swipe vertically inside the Lights list or the **All control units** list
+  on Vehicle. Tap a light to select it. The detail panel and action buttons stay in place.
+- **iDrive in the full layout** - Turn through the filters and lights. The list follows the
+  focused light, and pressing selects it. Tilt to move between the list, adjacent controls and
+  tabs. On Vehicle, focus the scroll bar and turn the knob to browse control units. Continue
+  turning past either end to leave the list.
+- **Standard or software layout** - Use **Previous focus**, **Next focus** and **Activate focus**
+  in the native HMI bar. **Next page** switches tabs. Swiping and tapping the drawn lists require
+  a renderer with touch routing.
 
 ## Vehicle scan (modelled on BimmerLight)
 
@@ -141,5 +171,5 @@ Use those details and the result of the test when reporting a problem.
 ## Tests
 
 ```sh
-node tests/light_show.test.js
+node --test tests/light_show.test.js tests/light_show_ui.test.js
 ```
