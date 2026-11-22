@@ -44,7 +44,7 @@ assert(!dpf.includes('cv.roundRect(70, 451, 1450, 6'), 'fake DPF progress bar re
 assert.match(dpf, /\['Overview', 'Details', 'History', 'Regeneration'\]/,
     'DPF keeps live overview, measurements and stored history on separate pages');
 assert(!dpf.includes('No verified activity flag'), 'unverified regeneration badge removed');
-assert.match(ambientHmi, /'Confirm BDC test' : 'Apply BDC test'/, 'BDC Apply and confirmation share a control');
+assert.match(ambientHmi, /'Confirm BDC test'.*'Apply BDC test'/, 'BDC Apply, setup and confirmation share a control');
 assert.match(ambient, /ctl\.applyBdc\(/, 'Ambient Apply must use the guarded BDC LIN path');
 assert.match(ambient, /const updateRGB.*settings\.setMany/, 'slider changes must batch persistence');
 
