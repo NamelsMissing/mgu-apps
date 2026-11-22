@@ -2,7 +2,7 @@
   "id": "cluster_lyrics",
   "title": "Cluster Lyrics",
   "description": "Shows the synchronised lyrics of the song playing on your Spotify account, optionally in the instrument cluster's map window instead of the Waze map.",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "mguInternet": true,
   "vendor": "custom",
   "loggingId": "OCL1",
@@ -43,6 +43,12 @@
       "label": "Show lyrics in the instrument cluster (works without the menu)",
       "type": "bool",
       "default": false
+    },
+    {
+      "key": "autoStartOnBoot",
+      "label": "Autostart KOMBI lyrics when iDrive starts",
+      "type": "bool",
+      "default": true
     },
     {
       "key": "kombiMode",

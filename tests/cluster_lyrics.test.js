@@ -13,6 +13,7 @@ const { Spotify, positionAt, validImport, IMPORT_NAME } = require(path.join(APP,
 const { Lyrics, plainTitle } = require(path.join(APP, 'lrclib.js'));
 const K = require(path.join(APP, 'kombi.js'));
 const { LyricsEngine, displayable } = require(path.join(APP, 'engine.js'));
+const { BootControl } = require(path.join(APP, 'boot_control.js'));
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-lyrics-'));
@@ -639,12 +640,50 @@ async function testEngine() {
     assert.deepStrictEqual(last(), ['release', 'switched off']);
 }
 
+/* ---------- background startup / manual control ---------- */
+function testBootControl() {
+    function fake(kombiOn, autoStartOnBoot) {
+        const v = { kombiOn, autoStartOnBoot };
+        return { get(key) { return v[key]; }, set(key, value) { v[key] = value; },
+            stored: v };
+    }
+    const newInstall = fake(false, true);
+    const boot0 = new BootControl(newInstall);
+    assert.strictEqual(boot0.autostartEnabled(), true);
+    assert.strictEqual(boot0.active(), false, 'safe default: no cluster takeover');
+    assert.strictEqual(boot0.startedAutomatically, false);
+
+    const savedEnabled = fake(true, true);
+    const boot1 = new BootControl(savedEnabled);
+    assert.strictEqual(boot1.active(), true, 'saved KOMBI setting resumes without opening the app');
+    assert.strictEqual(boot1.startedAutomatically, true);
+    savedEnabled.set('autoStartOnBoot', false);
+    boot1.onSettingsChanged('autoStartOnBoot');
+    assert.strictEqual(boot1.active(), true, 'changing preference does not interrupt current song');
+    const boot2 = new BootControl(savedEnabled);
+    assert.strictEqual(boot2.active(), false, 'next launch begins with KOMBI off');
+    assert.strictEqual(boot2.startedAutomatically, false);
+    assert.strictEqual(boot2.toggle(), true, 'manual press works with boot autostart disabled');
+    boot2.onSettingsChanged('kombiOn');
+    assert.strictEqual(boot2.active(), true);
+    assert.strictEqual(new BootControl(savedEnabled).active(), false, 'manual activation stays session-only');
+    assert.strictEqual(boot2.toggle(), false);
+    assert.strictEqual(savedEnabled.get('kombiOn'), false, 'manual off persists');
+
+    const viaSettings = new BootControl(fake(false, false));
+    viaSettings.settings.set('kombiOn', true);
+    viaSettings.onSettingsChanged('kombiOn');
+    assert.strictEqual(viaSettings.active(), true, 'master switch from settings activates immediately');
+}
+
 function testManifest() {
     const spec = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
     assert.strictEqual(spec.mguInternet, true);
     const byKey = {};
     spec.settings.forEach(s => { byKey[s.key] = s; });
     assert.strictEqual(byKey.kombiOn.default, false, 'nothing reaches the cluster until switched on');
+    assert.strictEqual(spec.mguAppStartType, 'autostart', 'native package start mode');
+    assert.strictEqual(byKey.autoStartOnBoot.default, true, 'resume preference defaults to On');
     assert.strictEqual(byKey.kombiMode.default, 'parked');
     assert.strictEqual(byKey.takeOverBmwMap.default, false);
     assert.strictEqual(byKey.layoutMode.default, 'exclusive');
@@ -674,6 +713,7 @@ function testManifest() {
     testKombi();
     await testKombiWire();
     await testEngine();
+    testBootControl();
     testManifest();
     console.log('Cluster Lyrics: LRC, font, uplink, Spotify, LRCLIB, KOMBI layers, engine and manifest OK');
 })().catch(e => { console.error(e); process.exit(1); });

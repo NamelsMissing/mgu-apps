@@ -24,6 +24,8 @@ for (const key of ['phoneBridge', 'phoneBadge']) {
     assert.strictEqual(setting(bs, key).default, false);
 }
 assert.strictEqual(setting(cl, 'kombiOn').default, false);
+assert.strictEqual(setting(cl, 'autoStartOnBoot').default, true,
+    'Cluster Lyrics automatically resumes previously enabled KOMBI mode');
 assert.deepStrictEqual(setting(cc, 'kombiAuto').options.map((o) => o[0]), ['off', 'parked']);
 assert.strictEqual(setting(cc, 'gearDisplay').default, 'gear');
 assert.deepStrictEqual(setting(cc, 'gearDisplay').options.map((o) => o[0]), ['selector', 'gear', 'gear_estimate']);

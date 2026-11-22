@@ -1,27 +1,47 @@
-# Cluster Lyrics 0.1.3 — BMW G21 / MGU iDrive 7
+# Cluster Lyrics 0.1.4 — BMW G21 / MGU iDrive 7
 
 Shows the synchronised lyrics of the song that is playing on **your own Spotify account**:
 
 - on the iDrive screen (title, artist, current line, next line), and
 - optionally in the **instrument cluster's map window**, replacing the map or overlaying lyrics while Waze remains visible.
 
-**Status: built and tested on a PC only.** Nothing in this app has run on a vehicle yet. See
+**Status:** The exclusive map lyric display was confirmed on a BMW G21; new functions still require
+vehicle testing. See
 [What is verified](#what-is-verified) before you rely on any part of it.
 
-## Starts with the car, works without the app window (0.1.1)
+## Starts with the car, works without the app window (0.1.4)
 
-The app now carries `mguAppStartType: autostart`: the MGU Store starts its process with the head unit, so the lyrics can appear in the cluster without opening the app. What happens is decided only by the settings; with the defaults nothing is shown and the app does not even connect to the cluster renderer.
+The app declares `mguAppStartType: autostart`. The **MGU Store build wrapper** writes this metadata into
+the installed packages. The app process can therefore start with iDrive without opening its menu.
+In addition, **Autostart KOMBI lyrics when iDrive starts** controls whether the saved KOMBI switch
+is automatically resumed at the next process start. It defaults to **On**, but the separate
+**Show lyrics in the instrument cluster** switch remains **Off** on a fresh installation.
+Activate that master switch once after signing in to Spotify.
+
+The Autostart preference controls the **next** process start, not the currently visible lyrics.
+With Autostart Off, use the **KOMBI lyrics** button to turn the cluster on manually for this session;
+the next process launch again begins with the cluster off. An explicitly disabled KOMBI master switch
+always keeps it off.
+
+Important: building with `kit/tools/build.py` alone does **not** add the native autostart metadata.
+Use `python3 tools/build_store_app.py cluster_lyrics`, as the MGU Store does.
 
 | You want | Settings |
 | --- | --- |
-| Lyrics in the cluster, menu never opened | **Show lyrics in the instrument cluster** on (needs the Spotify sign-in once, see Setup) |
+| Lyrics in the cluster, menu never opened | **Show lyrics in the instrument cluster** On, **Autostart KOMBI lyrics** On (Spotify sign-in required once) |
+| Lyrics only after manual activation this session | **Autostart KOMBI lyrics** Off, then press **KOMBI lyrics** when needed |
 | only when standing still | **When lyrics may be shown**: at a standstill (default) |
 | also while driving | **When lyrics may be shown**: always |
 | nothing in the cluster | **Show lyrics in the instrument cluster** off |
 
 Spotify polling, lyrics download and the cluster layers run in the background process (a timer, not the screen's draw loop). With the cluster switch off, the app does not poll Spotify unless its window is open.
 
-**Check it over SSH:** `cluster-lyrics-background.json` in the app data directory (`startReason`, `startedAt`, `windowOpenedYet`, current track, lyrics state, why the cluster is or is not shown). If `windowOpenedYet` is `false` and the file keeps updating, the process really runs without the window.
+**Check it over SSH:** `cluster-lyrics-background.json` in the app data directory contains
+`startReason`, `startedAt`, `windowOpenedYet`, `kombiOn` (effective activation),
+`autoStartOnBoot`, `rendererReady`, `rendererMapState`, and `heartbeat15s`.
+If `windowOpenedYet` stays `false` while the heartbeat advances, the process is demonstrably
+alive without opening the menu. This alone does not prove that lyrics are visible in the cluster:
+inspect the renderer and lyric states as well. The **Log** page shows the session and boot state.
 
 **Not verified on a vehicle:** that the autostart process runs at all on this head unit (the same open question exists for Light Flasher), and everything listed under "What is verified".
 
@@ -67,7 +87,8 @@ BMW's turn box stays visible (`guide_hold` 0).
 
 | Setting | Default | Meaning |
 |---|---|---|
-| Show lyrics in the instrument cluster | Off | The same switch as the **KOMBI lyrics** button. While off, the app does not even connect to `cluster-render`. |
+| Show lyrics in the instrument cluster | Off | Master switch for KOMBI lyrics. Enable once to allow the start-on-boot preference to resume the display. |
+| Autostart KOMBI lyrics when iDrive starts | On | Resume the saved KOMBI master setting at the **next** app-process startup, without opening the app screen. When Off, manually press **KOMBI lyrics** each session. |
 | When lyrics may be shown | Only at a standstill | *Only at a standstill*: shown after the car has stood for 1.5 s with a fresh speed signal, hidden at once from 3 km/h or when the signal is missing. *Also while driving*: no speed condition. |
 | Also replace BMW's own map (not only Waze) | Off | Applies to **Lyrics only**; ignored in **Lyrics + Waze** to avoid taking over BMW's map. |
 | KOMBI display: lyrics only or together with Waze | Lyrics only | **Lyrics only** replaces the map. **Lyrics + Waze** displays a compact translucent lyrics strip along the bottom while Waze continues underneath (Waze must already be running). |
