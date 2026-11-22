@@ -143,27 +143,41 @@ function lin(cv, t, m, control) {
 }
 
 function bdcControl(cv, t, m, control) {
-    const d = m.diag, targets = d.bdcTargets, sel = d.bdcSelection, last = d.lastBdcWrite;
+    const d = m.diag, verified = d.bdcTargets, candidates = d.bdcCandidates;
+    const targets = d.bdcTestTargets, sel = d.bdcSelection, last = d.lastBdcWrite;
+    const target = targets.find(x => sel && x.bus === sel.bus && x.nad === sel.nad);
+    const mode = target ? target.verified ? 'Verified by color comparison' :
+        'EXPERIMENTAL · LIN record only / physical module unverified' :
+        d.experimentalLin ? 'Experimental mode ON' : 'Verified-only (default)';
     const lines = [
         'BDC_G05 · 2E DA5E (LIN1) / 2E E3D1 (LIN2)',
-        'Only individually verified LIN NADs; broadcast disabled.',
-        'Guided test: change the BMW menu color and confirm the LEDs changed.',
-        'Verified targets · ' + (targets.length ? targets.map(x => x.bus + ':' + x.nad).join('  ') : 'None'),
+        'Mode · ' + mode,
+        'Guided test · step ' + d.wizard.step + '/4 · physical change: ' + d.wizard.physical,
+        'Targets · ' + verified.length + ' verified · ' + candidates.length +
+            ' experimental · ' + targets.length + ' selectable',
         'Selected · ' + (sel ? 'LIN ' + sel.bus + ' NAD ' + sel.nad : 'None'),
-        'Status · ' + (d.bdcWriteReady || 'Ready · press Test twice'),
-        'Last BDC test · ' + (last ? last.text : 'Not tested'),
-        'Physical effect · ' + (last ? last.physical : 'Not checked'),
+        'Next step · ' + d.bdcGuidance,
+        'Write status · ' + (d.bdcWriteReady || 'Ready · confirm twice'),
+        'Last action · ' + (d.info || 'None'),
+        'Last result · ' + (last ? last.text + ' · effect ' + last.physical : 'No write sent'),
     ];
-    lines.forEach((line, i) => detail(cv, t, line, 52, 175 + i * 31, 1460));
-    button(cv, t, control, 52, 444, 215, 'Select next target',
+    lines.forEach((line, i) => detail(cv, t, line, 52, 169 + i * 28, 1460,
+        i === 5 && !targets.length ? t.warn : t.text));
+    button(cv, t, control, 52, 444, 203, 'Open guided test',
+        d.busy ? null : () => m.select('guided'), 'bdc-open-guided');
+    button(cv, t, control, 266, 444, 205, targets.length && !d.busy ? 'Next LIN target' : 'No LIN targets',
         d.busy || !targets.length ? null : () => d.nextBdcTarget(1), 'bdc-next-target');
-    button(cv, t, control, 283, 444, 240, d.bdcConfirming ? 'Confirm BDC test' : 'Test selected NAD',
-        d.busy ? null : () => d.applyBdc(m.color, m.brightness, m.duration, () => true), 'bdc-test');
+    button(cv, t, control, 483, 444, 222,
+        d.bdcConfirming ? 'Confirm BDC test' : target ? 'Test selected NAD' : 'Select target first',
+        d.busy || !targets.length ? null :
+            () => d.applyBdc(m.color, m.brightness, m.duration, () => true), 'bdc-test');
     if (last && last.acknowledged) {
-        button(cv, t, control, 555, 444, 105, 'Lit up', () => d.markBdcPhysical('Yes'), 'bdc-lit');
-        button(cv, t, control, 672, 444, 128, 'No effect', () => d.markBdcPhysical('No'), 'bdc-unlit');
+        button(cv, t, control, 721, 444, 105, 'Lit up',
+            () => d.markBdcPhysical('Yes'), 'bdc-lit');
+        button(cv, t, control, 838, 444, 135, 'No effect',
+            () => d.markBdcPhysical('No'), 'bdc-unlit');
     }
-    if (d.busy) button(cv, t, control, 820, 444, 135, 'Cancel', () => d.abort(), 'bdc-cancel');
+    if (d.busy) button(cv, t, control, 991, 444, 140, 'Cancel', () => d.abort(), 'bdc-cancel');
 }
 
 function comparison(cv, t, m, control) {
@@ -202,9 +216,14 @@ function guided(cv, t, m, control) {
     ];
     labels.forEach((label, i) => text(cv, (i + 1) + '   ' + label, 52, 184 + i * 47, 25,
         i + 1 === w.step ? t.accent : t.text));
-    const info = w.step === 4 ? 'Recorded visual result · ' + w.physical + (w.observedAt ? ' · ' + time(w.observedAt) : '') : d.session ?
-        d.session.status + ' · ' + d.session.stage : 'Ready · all requests in this test are read-only';
-    detail(cv, t, info, 52, 387, 1440);
+    const info = w.step === 4 ?
+        'Comparison complete · observed LED change: ' + w.physical + ' · verified NADs: ' + d.bdcTargets.length :
+        w.step === 2 ? 'Baseline captured. Change the original BMW color, then press Compare below.' :
+        w.step === 1 ? 'Capturing LIN 1 and LIN 2 reference; no write commands are sent.' :
+        'Start Guided test to capture a baseline. Individual LIN reads are not enough.';
+    detail(cv, t, info, 52, 379, 1440);
+    detail(cv, t, d.bdcGuidance, 52, 410, 1460,
+        w.step === 4 && !d.bdcTargets.length ? t.warn : t.text);
     if (d.busy) button(cv, t, control, 52, 444, 200, 'Cancel', () => d.abort(), 'guided-cancel');
     else {
         button(cv, t, control, 52, 444, 203, w.step ? 'Restart test' : 'Start guided test', () => d.startDiagnostics(true), 'guided-start');
