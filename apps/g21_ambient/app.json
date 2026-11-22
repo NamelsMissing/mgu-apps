@@ -2,7 +2,7 @@
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
   "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",
@@ -260,7 +260,7 @@
     },
     {
       "key": "duration",
-      "label": "RAM test duration",
+      "label": "BDC LIN test duration (maximum 10 s)",
       "type": "number",
       "unit": "s",
       "default": 5,
@@ -268,12 +268,7 @@
         1,
         2,
         5,
-        10,
-        20,
-        30,
-        60,
-        120,
-        254
+        10
       ]
     }
   ]
