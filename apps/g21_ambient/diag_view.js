@@ -5,7 +5,7 @@ const {bytes, describe, STATUS} = require('./safe_diag');
 const {draw: drawQr} = require('./qr_log');
 
 const VIEWS = [['overview', 'Overview'], ['ram', 'RAM01'], ['lin1', 'LIN 1'], ['lin2', 'LIN 2'],
-    ['compare', 'Compare'], ['guided', 'Guided test'], ['plan', 'Menu 11 plan']];
+    ['control', 'BDC test'], ['compare', 'Compare'], ['guided', 'Guided test'], ['plan', 'Menu 11 plan']];
 const LOG_BOUNDS = {x: 49, y: 174, w: 1491, h: 301};
 const time = at => at ? new Date(at).toISOString().slice(11, 23) + ' UTC' : 'Unknown';
 const hex = (n, width) => n.toString(16).toUpperCase().padStart(width || 2, '0');
@@ -37,7 +37,7 @@ function reachability(rec, diag) {
 }
 
 function overview(cv, t, m, control) {
-    const d = m.diag, s = d.session, w = d.lastWrite;
+    const d = m.diag, s = d.session, w = d.lastBdcWrite;
     const write = !w ? 'Not checked' : w.acknowledged ? 'ECU acknowledged · physical effect unverified'
         : w.nrc === 0x31 ? 'Failed · Request out of range' : outcome(w);
     const measured = d.comparison && d.fresh(d.comparison) && d.comparisonAttempt.status === STATUS.success ? d.comparison.rows : null;
@@ -46,14 +46,14 @@ function overview(cv, t, m, control) {
     const bdcReply = d.bdc.map(b => reachability(b.read, d));
     const left = [
         'TASU · ' + (d.online ? 'Connected' : d.connected === null && !d.lastError ? 'Waiting' : 'Unavailable'),
-        'RAM01 · ' + reachability(d.ram, d),
+        'RAM01 (legacy) · ' + reachability(d.ram, d),
         'Identity · ' + d.ramStatus + (d.ram && !d.fresh(d.ram) ? ' (stale)' : ''),
         'BDC · LIN 1 ' + bdcReply[0] + ' / LIN 2 ' + bdcReply[1],
         'Speed · ' + (d.speed === null ? 'Unknown' : d.speed.toFixed(1) + ' km/h · ' + (d.speedAge / 1000).toFixed(1) + ' s old' + (d.speedFresh ? '' : ' (stale)')),
-        'Active test · ' + (d.busy ? 'Diagnostics running' : d.writeReady || (d.verified ? 'Ready for manual confirmation' : 'RAM01 identity check required')),
+        'Active BDC test · ' + (d.busy ? 'Diagnostics running' : d.bdcWriteReady || 'Ready for manual confirmation'),
     ];
     const right = [
-        'RAM01 color test · ' + write,
+        'BDC LIN color test · ' + write,
         'BDC reads · ' + d.bdc.map(b => !b.read ? 'Not checked' : !d.fresh(b.read) ? 'Stale' :
             b.read.decoded ? 'Success' : b.read.status === STATUS.success ? 'Unknown layout' : b.read.status).join(' / '),
         'Valid LIN records · ' + d.bdc.map(b => b.valid ? b.valid.data.valid +
@@ -142,6 +142,30 @@ function lin(cv, t, m, control) {
     button(cv, t, control, 675, 444, 220, m.raw ? 'LIN records' : 'Raw response', m.toggleRaw, 'lin-raw');
 }
 
+function bdcControl(cv, t, m, control) {
+    const d = m.diag, targets = d.bdcTargets, sel = d.bdcSelection, last = d.lastBdcWrite;
+    const lines = [
+        'BDC_G05 · 2E DA5E (LIN1) / 2E E3D1 (LIN2)',
+        'Only individually verified LIN NADs; broadcast disabled.',
+        'Guided test: change the BMW menu color and confirm the LEDs changed.',
+        'Verified targets · ' + (targets.length ? targets.map(x => x.bus + ':' + x.nad).join('  ') : 'None'),
+        'Selected · ' + (sel ? 'LIN ' + sel.bus + ' NAD ' + sel.nad : 'None'),
+        'Status · ' + (d.bdcWriteReady || 'Ready · press Test twice'),
+        'Last BDC test · ' + (last ? last.text : 'Not tested'),
+        'Physical effect · ' + (last ? last.physical : 'Not checked'),
+    ];
+    lines.forEach((line, i) => detail(cv, t, line, 52, 175 + i * 31, 1460));
+    button(cv, t, control, 52, 444, 215, 'Select next target',
+        d.busy || !targets.length ? null : () => d.nextBdcTarget(1), 'bdc-next-target');
+    button(cv, t, control, 283, 444, 240, d.bdcConfirming ? 'Confirm BDC test' : 'Test selected NAD',
+        d.busy ? null : () => d.applyBdc(m.color, m.brightness, m.duration, () => true), 'bdc-test');
+    if (last && last.acknowledged) {
+        button(cv, t, control, 555, 444, 105, 'Lit up', () => d.markBdcPhysical('Yes'), 'bdc-lit');
+        button(cv, t, control, 672, 444, 128, 'No effect', () => d.markBdcPhysical('No'), 'bdc-unlit');
+    }
+    if (d.busy) button(cv, t, control, 820, 444, 135, 'Cancel', () => d.abort(), 'bdc-cancel');
+}
+
 function comparison(cv, t, m, control) {
     const d = m.diag, result = m.guidedResult ? d.wizard.comparison : d.comparison;
     const reference = m.guidedResult ? d.wizard.reference : d.reference;
@@ -171,7 +195,7 @@ function comparison(cv, t, m, control) {
 function guided(cv, t, m, control) {
     const d = m.diag, w = d.wizard;
     const labels = [
-        'Baseline · identify RAM01 and capture both BDC buses',
+        'Baseline · capture BDC LIN 1 and LIN 2 (read only)',
         'BMW menu · change the ambient color manually, then let the lights settle',
         'Control measurement · compare the new BDC data with the baseline',
         'Visual check · Did the ambient lighting visibly change?',
@@ -208,9 +232,9 @@ function offline(cv, t, m, control) {
 
 function drawDiagnostics(cv, t, m, control) {
     G.panel(cv, t, 24, 62, 1552, 445, 'Vehicle diagnostics');
-    VIEWS.forEach(([key, label], i) => button(cv, t, control, 52 + i * 204, 108, 191, label,
+    VIEWS.forEach(([key, label], i) => button(cv, t, control, 52 + i * 189, 108, 182, label,
         () => m.select(key), 'diag-' + key, m.view === key));
-    ({overview, ram, lin1: lin, lin2: lin, compare: comparison, guided, plan: offline})[m.view](cv, t, m, control);
+    ({overview, ram, lin1: lin, lin2: lin, control: bdcControl, compare: comparison, guided, plan: offline})[m.view](cv, t, m, control);
 }
 
 function drawLog(cv, t, m, control) {
