@@ -9,7 +9,7 @@ const Monitor=require('./background-monitor');
 const Release=require('./release-status');
 const Timing=require('./timing');
 const {LeverTrigger,LeverObservation}=require('./lever-trigger');
-const VERSION='0.1.23';
+const VERSION='0.1.24';
 mgu.run({async start(ctx){
  const {ui,settings,log}=ctx, capture=new Capture(),reader=new Reader(ctx.signals,log);
  const monitor=new Monitor(Date.now,ctx.app&&ctx.app.startReason);
@@ -97,14 +97,15 @@ mgu.run({async start(ctx){
    update();
  };
  const handler=(id,fn)=>ui.onClick(id,()=>Promise.resolve().then(fn).catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()}));
- const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&(!(sub100()||runSub100)||(settings.get('fastTest')===true&&lightProviderAvailable()))&&(!(cycleSelected()||runCycles)||lightProviderAvailable());
+ let runNeedsMain=true,runSub100=false,runCycles=false;
+ const fastIntervalAllowed=()=>(!(sub100()||runSub100)||(settings.get('fastTest')===true&&lightProviderAvailable()));
+ const flashAllowed=()=>!closing&&settings.get('manualFlash')===true&&ui.isVisible('MAIN')&&!guard.reason()&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500&&fastIntervalAllowed()&&(!(cycleSelected()||runCycles)||lightProviderAvailable());
  // Background lever mode: same fresh OEM beam OFF requirement, but no visible menu needed.
  // Never while the diagnostics page is open (shared TASU, read-only tests).
  const leverBackground=()=>settings.get('leverBackground')===true;
  const leverScreenOk=()=>ui.isVisible('MAIN')||(leverBackground()&&!menuVisible());
- const backgroundRunAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!menuVisible()&&lightProviderAvailable()&&lever.rangeValid&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
- let runNeedsMain=true,runSub100=false,runCycles=false;
- const leverAllowed=()=>!sub100()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&lightProviderAvailable()&&lever.rangeValid&&!pending&&!capture.active&&!flash.running&&!isLocked();
+ const backgroundRunAllowed=()=>fastIntervalAllowed()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverBackground()&&!menuVisible()&&lightProviderAvailable()&&lever.rangeValid&&lastCombined==='AUS'&&Date.now()-lastLightAt<=2500;
+ const leverAllowed=()=>fastIntervalAllowed()&&!closing&&settings.get('manualFlash')===true&&settings.get('leverTrigger')===true&&leverScreenOk()&&lightProviderAvailable()&&lever.rangeValid&&!pending&&!capture.active&&!flash.running&&!isLocked();
  const feedLever=()=>{const fired=lever.update(lastCombined,lastLightAt,leverAllowed());persistBackground();if(fired)startFlash('lever').catch(e=>{lastError=String(e.message||e);log.warn(lastError);update()});};
  async function startFlash(source){
    if(pending||capture.active||flash.running){if(source==='lever')lever.runEnded();throw Error('Another operation in progress');}
@@ -118,7 +119,6 @@ mgu.run({async start(ctx){
    let task;
    try{
      const cfg=getConfig();attempt.requested={...cfg,fast:settings.get('fastTest')===true};
-     if(cfg.intervalMs<100&&source!=='button')throw Error('Sub-100 ms tests require an explicit button press');
      runSub100=cfg.intervalMs<100;runCycles=cfg.cycleCount!==null;
      const background=source==='lever'&&leverBackground();attempt.background=background;
      const runAllowed=source==='lever'?()=>lever.rangeValid&&settings.get('leverTrigger')===true&&lightProviderAvailable()&&(background?backgroundRunAllowed():flashAllowed()):flashAllowed;runNeedsMain=!background;
