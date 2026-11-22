@@ -93,7 +93,7 @@ mgu.run({
             if (tab !== COLOR || fallbackEditor) return;
             const revision = editRevision;
             colorNotice = '';
-            await ctl.apply(selected(), brightness(), duration(), () => revision === editRevision);
+            await ctl.applyBdc(selected(), brightness(), duration(), () => revision === editRevision);
             if (revision === editRevision) colorNotice = ctl.info;
         };
 
@@ -212,13 +212,13 @@ mgu.run({
                 }
                 grid = cachedGrid;
             }
-            let notice = 'Press Apply while stationary.';
+            let notice = 'Use Diagnostics > Guided test to verify a LIN target first.';
             if (!ctl.online) notice = 'TASU unavailable · preview only.';
             else if (ctl.busy) notice = 'Checking vehicle…';
-            else if (ctl.confirming) notice = 'Confirm within 8 seconds while stationary.';
+            else if (ctl.bdcConfirming) notice = 'Confirm BDC test within 8 seconds while stationary.';
             else if (colorNotice && !colorNotice.startsWith('Press APPLY again')) notice = colorNotice;
             return { color, preset, grid, brightness: brightness(), duration: duration(), notice,
-                confirming: ctl.confirming, busy: ctl.busy, online: ctl.online, choosePreset, editSlider, apply };
+                confirming: ctl.bdcConfirming, busy: ctl.busy, online: ctl.online, choosePreset, editSlider, apply };
         };
         const favoritesModel = () => ({
             favorites: Array.from({ length: 6 }, (_, i) => profiles.loadFavorite(i)),
@@ -266,6 +266,7 @@ mgu.run({
         });
         const diagnosticsModel = () => ({
             diag: ctl, view: diagnosticView, page: diagnosticPage, raw: diagnosticRaw, guidedResult, plan,
+            color: selected(), brightness: brightness(), duration: duration(),
             select(view, result = false) {
                 diagnosticView = view; diagnosticPage = 0; diagnosticRaw = false; guidedResult = result;
             },
@@ -276,7 +277,7 @@ mgu.run({
         });
         const openExport = format => {
             try {
-                const report = QR.createReport(ctl.report(ctx.spec ? ctx.spec.version : '0.4.4'), format);
+                const report = QR.createReport(ctl.report(ctx.spec ? ctx.spec.version : '0.4.5'), format);
                 logExport = Object.assign(report, {page: 0, matrix: QR.matrix(report.pages[0])});
                 exportError = '';
             } catch (error) {
