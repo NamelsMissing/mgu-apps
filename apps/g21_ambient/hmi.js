@@ -78,8 +78,8 @@ function drawColor(cv, t, m, control) {
     cv.roundRect(778, 113, 760, 134, 12, '#' + rgbHex(shaded));
     text(cv, color.name, 778, 294, 35, t.text, { font: 'bold' });
     text(cv, '#' + rgbHex(color.rgb), 1538, 294, 32, t.text, { align: 'right', font: 'num' });
-    text(cv, 'RAM01 test · ' + duration + ' s', 778, 340, 23, t.dim);
-    button(cv, t, 778, 369, 368, 52, confirming ? 'Confirm temporary color' : 'Apply temporary color', online && !busy);
+    text(cv, 'BDC LIN test · ' + duration + ' s', 778, 340, 23, t.dim);
+    button(cv, t, 778, 369, 368, 52, confirming ? 'Confirm BDC test' : 'Apply BDC test', online && !busy);
     control(778, 369, 368, 52, 'apply', m.apply);
     status(cv, notice, 778, 456, 753, online ? t.text : t.dim);
 }
