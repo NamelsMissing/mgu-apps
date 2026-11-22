@@ -4,7 +4,7 @@ const G = require('./kit/gauges');
 const {bytes, describe, STATUS} = require('./safe_diag');
 const {draw: drawQr} = require('./qr_log');
 
-const VIEWS = [['overview', 'Overview'], ['ram', 'RAM01'], ['lin1', 'LIN 1'], ['lin2', 'LIN 2'],
+const VIEWS = [['overview', 'Overview'], ['bmw', 'BMW colors'], ['lin1', 'LIN 1'], ['lin2', 'LIN 2'],
     ['control', 'BDC test'], ['compare', 'Compare'], ['guided', 'Guided test'], ['plan', 'Menu 11 plan']];
 const LOG_BOUNDS = {x: 49, y: 174, w: 1491, h: 301};
 const time = at => at ? new Date(at).toISOString().slice(11, 23) + ' UTC' : 'Unknown';
@@ -67,6 +67,33 @@ function overview(cv, t, m, control) {
     detail(cv, t, s ? '#' + s.id + ' · ' + s.status + ' · ' + s.stage : 'Waiting for a diagnostic request', 52, 411, 1470, t.accent);
     button(cv, t, control, 52, 444, 250, 'Start Diagnostics', d.busy ? null : () => d.startDiagnostics(), 'diagnostics-start', true);
     if (d.busy) button(cv, t, control, 312, 444, 210, 'Cancel', () => d.abort(), 'diagnostics-cancel');
+}
+
+function bmwColors(cv, t, m, control) {
+    const bmw = m.bmw, last = bmw.last;
+    const lines = [
+        'Original BMW menu color (ComfortFunctionIuK) - no LIN write',
+        'Interface · ' + (bmw.available ? 'Connected' : 'Unavailable') +
+            ' · live status ' + (bmw.statusFresh ? 'current' : 'not received / stale'),
+        'Current color selection · ' + (bmw.slot === null ? 'Unknown' : 'BMW slot ' + bmw.slot),
+        'Ambient light profile · ' + (bmw.profile === null ? 'Unknown / optional' : bmw.profile) +
+            ' · brightness ' + (bmw.brightness === null ? 'unknown' : bmw.brightness),
+        'Last action · ' + (last ? last.text : 'No original BMW color command sent'),
+        'Readback · ' + (!last ? 'Not checked' : last.readback && last.acknowledged ?
+            'BMW menu status matched (LED effect not independently confirmed)' :
+            last.sent && last.acknowledged ? 'Setter accepted, status not yet matched' : 'No confirmed write'),
+    ];
+    lines.forEach((line, i) => detail(cv, t, line, 52, 164 + i * 25, 1470,
+        i === 4 && last && !last.acknowledged ? t.warn : t.text));
+    for (let n = 1; n <= 12; n++) {
+        const ix = (n - 1) % 6, iy = Math.floor((n - 1) / 6);
+        const x = 52 + ix * 246, y = 320 + iy * 56;
+        const selected = n === bmw.slot;
+        button(cv, t, control, x, y, 220, selected ? 'BMW ' + n + ' (active)' : 'BMW slot ' + n,
+            bmw.ready && n !== bmw.slot ? () => bmw.setSlot(n) : null,
+            'bmw-slot-' + n, selected);
+    }
+    detail(cv, t, bmw.message, 52, 432, 1480, bmw.ready ? t.accent : t.warn);
 }
 
 function ram(cv, t, m, control) {
@@ -253,7 +280,7 @@ function drawDiagnostics(cv, t, m, control) {
     G.panel(cv, t, 24, 62, 1552, 445, 'Vehicle diagnostics');
     VIEWS.forEach(([key, label], i) => button(cv, t, control, 52 + i * 189, 108, 182, label,
         () => m.select(key), 'diag-' + key, m.view === key));
-    ({overview, ram, lin1: lin, lin2: lin, control: bdcControl, compare: comparison, guided, plan: offline})[m.view](cv, t, m, control);
+    ({overview, bmw: bmwColors, lin1: lin, lin2: lin, control: bdcControl, compare: comparison, guided, plan: offline})[m.view](cv, t, m, control);
 }
 
 function drawLog(cv, t, m, control) {
