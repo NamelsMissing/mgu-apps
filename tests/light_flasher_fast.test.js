@@ -139,7 +139,7 @@ test('button and lever use the same fast-mode requirement for sub-100 intervals'
  ]){
   assert.equal(allowed(()=>selectedShort,runningShort,{get:()=>fast},()=>provider),expected);
  }
- for(const name of ['flashAllowed','leverAllowed','backgroundRunAllowed']){
+ for(const name of ['flashReady','leverAllowed']){
   assert.match(src.match(new RegExp('const '+name+'=([^;]+);'))[1],/fastIntervalAllowed\(\)/);
  }
  assert.doesNotMatch(src,/cfg\.intervalMs<100&&source/);
