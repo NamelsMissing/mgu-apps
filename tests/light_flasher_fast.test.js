@@ -129,13 +129,21 @@ test('sub-100 fast mode skips PWM restart on guard loss and performs STOP',async
  assert.ok(r.log.includes('433102A54B'));
  assert.equal(r.state[0x43].running,false);
 });
-test('sub-100 requires foreground explicit start and a light-signal provider',()=>{
+test('button and lever use the same fast-mode requirement for sub-100 intervals',()=>{
  const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
- assert.match(src,/cfg\.intervalMs<100&&source!=='button'/);
- assert.match(src,/!\(sub100\(\)\|\|runSub100\)\|\|\(settings\.get\('fastTest'\)===true&&lightProviderAvailable\(\)\)/);
+ const expr=src.match(/const fastIntervalAllowed=\(\)=>([^;]+);/)[1];
+ const allowed=new Function('sub100','runSub100','settings','lightProviderAvailable','return '+expr);
+ for(const [selectedShort,runningShort,fast,provider,expected] of [
+  [true,false,false,true,false], [true,false,true,false,false], [true,false,true,true,true],
+  [false,true,false,true,false], [false,false,false,true,true],
+ ]){
+  assert.equal(allowed(()=>selectedShort,runningShort,{get:()=>fast},()=>provider),expected);
+ }
+ for(const name of ['flashReady','leverAllowed']){
+  assert.match(src.match(new RegExp('const '+name+'=([^;]+);'))[1],/fastIntervalAllowed\(\)/);
+ }
+ assert.doesNotMatch(src,/cfg\.intervalMs<100&&source/);
  assert.match(src,/runSub100=cfg\.intervalMs<100/);
- assert.match(src,/const leverAllowed=\(\)=>!sub100\(\)/);
- assert.match(src,/const backgroundRunAllowed=\(\)=>!sub100\(\)/);
 });
 
 test('cycle configuration supports 20 while preserving old time selections',()=>{

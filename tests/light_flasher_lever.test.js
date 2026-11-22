@@ -103,17 +103,22 @@ test('disabled detector never fires', () => {
 test('main wires lever only through the guarded flash path', () => {
     const src = require('fs').readFileSync(require('path').join(__dirname, '../apps/light_flasher/main.js'), 'utf8');
     const allowed = src.match(/const leverAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverScreenOk()', 'lightProviderAvailable()', '!flash.running', '!isLocked()'])
+    for (const term of ["settings.get('manualFlash')===true", 'leverEnabled()', '!flash.running', '!isLocked()'])
         assert.ok(allowed.includes(term), 'leverAllowed lacks ' + term);
     assert.match(src, /startFlash\('lever'\)/);
     assert.match(src, /flash\.run\(\{\.\.\.cfg,fast:settings\.get\('fastTest'\)===true\},runAllowed,update\)/);
     assert.match(src, /const runAllowed=source==='lever'\?/);
-    // Background runs keep the fresh OEM beam OFF requirement, but never with diagnostics open.
-    const bg = src.match(/const backgroundRunAllowed=\(\)=>([^;]+);/)[1];
-    for (const term of ["settings.get('manualFlash')===true", "settings.get('leverTrigger')===true", 'leverBackground()', "!menuVisible()", 'lightProviderAvailable()', "lastCombined==='AUS'", 'Date.now()-lastLightAt<=2500'])
-        assert.ok(bg.includes(term), 'backgroundRunAllowed lacks ' + term);
+    const enabled = src.match(/const leverEnabled=\(\)=>([^;]+);/)[1];
+    for (const term of ["settings.get('leverTrigger')===true", 'leverScreenOk()', 'lightProviderAvailable()', 'lever.rangeValid'])
+        assert.ok(enabled.includes(term), 'leverEnabled lacks ' + term);
     const screen = src.match(/const leverScreenOk=\(\)=>([^;]+);/)[1];
-    assert.equal(screen, "ui.isVisible('MAIN')||(leverBackground()&&!menuVisible())");
+    const screenOk = new Function('serviceVisible', 'leverForeground', 'leverBackground', 'return '+screen);
+    assert.equal(screenOk(()=>false, ()=>true, ()=>false), true);
+    assert.equal(screenOk(()=>false, ()=>false, ()=>true), true);
+    assert.equal(screenOk(()=>false, ()=>false, ()=>false), false);
+    assert.equal(screenOk(()=>true, ()=>false, ()=>true), false);
+    assert.match(src, /const leverForeground=\(\)=>mainVisible\(\)\|\|ui.isVisible\('OPTIONS'\)/);
+    assert.match(src, /const runAllowed=source==='lever'\?\(\)=>leverEnabled\(\)&&flashReady\(\):flashAllowed/);
     const app = require('../apps/light_flasher/app.json');
     for (const key of ['leverTrigger', 'leverBackground', 'manualFlash'])
         assert.equal(app.settings.find((x) => x.key === key).default, false, key + ' must default OFF');
@@ -136,7 +141,7 @@ test('persisted timing options and passive tracking are wired',()=>{
  const app=require('../apps/light_flasher/app.json');const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
  assert.equal(app.settings.find(s=>s.key==='leverMinMs').default,'0');assert.equal(app.settings.find(s=>s.key==='leverMaxMs').default,'1500');
  assert.ok(src.includes('monitor.setEnabled(true)'));assert.ok(src.includes("lever.setRange(settings.get('leverMinMs'),settings.get('leverMaxMs'))"));
- assert.ok(src.includes('limits:lv.limits,rangeValid:lv.rangeValid'));assert.ok(src.includes("source==='lever'?()=>lever.rangeValid"));
+ assert.ok(src.includes('limits:lv.limits,rangeValid:lv.rangeValid'));assert.ok(src.includes("source==='lever'?()=>leverEnabled()"));
 });
 
 test('equal hold limits require the exact received pulse duration', () => {
