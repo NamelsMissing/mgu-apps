@@ -1,6 +1,6 @@
 # Prüfbericht zu G21 Ambient Lighting 0.4.4
 
-Ausgangspunkt ist der Main-Commit `08d32ccdc2b89fed2d822afb349843411f976462`. Die Ambient-App stand dort auf 0.4.3. Die abschließende Prüfung auf `dev/ambient-diagnostics` integriert zusätzlich den während der Arbeit erschienenen Main-Commit `d5aeea7a1d454e0e928cee0a09d56f4d5ed79724` mit den gemeinsamen Canvas- und Scroll-Änderungen.
+Ausgangspunkt ist der Main-Commit `08d32ccdc2b89fed2d822afb349843411f976462`. Die Ambient-App stand dort auf 0.4.3. Die abschließende Prüfung auf `dev/ambient-diagnostics` integriert zusätzlich den während der Arbeit erschienenen Main-Commit `d5aeea7a1d454e0e928cee0a09d56f4d5ed79724` mit den gemeinsamen Canvas- und Scroll-Änderungen und den anschließenden Main-Stand `00537f544af515e385cfe788f2f865ffc9b83265`.
 
 ## Befunde und Korrekturen
 
@@ -35,7 +35,7 @@ Das Bild mit `Not checked` zeigt den Zustand vor den BDC-Messungen in dieser Sit
 
 Die Konsole übernimmt das Bedienkonzept von Heating Comfort mit 13 sichtbaren Zeilen und **OLDER**, **NEWER** und **LATEST**. Zeitstempel und Meldungen werden in festen Zeichenabständen gezeichnet. Der Umbruch erfolgt in der Anzeige. Der Export erhält die ursprünglichen Nachrichten. Beim manuellen Scrollen bleibt der sichtbare Ausschnitt verankert, während am Ende laufend neue Einträge sichtbar werden. Der Speicher hält bis zu 640 Ereignisse beziehungsweise 96 KiB Nachrichtentext. Der Export kennzeichnet verdrängte Einträge sowie die letzte manuelle Löschung. Clear Log betrifft ausschließlich den app-internen Puffer.
 
-Der QR-Encoder entspricht der MIT-lizenzierten AutoHeat-Bibliothek. Die App erzeugt einen Textbericht und strukturierte JSON-Daten offline. Nummerierte QR-Seiten enthalten die komprimierten Nutzdaten. Das Rekonstruktionsskript prüft Anzahl, Kennung und Hash. Der Bericht enthält die freigegebenen Diagnoseanforderungen und Antworten, Vergleiche, den letzten Schreibversuch, Sichtprüfung und erhaltene Logereignisse. Allgemeine SDK-Logs, vollständige App-Einstellungen und VIN-Abfragen bleiben außerhalb des Exports.
+Der QR-Encoder stammt aus der MIT-lizenzierten AutoHeat-Implementierung im Ausgangsstand. Die App erzeugt einen Textbericht und strukturierte JSON-Daten offline. Nummerierte QR-Seiten enthalten die komprimierten Nutzdaten. Das Rekonstruktionsskript prüft Anzahl, Kennung und Hash. Der Bericht enthält die freigegebenen Diagnoseanforderungen und Antworten, Vergleiche, den letzten Schreibversuch, Sichtprüfung und erhaltene Logereignisse. Allgemeine SDK-Logs, vollständige App-Einstellungen und VIN-Abfragen bleiben außerhalb des Exports.
 
 ## Verifikation
 
@@ -43,7 +43,7 @@ Der QR-Encoder entspricht der MIT-lizenzierten AutoHeat-Bibliothek. Die App erze
 | --- | --- |
 | Gezielte Ambient-, Protokoll- und iDrive-Smoke-Tests mit `node --test tests/ambient*.test.js tests/controls.test.js tests/g21_car_ui_smoke.test.js` | 29 bestanden. Unter anderem positive und unbekannte RAM-Identität, Timeout, NRC 21/31, Schreibquittung ohne Sichtnachweis, fehlerhafte LIN-Länge, unterschiedliche Reihenfolge und doppelte Schlüssel, Abbruch, Antwortfilter, Einzelflug, Live-Log und QR-Rekonstruktion. |
 | Zusätzliche Light-Show- und Renderer-Regressionstests mit `node --test tests/light_show*.test.js` | Beide Testsuiten bestanden, einschließlich begrenzter Touch-Gesten, Renderer und Drehregler. |
-| Gesamte JavaScript-Suite mit `node --test tests/*.test.js` | 180 von 186 bestanden. Die sechs Abweichungen sind unten aufgeführt und auf beiden unveränderten Main-Commits reproduziert. |
+| Gesamte JavaScript-Suite mit `node --test tests/*.test.js` | 181 von 187 bestanden. Die sechs Abweichungen sind unten aufgeführt und auf dem ursprünglichen und zuletzt integrierten unveränderten Main-Stand reproduziert. |
 | Python-Suite mit `python3 -m pytest -q tests` | 15 bestanden, zusätzlich sechs bestandene Subtests. Pytest meldet eine Deprecation-Warnung eines installierten Plugins. |
 | Node 8.17.0 und Store-Paketierung | Syntaxprüfung aller Ambient-JavaScript-Dateien und der betroffenen Kit-Dateien bestanden. Software-Vorschau unter Node 8 für alle fünf App-Seiten gerendert. Store-Build mit OAP SDK 24.10.2 erzeugte `.tgz` und `.mgu`. |
 | MGU-Emulator mit nativer Renderer-Emulation | Farbpresets und RGB-Touchbewegung, Diagnoseaufruf, auf die Konsole begrenzten Live-Log-Swipe, Sprung ans Ende, Drehregler-Scrollen und beide QR-Ansichten geprüft. Native Rückfallnavigation mit abgeschaltetem Touch-Routing geprüft. Der Emulator liefert keine Fahrzeugdiagnosedaten. |
@@ -54,7 +54,7 @@ Der QR-Encoder entspricht der MIT-lizenzierten AutoHeat-Bibliothek. Die App erze
 - `tests/equalizer_snapshot.test.js` erwartet für das zweite Snapshot-Layout 416 Bytes und bekommt 384.
 - `tests/light_flasher_recovery.test.js` enthält zwei veraltete Quelltext-Erwartungen für Stillstands- beziehungsweise Recovery-Gates.
 - `tests/light_flasher_ui.test.js` enthält zwei veraltete Erwartungen zur Service- und Settings-Navigation.
-- `tests/wheelheat_ui.test.js` erwartet Version 0.5.3, während `main` bereits 0.5.4 enthält.
+- `tests/wheelheat_ui.test.js` vergleicht die App-Version 0.5.4 mit dem Katalogeintrag 0.5.3.
 
 ## Ausstehende Fahrzeugtests
 
