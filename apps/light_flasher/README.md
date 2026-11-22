@@ -1,4 +1,8 @@
-# Light Flasher 0.1.23
+# Light Flasher 0.1.24
+
+The high-beam stalk can start the 20–80 ms intervals when Fast Mode and the stalk trigger are enabled. The background trigger still requires its own setting.
+
+## 0.1.23
 
 The app no longer requires a stationary speed signal or gear position P for the lever trigger, fast intervals, cycle mode, or Advanced tests. Live flash still requires the configured trigger, a current OEM high beam OFF signal and diagnostic access. Cleanup and the cleanup lock continue to apply.
 
