@@ -1,6 +1,6 @@
 # Light Flasher 0.1.24
 
-The high-beam stalk can start the 20–80 ms intervals when Fast Mode and the stalk trigger are enabled. The background trigger still requires its own setting.
+The high-beam stalk can start the 20–80 ms intervals when Fast Mode and the stalk trigger are enabled. The stalk can also start a pattern from Settings. The background trigger still requires its own setting, and the diagnostic screens remain passive.
 
 ## 0.1.23
 
