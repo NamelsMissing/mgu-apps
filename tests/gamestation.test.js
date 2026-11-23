@@ -280,7 +280,10 @@ function testProtocol() {
     console.log('ok: offline controller protocol, authentication and ROM validation');
 }
 
-testCores();
-testNewCores();
-testProtocol();
-testIDrive();
+if (require.main === module) {
+    testCores();
+    testNewCores();
+    testProtocol();
+    testIDrive();
+}
+module.exports = {nesRom, snesRom, segaRom, genesisRom};

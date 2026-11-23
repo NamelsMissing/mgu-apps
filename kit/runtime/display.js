@@ -158,7 +158,7 @@ class Display {
     }
 
     _startGpu(file) {
-        // mgu-render/1 for every app that draws no pixel images (Doom: "chrome": false)
+        // Native chrome, input and pixmap capabilities share one connection.
         const native = this.screen.chrome !== false && process.env.MGU_RENDERD_PROTO !== 'upstream';
         const gpu = this.gpu = new RenderClient(this.spec.id, this.log, Object.assign({ native }, file ? { file } : {}));
         gpu.on('ready', () => { if (this.gpu !== gpu) return; this._place(); this._syncVisible(); this._grab(); });
@@ -332,7 +332,7 @@ class Display {
         // the header keeps the app's tabs (Settings lit for the settings): a tab leaves the sheet for that page
         this.app = {
             name: L.name, softImage: L.softImage, w: r.w, h: r.h, textScale: sc, words: new Uint32Array(r.words()),
-            atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []),
+            atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), imageOffsets: (r.imageOffsets || []).slice(),
             tabs: this.tabInfo || { tabs: [], sel: -1, badges: [] }, reaches: r.extraUsed,
         };
         this._send(L.name, this._compose(), L.softImage, false);
@@ -723,7 +723,7 @@ class Display {
         if (this.sheet && this.active() && this.place.full) {
             if (r.chrome) this.saved = Object.assign({}, this.saved || {}, {
                 name, softImage, w: r.w, h: r.h, textScale: r.textScale, words: new Uint32Array(r.words()),
-                atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), tabs: r.chrome.tabs,
+                atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), imageOffsets: (r.imageOffsets || []).slice(), tabs: r.chrome.tabs,
                 reaches: r.extraUsed, targets: r.targets || [], scroll: r.scroll || false,
             });
             return Promise.resolve();
@@ -743,7 +743,7 @@ class Display {
                 // keep the app's own part: the display redraws the header and bar over it by itself
                 this.app = {
                     name, softImage, w: r.w, h: r.h, textScale: r.textScale, words: new Uint32Array(r.words()),
-                    atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), tabs: r.chrome.tabs,
+                    atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), imageOffsets: (r.imageOffsets || []).slice(), tabs: r.chrome.tabs,
                     reaches: r.extraUsed,
                 };
                 out = this._compose();
@@ -776,8 +776,8 @@ class Display {
         // second, the renderer hides an app that goes quiet for 3 s (hung app over the HMI)
         const now = Date.now();
         if (!force && this.lastWords && now - this.lastSent < 1000 && this.lastWords.length === w.length && Buffer.from(w.buffer, w.byteOffset, w.byteLength).equals(this.lastWords)) return;
+        if (this.gpu.frame(out) === false) return;
         this.lastSent = now;
-        this.gpu.frame(out);
         this.lastWords = Buffer.from(Buffer.from(w.buffer, w.byteOffset, w.byteLength));
         this._keep(name, out, softImage);
         this._stats();
@@ -791,6 +791,7 @@ class Display {
         o._grow(a.words.length); o.u.set(a.words, 0); o.n = a.words.length;
         a.atlases.forEach((x) => o.atlases.add(x)); a.ramps.forEach((x) => o.ramps.add(x));
         if (a.images) a.images.forEach((x) => o.images.add(x));
+        if (a.imageOffsets) o.imageOffsets.push.apply(o.imageOffsets, a.imageOffsets);
         if (a.layersUsed.size) { o.layersUsed = o.layersUsed || new Set(); a.layersUsed.forEach((x) => o.layersUsed.add(x)); }
         o.chrome = { tabs: a.tabs };
         this._reach(a.reaches);             // (before _drawChrome: its focus marks follow the page)
@@ -813,7 +814,7 @@ class Display {
         const words = new Uint32Array(r.words());
         this.last = {
             name, softImage, w: r.w, h: r.h,
-            frame: { words: () => words, atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []) },
+            frame: { words: () => words, atlases: new Set(r.atlases), ramps: new Set(r.ramps), layersUsed: new Set(r.layersUsed || []), images: new Set(r.images || []), imageOffsets: (r.imageOffsets || []).slice() },
         };
         if (!this.keepTimer) {
             this.keepTimer = setInterval(() => {

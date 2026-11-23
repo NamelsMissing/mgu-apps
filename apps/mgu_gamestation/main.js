@@ -3,13 +3,14 @@
 /**
  * BMW ID7 GameStation: wiring. Drawing lives in ui.js, the running game in session.js,
  * files in library.js, the phone pads in controller_server.js (firewall: native/game-net).
- * All emulation is local to the MGU JavaScript process; phones are input devices only.
+ * Emulation runs locally in JavaScript or the native helper; phones are input devices only.
  * Emulation is strictly inhibited without a recent, valid speed of <= 0.5 km/h.
  */
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
 const kitCanvas = require('./kit/canvas');
-const {setImage} = require('./kit/record');
+const {setImage, imageById} = require('./kit/record');
+const {testImage, SIZES} = require('./gpu_test');
 const {ControllerServer} = require('./controller_server');
 const {Library, title} = require('./library');
 const {Session} = require('./session');
@@ -22,17 +23,19 @@ const {makeUi, PAGE, PAGE_SIZE, PLATFORMS, IMAGE, W, H} = require('./ui');
 const NOTICE_MS = {info: 5000, warn: 8000, error: 10000};
 const MODE_ORDER = ['phones', 'phone', 'idrive', 'hybrid'];
 const SPEED_FRESH_MS = 5000, SPEED_MAX_KMH = 0.5;
+const TEST_IMAGE = 72, METRICS_ROWS = 10;
 const KEY_NAMES = {a: 'A', b: 'B', c: 'C', x: 'X', y: 'Y', l: 'L', r: 'R', start: 'START', select: 'SELECT'};
 
 mgu.run({
     async start(ctx) {
-        let events = [], logPage = 0, slot = 1, tone = null, routeAt = 0, routePending = false;
+        let events = [], logPage = 0, metricsPage = 0, gpuTest = null, slot = 1, tone = null, routeAt = 0, routePending = false;
         function record(level, message) {
             ctx.log[level](message);
             if (events.length === 100) events.shift();
             events.push(new Date().toISOString() + ' ' + level.toUpperCase() + ' ' + String(message).slice(0, 200));
         }
         const log = {info: text => record('info', text), warn: text => record('warn', text)};
+        log.info('[GameStation] started');
         const audio = new AudioOutput(ctx.dataDir, {onError: message => log.warn('[GameStation] audio: ' + message)});
         const configureAudio = () => audio.configure(ctx.settings.get('audioEnabled'), ctx.settings.get('audioVolume'));
         const ui = makeUi(G, kitCanvas);
@@ -44,6 +47,9 @@ mgu.run({
         let session = null, running = false, grabbed = false, lastInputgateAt = 0;
         let counts = library.counts(), countsAt = Date.now();
         let fps = 0, fpsFrames = 0, fpsAt = Date.now(), lastBroadcast = 0;
+        let videoFps = 0, lastSubmitted = 0, lastDeferred = 0, videoBusyUntil = 0, lastGpu = null;
+        let outputDue = 0, emulationTimer = null, videoBuffer = null;
+        let cpu = process.cpuUsage(), cpuPercent = 0, rendererState = '', lastIssue = '';
         const lastGame = library.last();
         if (lastGame) platform = Math.max(0, PLATFORMS.findIndex(p => p.id === lastGame.kind));
 
@@ -87,7 +93,10 @@ mgu.run({
         configureAudio();
         ctx.settings.onChange(key => {
             if (key === 'idriveClockwise' || key === 'idriveCounterclockwise' || key === null) configureIDrive();
-            if (key === 'audioEnabled' || key === 'audioVolume' || key === null) { stopTone(); configureAudio(); }
+            if (key === 'audioEnabled' || key === 'audioVolume' || key === null) {
+                stopTone(); configureAudio();
+                if (session && session.game.setAudioEnabled) session.game.setAudioEnabled(ctx.settings.get('audioEnabled'));
+            }
         });
         if (ctx.controller && ctx.controller.onInput) ctx.controller.onInput(v => {
             lastInputgateAt = Date.now();
@@ -103,8 +112,56 @@ mgu.run({
 
         /* ---------------- the running game ---------------- */
         const sheetOpen = () => !!(ctx.display && ctx.display.sheet);
-        const inFront = () => ctx.ui.isVisible('MAIN') && ctx.ui.hasFocus('MAIN') && !sheetOpen();
-        const mayRun = () => !!session && page === PAGE.PLAY && parked() && inFront();
+        const inFront = () => ctx.ui.isVisible('MAIN') && ctx.ui.hasFocus('MAIN') && !sheetOpen() &&
+            !(gpu() && gpu().native && gpu().front === false);
+        const gpu = () => ctx.display && ctx.display.gpu;
+        const gpuActive = () => ctx.display && typeof ctx.display.active === 'function' && ctx.display.active('MAIN');
+        const videoIssue = () => {
+            if (!session || session.arcade || !ctx.display || typeof ctx.display.active !== 'function' ||
+                (process.env.MGU_RENDERER || ctx.settings.get('renderer')) === 'software') return null;
+            const client = gpu();
+            if (!gpuActive()) return {title: 'VIDEO OUTPUT UNAVAILABLE', detail: 'The GPU renderer is not ready for this screen.'};
+            const unavailable = client.imageUnavailable();
+            if (unavailable) return {title: unavailable, detail: 'Check the renderer version and negotiated pixmap capability.'};
+            if (client.imageStats.error) return {title: 'FRAME UPLOAD FAILED', detail: client.imageStats.error};
+            return null;
+        };
+        const mayRun = () => !!session && page === PAGE.PLAY && parked() && inFront() && !videoIssue();
+        function releaseImage(id) {
+            if (gpu()) gpu().dropImage(id);
+            imageById.delete(id);
+        }
+        function stopGpuTest() {
+            if (!gpuTest) return;
+            releaseImage(TEST_IMAGE);
+            gpuTest = null;
+        }
+        function startGpuTest(index, moving) {
+            const [w, h] = SIZES[index];
+            gpuTest = {index, w, h, moving, phase: 0, due: 0, pixels: Buffer.alloc(w * h * 4),
+                registered: false};
+            log.info('[GameStation] GPU test ' + w + 'x' + h + (moving ? ' moving' : ' static'));
+        }
+        function advanceGame() {
+            const go = mayRun();
+            if (!session) { running = false; return; }
+            running = go && !session.paused;
+            if (!tone) audio.setActive(running && !!byId[session.kind].audio);
+            if (session.arcade) session.game.cpuPlayer2 = singlePlayer();
+            const ran = session.step(padsForMode(mode(), idrive.buttons(), server.pads()), go);
+            fpsFrames += ran;
+            if (session.paused && running) {
+                running = false;
+                releasePlay();
+                log.warn('[GameStation] ' + session.reason + ': ' + session.detail);
+            }
+            if (!session.arcade && running && emulationTimer === null) {
+                const delay = session.game.asynchronous ? 100 : Math.max(1, session.frameMs * (1 - session.carry) -
+                    Math.max(0, Date.now() - session.last));
+                emulationTimer = setTimeout(() => { emulationTimer = null; checkSafety(); advanceGame(); }, delay);
+                emulationTimer.unref();
+            }
+        }
         function syncIDriveCapture() {
             const want = mayRun() && useIDrive() && !session.paused;
             if (want === grabbed) return;
@@ -115,6 +172,8 @@ mgu.run({
         }
         function releasePlay() {
             audio.stop();
+            clearTimeout(emulationTimer);
+            emulationTimer = null;
             if (session && session.game.releaseInput) session.game.releaseInput();
             server.releasePads();
             syncIDriveCapture();
@@ -142,11 +201,13 @@ mgu.run({
             stopTone();
             if (!session) return;
             session.stop();
+            releaseImage(IMAGE);
+            videoBuffer = null;
             log.info('[GameStation] stopped ' + session.kind + '/' + session.name);
             session = null; running = false;
             releasePlay();
         }
-        function start(kind, name) {
+        function start(kind, name, preferJs) {
             if (!inFront()) return;
             if (!parked()) { say(lockHint(), 'warn'); return; }
             if (session && session.kind === kind && session.name === name) { open(PAGE.PLAY); return; }
@@ -157,11 +218,16 @@ mgu.run({
                 if (!spec) throw new Error('Unknown console');
                 const bytes = spec.extensions.length ? library.read(kind, name) : null;
                 const save = spec.battery ? library.loadSave(kind, name) : null;
-                game = spec.create(bytes, (px, w, h) => { if (next) next.paint(px, w, h); }, {
-                    name, save, cpuPlayer2: singlePlayer(), keymap: ctx.settings.get('chip8Mapping'),
+                game = spec.create(bytes, (px, w, h) => {
+                    if (!next) return;
+                    if (!next.frame) log.info('[GameStation] first emulator image ' + w + 'x' + h);
+                    next.paint(px, w, h);
+                }, {
+                    name, save, preferJs, cpuPlayer2: singlePlayer(), keymap: ctx.settings.get('chip8Mapping'),
                     canRun: () => !!next && session === next && mayRun() && !next.paused,
                     pads: () => padsForMode(mode(), idrive.buttons(), server.pads()),
                     onFrame: (block, duration) => {
+                        if (game.frameMs) next.frameMs = game.frameMs;
                         next.recordFrame(duration);
                         next.hasSave = !!game.sram();
                         fpsFrames++;
@@ -170,12 +236,19 @@ mgu.run({
                     },
                     onError: message => {
                         if (!next || session !== next) return;
+                        if (kind === 'nes' && !next.frames && mayRun()) {
+                            log.warn('[GameStation] native NES startup failed, using nes-js: ' + message);
+                            quit();
+                            start(kind, name, true);
+                            return;
+                        }
                         next.pause('error', message);
                         running = false;
                         releasePlay();
                         log.warn('[GameStation] native emulator: ' + message);
                     },
                 });
+                if (game.setAudioEnabled) game.setAudioEnabled(ctx.settings.get('audioEnabled'));
                 next = new Session(game, kind, name, {store: (k, n, b) => library.store(k, n, b),
                     audio: block => audio.write(block), log});
                 if (spec.states) next.romHash = crypto.createHash('sha256').update(bytes).digest('hex');
@@ -186,7 +259,9 @@ mgu.run({
                 log.warn('[GameStation] start ' + kind + '/' + name + ': ' + e.message);
                 return;
             }
+            stopGpuTest();
             session = next;
+            outputDue = 0;
             session.title = kind === 'arcade' ? 'Pong' : title(name);
             session.hasSave = typeof game.sram === 'function' && !!game.sram();
             idrive.setPong(kind === 'arcade');
@@ -199,12 +274,16 @@ mgu.run({
             if (!session) return;
             if (!inFront()) return;
             if (session.paused && parked() && session.game.asynchronous && session.game.stopped) {
-                const {kind, name} = session;
+                const {kind, name, frames} = session;
                 quit();
-                start(kind, name);
+                start(kind, name, kind === 'nes' && !frames);
                 return;
             }
             if (session.paused && !parked()) { say(lockHint(), 'warn'); return; }
+            if (videoIssue()) {
+                if (gpu() && gpu().imageStats.error) gpu().dropImage(IMAGE);
+                return;
+            }
             session.toggle();
             if (session.paused) { running = false; releasePlay(); }
         }
@@ -212,7 +291,7 @@ mgu.run({
         /* ---------------- pages ---------------- */
         function open(next) {
             const leaving = page === PAGE.PLAY && next !== PAGE.PLAY && session;
-            if (next !== PAGE.DIAG) stopTone();
+            if (next !== PAGE.DIAG) { stopTone(); stopGpuTest(); }
             if (leaving) session.save();
             if (next !== page) notice = null;
             if (next !== PAGE.GAMES) { deleting = false; armed = null; }
@@ -274,6 +353,10 @@ mgu.run({
             remove,
             togglePause,
             tone: toggleTone,
+            gpuTest: () => gpuTest ? stopGpuTest() : startGpuTest(0, false),
+            gpuMotion: () => { if (gpuTest) startGpuTest(gpuTest.index, !gpuTest.moving); },
+            gpuSize: () => { if (gpuTest) startGpuTest((gpuTest.index + 1) % SIZES.length, gpuTest.moving); },
+            metricsScroll: d => { metricsPage = Math.max(0, Math.min(2, metricsPage + d)); },
             nextSlot: () => { slot = slot % 3 + 1; },
             storeState: () => changeState(true),
             loadState: () => changeState(false),
@@ -334,7 +417,7 @@ mgu.run({
         ctx.ui.onClick('BTN_DIAG', () => open(page === PAGE.DIAG ? (session ? PAGE.PLAY : PAGE.GAMES) : PAGE.DIAG));
         if (typeof ctx.onTab === 'function') ctx.onTab(i => open(i));
         checkSafety = () => {
-            if (!parked() || !inFront()) stopTone();
+            if (!parked() || !inFront()) { stopTone(); stopGpuTest(); }
             if (running && !mayRun()) {
                 running = false;
                 session.hold();
@@ -353,6 +436,8 @@ mgu.run({
             if (exited) return;
             exited = true;
             clearInterval(safetyTimer);
+            clearTimeout(emulationTimer);
+            stopGpuTest();
             quit();
             server.stop();
             process.removeListener('exit', shutdown);
@@ -429,9 +514,23 @@ mgu.run({
             const rows = [
                 ['GameStation', ctx.spec.version],
                 ['Core / ROM', session ? session.kind + ' / ' + session.name : 'None'],
-                ['Emulation', session ? session.reason || 'Held / ' + session.average().toFixed(1) + ' ms per frame / ' + fps + ' FPS' : 'Idle'],
+                ['Core / version', session ? (session.kind === 'nes' && session.game.asynchronous ? 'FCEUmm fb919fb / Native' : byId[session.kind].core) : '-'],
+                ['Emulated FPS', session ? fps + ' FPS / ' + Math.round(fps * session.frameMs / 10) + '% speed' : 'Idle'],
+                ['Frame time', session ? session.average().toFixed(1) + ' ms avg / ' + session.maximum().toFixed(1) + ' ms max' +
+                    (session.game.asynchronous ? ' (helper round trip)' : '') : '-'],
                 ['Memory', Math.round(memory.rss / 1048576) + ' MB RSS / ' + Math.round(memory.heapUsed / 1048576) + ' MB JS'],
-                ['Renderer', ctx.settings.get('renderer') || 'auto'],
+                ['App CPU', cpuPercent + '% of one CPU (JS process)'],
+                ['Frame buffer', session && session.frame ? session.frame.width + 'x' + session.frame.height +
+                    ' / ' + (session.frame.pixels.byteLength + (videoBuffer ? videoBuffer.length : 0)) + ' B current + staged' : '-'],
+                ['Renderer', gpuActive() ? (gpu().native ? 'GPU / mgu-render/1' : 'GPU / legacy ' + gpu().protocolVersion) : 'HMI'],
+                ['Capabilities', gpu() && gpu().info ? Object.keys(gpu().info).filter(k => gpu().info[k] === true).join(', ') : '-'],
+                ['Image output', videoFps + ' queued FPS / ' + (gpu() ? gpu().imageStats.submitted : 0) + ' total'],
+                ['Discarded images', session && !session.arcade ? session.discarded + ' before staging' : '-'],
+                ['Queue pressure', gpu() ? gpu().imageStats.deferred + ' deferred attempts' : '-'],
+                ['Upload enqueue', gpu() ? gpu().imageStats.enqueueMs.toFixed(2) + ' ms (client)' : '-'],
+                ['Renderer stats', gpu() && gpu().stats ? gpu().stats.fps + ' UI FPS / ' + (gpu().stats.avgUs / 1000).toFixed(2) + ' ms avg' : 'Unavailable'],
+                ['Image presentation', 'Unobservable / verify on display'],
+                ['Last video error', gpu() && gpu().imageStats.error || (videoIssue() ? videoIssue().title : 'None')],
                 ['Network', server.error || (server.address || 'Wi-Fi address unavailable') + ' / port ' +
                     (server.net.ready ? 'open' : 'closed')],
                 ['Controllers', mode() + ' / ' + phones.filter(Boolean).length + ' phone(s) online'],
@@ -445,8 +544,13 @@ mgu.run({
                 ['Last audio error', d.error || 'None'],
             ];
             const end = Math.max(0, events.length - logPage * 7);
-            return {rows, lines: events.slice(Math.max(0, end - 7), end), slot, states: !!(session && session.romHash),
-                tone: !!tone, logPage};
+            return {rows: rows.slice(metricsPage * METRICS_ROWS, (metricsPage + 1) * METRICS_ROWS), lines: events.slice(Math.max(0, end - 7), end), slot, states: !!(session && session.romHash),
+                tone: !!tone, logPage, gpuTest: gpuTest && {
+                    w: gpuTest.w, h: gpuTest.h, moving: gpuTest.moving, id: TEST_IMAGE, displayReady: gpuActive(),
+                    status: !gpuTest.registered ? 'Preparing RGBA buffer' : !gpuActive() ? 'Registered / GPU inactive' :
+                        gpu().imageUnavailable() || gpu().imageStats.error ||
+                        (gpu().sent.image.has(TEST_IMAGE) ? 'Queued to renderer / verify on display' : 'RGBA buffer registered in app'),
+                }};
         }
         function viewModel() {
             if (notice && Date.now() > notice.until) notice = null;
@@ -463,10 +567,11 @@ mgu.run({
                 const f = session.frame, spec = byId[session.kind];
                 m.game = {title: session.title, platform: spec.title.toUpperCase(), paused: session.paused,
                     reason: session.reason, detail: session.detail || '', focus: inFront(), arcade: session.arcade,
+                    videoIssue: videoIssue(),
                     width: f ? f.width : 0, height: f ? f.height : 0, players: players(), help: help(),
                     saved: !!session.hasSave, states: !!session.romHash, audio: audio.diagnostics().state,
                     scale: ctx.settings.get('videoScale'),
-                    fps: running ? fps : undefined};
+                    fps: running ? fps : undefined, videoFps};
             }
             if (page === PAGE.GAMES) m.list = listOf();
             if (page === PAGE.PADS) m.pads = pads();
@@ -479,18 +584,63 @@ mgu.run({
             const now = Date.now();
             server.poll();
             checkSafety();
-            const go = mayRun();
-            if (session) {
-                running = go && !session.paused;
-                if (!tone) audio.setActive(running && !!byId[session.kind].audio);
-                if (session.arcade) session.game.cpuPlayer2 = singlePlayer();
-                const ran = session.step(padsForMode(mode(), idrive.buttons(), server.pads()), go);
-                if (session.paused && running) { running = false; releasePlay(); }
-                fpsFrames += ran;
+            if (!session || session.arcade || emulationTimer === null) advanceGame();
+            if (session && !session.arcade && page === PAGE.PLAY && now + 1 >= outputDue) {
+                const selected = Number(ctx.settings.get('videoFpsLimit'));
+                const limit = selected === 20 || selected === 30 || selected === 60 ? selected :
+                    now < videoBusyUntil || session.average() > session.frameMs ? 20 : 30;
                 const pic = session.take();
-                if (pic) setImage(IMAGE, pic.width, pic.height, pic.pixels);
-            } else running = false;
-            if (now - fpsAt >= 1000) { fps = Math.round(fpsFrames * 1000 / (now - fpsAt)); fpsFrames = 0; fpsAt = now; }
+                if (pic) {
+                    // JS cores reuse their output arrays on each tick. Keep the selected version stable.
+                    const bytes = pic.width * pic.height * 4;
+                    if (!videoBuffer || videoBuffer.length !== bytes) videoBuffer = Buffer.allocUnsafe(bytes);
+                    videoBuffer.set(pic.pixels);
+                    if (!imageById.has(IMAGE)) log.info('[GameStation] first emulator image registered');
+                    setImage(IMAGE, pic.width, pic.height, videoBuffer, false);
+                    const period = 1000 / limit;
+                    outputDue = Math.max(outputDue + period, now + period - 1);
+                }
+            }
+            if (gpuTest && page === PAGE.DIAG && inFront() && (!gpuTest.due || (gpuTest.moving && now >= gpuTest.due))) {
+                testImage(gpuTest.pixels, gpuTest.w, gpuTest.h, gpuTest.phase);
+                setImage(TEST_IMAGE, gpuTest.w, gpuTest.h, gpuTest.pixels, true);
+                gpuTest.registered = true;
+                gpuTest.phase += 3;
+                gpuTest.due = now + 67;
+            }
+            const client = gpu(), video = client && client.imageStats;
+            if (session && client && client.sent.image.has(IMAGE) && !session.imageSubmitted) {
+                session.imageSubmitted = true;
+                log.info('[GameStation] first emulator image queued to renderer');
+            }
+            if (client !== lastGpu) {
+                lastGpu = client;
+                lastSubmitted = lastDeferred = 0;
+                videoBusyUntil = 0;
+            }
+            if (now - fpsAt >= 1000) {
+                const elapsed = now - fpsAt, usage = process.cpuUsage(cpu);
+                const state = gpuActive() ? (client.native ? 'mgu-render/1' : 'upstream') +
+                    (client.imageUnavailable() ? ' / pixel transport unavailable' : ' / pixel transport available') : 'HMI';
+                if (state !== rendererState) {
+                    rendererState = state;
+                    log.info('[GameStation] renderer ' + state);
+                }
+                const issue = videoIssue(), problem = issue ? issue.title + ' / ' + issue.detail : '';
+                if (problem !== lastIssue) {
+                    lastIssue = problem;
+                    if (problem) log.warn('[GameStation] ' + problem);
+                }
+                fps = Math.round(fpsFrames * 1000 / elapsed);
+                fpsFrames = 0;
+                fpsAt = now;
+                cpu = process.cpuUsage();
+                cpuPercent = Math.round((usage.user + usage.system) / (elapsed * 10));
+                videoFps = video ? Math.round((video.submitted - lastSubmitted) * 1000 / elapsed) : 0;
+                if (video && video.deferred > lastDeferred) videoBusyUntil = now + 3000;
+                lastSubmitted = video ? video.submitted : 0;
+                lastDeferred = video ? video.deferred : 0;
+            }
             if (now - lastBroadcast >= 1000) { lastBroadcast = now; server.broadcast(phoneState()); }
             const cv = ui.draw(ctx.canvas(W, H), ctx.theme(), viewModel(), actions);
             return ctx.ui.image('MAIN_GFX', cv);

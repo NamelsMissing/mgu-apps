@@ -1,44 +1,69 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+
 const DIRECTIONS = ['up', 'down', 'left', 'right'];
 const STANDARD = DIRECTIONS.concat(['a', 'b', 'select', 'start']);
 const HEX_KEYS = Array.from({length: 16}, (_, i) => 'k' + i.toString(16));
 const MAX_ROM = 8 * 1024 * 1024;
 const SECOND_PAD = ['rUp', 'rDown', 'rLeft', 'rRight'];
 
+const LIBRETRO_CORES = {
+    gba: 'gpSP 5819380', a26: 'Stella 2014 7d1361e', a78: 'ProSystem 8a88014', pce: 'Beetle PCE Fast 4cf066e',
+    vb: 'Beetle VB d5ae54c', ws: 'Beetle WonderSwan 4b01295', ngp: 'Beetle NGP a50d5ac', ps1: 'PCSX ReARMed 0f544ce',
+};
+
 function native(id, short, title, extensions, players, buttons, validate, options) {
-    return Object.assign({id, short, title, tag: short, extensions, players, buttons, validate,
+    return Object.assign({id, core: LIBRETRO_CORES[id] + ' / Native', short, title, tag: short, extensions, players, buttons, validate,
         create: (...args) => new (require('./retro_core').RetroGame)(id, ...args),
         audio: 'stereo', experimental: true}, options);
 }
 
+function createNes(bytes, paint, options) {
+    const opts = options || {};
+    // Prefer the native core for conventional iNES boards with the existing SRAM layout.
+    const mapper = (bytes[6] >> 4) | (bytes[7] & 0xf0);
+    if (!opts.preferJs && opts.canRun && process.platform === 'linux' && process.arch === 'x64' &&
+        (bytes[7] & 12) === 0 && !(bytes[6] & 4) && bytes[8] <= 1 && [0, 1, 4].includes(mapper)) {
+        const retro = require('./retro_core');
+        const helper = opts.helper || retro.HELPER;
+        try {
+            fs.accessSync(helper, fs.constants.X_OK);
+            fs.accessSync(path.join(path.dirname(helper), 'nes.so'), fs.constants.R_OK);
+            return new retro.RetroGame('nes', bytes, paint, opts);
+        } catch (_) { /* optional native component absent or unavailable */ }
+    }
+    return new (require('./nes_core').NesGame)(bytes, paint, opts);
+}
+
 const platforms = [
-    {id: 'nes', short: 'NES', title: 'Nintendo', tag: 'NES', extensions: ['.nes'],
-        create: (...args) => new (require('./nes_core').NesGame)(...args), players: 2, buttons: STANDARD,
+    {id: 'nes', core: 'nes-js / JS (vendored)', short: 'NES', title: 'Nintendo', tag: 'NES', extensions: ['.nes'],
+        create: createNes, players: 2, buttons: STANDARD,
         video: [256, 240], audio: 'mono', battery: true,
         validate: validNes},
-    {id: 'snes', short: 'SNES', title: 'Super Nintendo', tag: 'SNES', extensions: ['.sfc', '.smc'],
+    {id: 'snes', core: 'jssnes / JS (vendored)', short: 'SNES', title: 'Super Nintendo', tag: 'SNES', extensions: ['.sfc', '.smc'],
         create: (...args) => new (require('./snes_core').SnesGame)(...args), players: 2,
         buttons: STANDARD.concat(['x', 'y', 'l', 'r']), video: [512, 208], audio: 'stereo', battery: true,
         validate: bytes => bytes.length >= 0x8000 && [0, 512].includes(bytes.length % 1024)},
-    {id: 'gb', short: 'GAME BOY', title: 'Game Boy / Color', tag: 'GB', extensions: ['.gb', '.gbc'],
+    {id: 'gb', core: 'Serverboy / JS (vendored)', short: 'GAME BOY', title: 'Game Boy / Color', tag: 'GB', extensions: ['.gb', '.gbc'],
         create: (...args) => new (require('./gb_core').GameBoyGame)(...args), players: 1, buttons: STANDARD,
         video: [160, 144], audio: 'stereo', battery: true, validate: bytes => bytes.length >= 0x8000 && bytes.length % 0x4000 === 0},
-    {id: 'arcade', short: 'ARCADE', title: 'Built-in games', tag: 'ARC', extensions: [],
+    {id: 'arcade', core: 'Pong / JS (built-in)', short: 'ARCADE', title: 'Built-in games', tag: 'ARC', extensions: [],
         create: (_, __, options) => new (require('./arcade').Pong)(options), players: 2, buttons: ['up', 'down']},
-    {id: 'chip8', short: 'CHIP-8', title: 'CHIP-8 / Super-CHIP', tag: 'CH8', extensions: ['.ch8', '.sc8'],
+    {id: 'chip8', core: 'CHIP-8 / JS (built-in)', short: 'CHIP-8', title: 'CHIP-8 / Super-CHIP', tag: 'CH8', extensions: ['.ch8', '.sc8'],
         create: (...args) => new (require('./chip8_core').Chip8Game)(...args), players: 1,
         buttons: HEX_KEYS, video: [128, 64], audio: 'mono', states: true,
         validate: bytes => bytes.length >= 2 && bytes.length <= 3584},
-    {id: 'sms', short: 'MASTER SYSTEM', title: 'Sega Master System', tag: 'SMS', extensions: ['.sms'],
+    {id: 'sms', core: 'jsmoo Sega / JS (vendored)', short: 'MASTER SYSTEM', title: 'Sega Master System', tag: 'SMS', extensions: ['.sms'],
         create: (...args) => new (require('./sega_core').SegaGame)(...args), players: 2,
         buttons: DIRECTIONS.concat(['a', 'b', 'start']), video: [256, 240], audio: 'mono',
         experimental: true, validate: bytes => validSega(bytes, [3, 4])},
-    {id: 'gg', short: 'GAME GEAR', title: 'Sega Game Gear', tag: 'GG', extensions: ['.gg'],
+    {id: 'gg', core: 'jsmoo Sega / JS (vendored)', short: 'GAME GEAR', title: 'Sega Game Gear', tag: 'GG', extensions: ['.gg'],
         create: (...args) => new (require('./sega_core').SegaGame)(...args), players: 1,
         buttons: DIRECTIONS.concat(['a', 'b', 'start']), video: [160, 144], audio: 'stereo',
         experimental: true, validate: bytes => validSega(bytes, [5, 6, 7])},
-    {id: 'genesis', short: 'MEGA DRIVE', title: 'Sega Mega Drive / Genesis', tag: 'MD', extensions: ['.md', '.gen'],
+    {id: 'genesis', core: 'mdcore 0.1.0 / Wasm', short: 'MEGA DRIVE', title: 'Sega Mega Drive / Genesis', tag: 'MD', extensions: ['.md', '.gen'],
         create: (...args) => new (require('./genesis_core').GenesisGame)(...args), players: 2,
         buttons: DIRECTIONS.concat(['a', 'b', 'c', 'start']), video: [320, 240], audio: 'stereo', battery: true,
         experimental: true, validate: bytes => bytes.length >= 0x200 && bytes.length % 2 === 0 &&

@@ -5,8 +5,9 @@
 const FRAME_MS = 1000 / 60;          // NES, SNES and Game Boy all run about 60 video frames a second
 const MAX_CATCH_UP = 2;              // emulated frames per screen frame when the renderer falls behind
 const AUTOSAVE_MS = 20000;
-const OVERLOAD_MS = 45;              // average JS time per emulated frame that the MGU cannot sustain
-const OVERLOAD_WINDOW = 90;          // emulated frames the average is taken over
+const OVERLOAD_RATIO = 2.5;          // sustained work relative to the core’s own frame budget
+const OVERLOAD_WINDOW = 60;          // recent completed frames
+const WARMUP_MS = 1500;
 const STALL_MS = 1500;               // a single frame this slow pauses at once
 
 class Session {
@@ -23,12 +24,17 @@ class Session {
         this.paused = false; this.reason = '';
         this.last = 0; this.carry = 0;
         this.samples = []; this.frames = 0;
+        this.warmupAt = this.now() + WARMUP_MS;
         this.lastSaveAt = this.now();
-        this.frame = null; this.fresh = false;
+        this.frame = null; this.fresh = false; this.discarded = 0;
         this.stopped = false;
     }
     /** Cores call this with each finished picture; the newest one is shown. */
     paint(pixels, width, height) {
+        if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+            width > 2048 || height > 2048 || !(pixels instanceof Uint8Array || pixels instanceof Uint8ClampedArray) ||
+            pixels.byteLength !== width * height * 4) throw new RangeError('Invalid emulator RGBA frame');
+        if (this.fresh) this.discarded++;
         this.frame = {pixels, width, height};
         this.fresh = true;
     }
@@ -50,7 +56,7 @@ class Session {
     resume() {
         if (this.stopped) return;
         this.paused = false; this.reason = ''; this.detail = '';
-        this.samples = []; this.last = 0; this.carry = 0;
+        this.samples = []; this.warmupAt = this.now() + WARMUP_MS; this.last = 0; this.carry = 0;
     }
     hold() { this.last = 0; this.carry = 0; }
     toggle() { if (this.paused) this.resume(); else this.pause('user'); }
@@ -62,6 +68,7 @@ class Session {
     step(pads, allowed) {
         if (this.stopped || this.paused || !allowed) { this.hold(); return 0; }
         const now = this.now();
+        if (this.game.frameMs) this.frameMs = this.game.frameMs;
         if (this.game.asynchronous) {
             this.game.tick();
             if (now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
@@ -107,13 +114,18 @@ class Session {
         if (spent >= STALL_MS) { this.pause('overload', 'one frame took ' + Math.round(spent) + ' ms'); return; }
         this.samples.push(spent);
         if (this.samples.length > OVERLOAD_WINDOW) this.samples.shift();
-        if (this.samples.length === OVERLOAD_WINDOW && this.average() > OVERLOAD_MS)
-            this.pause('overload', Math.round(this.average()) + ' ms per frame');
+        if (this.samples.length === OVERLOAD_WINDOW && this.now() >= this.warmupAt) {
+            const budget = this.frameMs * OVERLOAD_RATIO;
+            const slow = this.samples.reduce((n, ms) => n + (ms > budget ? 1 : 0), 0);
+            if (slow >= OVERLOAD_WINDOW * 0.8 && this.average() > budget)
+                this.pause('overload', Math.round(this.average()) + ' ms per frame');
+        }
     }
     average() {
         if (!this.samples.length) return 0;
         return this.samples.reduce((a, b) => a + b, 0) / this.samples.length;
     }
+    maximum() { return this.samples.length ? Math.max.apply(null, this.samples) : 0; }
     /** Write the battery RAM if the game has one and it changed. Returns true when written. */
     save() {
         this.lastSaveAt = this.now();
@@ -136,4 +148,4 @@ class Session {
     }
 }
 
-module.exports = {Session, FRAME_MS, MAX_CATCH_UP, AUTOSAVE_MS, OVERLOAD_MS, OVERLOAD_WINDOW};
+module.exports = {Session, FRAME_MS, MAX_CATCH_UP, AUTOSAVE_MS, OVERLOAD_WINDOW};

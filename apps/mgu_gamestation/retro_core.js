@@ -41,6 +41,8 @@ class RetroGame {
         this.header = Buffer.allocUnsafe(HEADER);
         this.offset = 0;
         this.body = this.packet = null;
+        this.buffers = [null, null];
+        this.bufferIndex = 0;
         this.left = new Float32Array(MAX_AUDIO);
         this.right = new Float32Array(MAX_AUDIO);
         this.save = opts.save || null;
@@ -103,8 +105,13 @@ class RetroGame {
                 throw new Error('Invalid native emulator frame');
             const pixels = width * height * 4, size = pixels + samples * 4 + save;
             this.packet = {width, height, pixels, samples, save};
-            if (size) this.body = Buffer.allocUnsafe(size);
-            else this.deliver(this.packet, null);
+            if (size) {
+                // Preserve the last complete frame while the next packet arrives in chunks.
+                const slot = this.packet.slot = this.bufferIndex ^ 1;
+                let buffer = this.buffers[slot];
+                if (!buffer || buffer.length < size) buffer = this.buffers[slot] = Buffer.allocUnsafe(size);
+                this.body = buffer.subarray(0, size);
+            } else this.deliver(this.packet, null);
         }
     }
     deliver(frame, bytes) {
@@ -118,7 +125,10 @@ class RetroGame {
             this.schedule();
             return;
         }
-        if (frame.pixels) this.paint(bytes.slice(0, frame.pixels), frame.width, frame.height);
+        if (frame.pixels) {
+            this.bufferIndex = frame.slot;
+            this.paint(bytes.slice(0, frame.pixels), frame.width, frame.height);
+        }
         let audio = null;
         if (frame.samples) {
             for (let i = 0; i < frame.samples; i++) {

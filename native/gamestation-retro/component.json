@@ -1,7 +1,7 @@
 {
   "id": "mgu-gamestation-retro",
   "kind": "tool",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "title": "GameStation Retro Cores",
   "description": "On-demand emulator worker for GameStation on x86-64 iDrive 7",
   "mguHmi": [
@@ -70,6 +70,14 @@
     },
     {
       "path": "ngp-LICENSE.txt",
+      "mode": "0644"
+    },
+    {
+      "path": "nes.so",
+      "mode": "0644"
+    },
+    {
+      "path": "nes-LICENSE.txt",
       "mode": "0644"
     },
     {

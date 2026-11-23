@@ -15,7 +15,7 @@ enum { MAX_WIDTH = 768, MAX_HEIGHT = 512, MAX_AUDIO = 4096,
        MAX_ROM = 32 * 1024 * 1024, MAX_SAVE = 256 * 1024 };
 
 static const struct { const char *id, *file; } cores[] = {
-    {"gba", "gba.so"}, {"a26", "a26.so"}, {"pce", "pce.so"},
+    {"nes", "nes.so"}, {"gba", "gba.so"}, {"a26", "a26.so"}, {"pce", "pce.so"},
     {"vb", "vb.so"}, {"ws", "ws.so"}, {"a78", "a78.so"},
     {"ngp", "ngp.so"}, {"ps1", "ps1.so"}
 };
@@ -269,6 +269,15 @@ int main(int argc, char **argv)
     size_t save_size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
     void *save = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
     if (!save || save_size > MAX_SAVE) save_size = 0;
+    if (!strcmp(argv[1], "nes")) {
+        if (sizes[0] < 16) return 2;
+        /* Share the legacy 8 KiB iNES battery file only if the core exposes that exact layout. */
+        size_t expected = (rom[6] & 2) ? 8192 : 0;
+        if (save_size != expected || (sizes[1] && sizes[1] != expected)) {
+            fprintf(stderr, "NES core has an incompatible battery RAM layout\n");
+            return 2;
+        }
+    }
     bool have_save = save_size && save_size == sizes[1];
     if (have_save) memcpy(save, before, save_size);
     uint32_t ready[6] = {1, (uint32_t)(info.timing.fps * 1000 + 0.5),

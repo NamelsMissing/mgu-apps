@@ -99,7 +99,7 @@ Object.assign(Apu.prototype, {
     // Sampling at sample rate timing
     // @TODO: Fix me, more precise timing
 
-    if((this.cycle % this.samplePeriod) === 0)
+    if(this.mixSamples !== false && (this.cycle % this.samplePeriod) === 0)
       this.sample();
 
     // Timers

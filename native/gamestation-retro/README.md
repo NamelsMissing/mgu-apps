@@ -1,4 +1,4 @@
-# GameStation Retro Cores 0.2.0
+# GameStation Retro Cores 0.3.0
 
 The MGU Store deploys this tool under `/var/opt/mgu-gamestation-retro/current/`. GameStation starts one child for the selected game and closes it on quit or failure. Its paused process waits for a frame request. There are no units, boot services, network sockets or persistent changes to uninstall. The tool targets Linux x86-64 and glibc 2.17 or later.
 
@@ -6,6 +6,7 @@ The child loads one allowlisted sibling library. An eight-byte little-endian hea
 
 | Core | Pinned upstream source | Build |
 |---|---|---|
+| FCEUmm | [fb919fb](https://github.com/libretro/libretro-fceumm/tree/fb919fb6fa881aaa6279b765d480220579e5c606) | NES iNES, HD packs and NTSC filter omitted, 8 KiB legacy battery RAM validated before start |
 | gpSP | [5819380](https://github.com/libretro/gpsp/tree/5819380c2ffb0900219d700a382ee68c464ebb99) | Portable interpreter, built-in GPL BIOS replacement |
 | Stella 2014 | [7d1361e](https://github.com/libretro/stella2014-libretro/tree/7d1361e407e63f29e52892655069e5fb4096e691) | Atari 2600 cartridge core |
 | ProSystem | [8a88014](https://github.com/libretro/prosystem-libretro/tree/8a88014287c7a01cd568067e5a557d0a2b2a051f) | Atari 7800 cartridge core |
@@ -15,4 +16,4 @@ The child loads one allowlisted sibling library. An eight-byte little-endian hea
 | Beetle NGP | [a50d5ac](https://github.com/libretro/beetle-ngp-libretro/tree/a50d5ac288a81f2104ddf43195a4efdd15c72227) | Cartridge frontend with flash-file writes disabled |
 | PCSX ReARMed | [0f544ce](https://github.com/libretro/pcsx_rearmed/tree/0f544ce1d18ac7dd114cb8f5507f01a29d3cd58c) | Lightrec x86-64 JIT, P.E.Op.S. software GPU, CHD and built-in HLE BIOS |
 
-The worker is GPL-2.0-only. Each library carries the upstream license alongside it. Exact source archives, including individual third-party notices, are in `tools/retro_sources`. Rebuild with `python3 tools/build_gamestation_retro.py` using Python 3.12+, Zig 0.14.1, GNU make and GNU strip. Run `node tests/gamestation_retro.test.js` on Linux x86-64 to exercise the real child and seven synthetic cartridges. No commercial ROMs or manufacturer firmware are supplied.
+The worker is GPL-2.0-only. Each library carries the upstream license alongside it. Exact source archives, including individual third-party notices, are in `tools/retro_sources`. Rebuild with `python3 tools/build_gamestation_retro.py` using Python 3.12+, Zig 0.14.1, GNU make and GNU strip. Run `node tests/gamestation_retro.test.js` on Linux x86-64 to exercise the real child and synthetic NES NROM, MMC1 and MMC3, seven other synthetic cartridges and an optional original PlayStation ISO. No commercial ROMs or manufacturer firmware are supplied.

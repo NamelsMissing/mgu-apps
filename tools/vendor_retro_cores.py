@@ -127,6 +127,9 @@ pack(snfiles, 'snes_vendor.js', 'jssnes SNES / MIT', 'SNES', compat)
 
 
 def nes_compat(source):
+    # Muting PCM must not stop APU timers, IRQs or DMC reads.
+    source = source.replace('if((this.cycle % this.samplePeriod) === 0)',
+                            'if(this.mixSamples !== false && (this.cycle % this.samplePeriod) === 0)')
     deps = []
     def imported(match):
         names = [x.strip() for x in match.group(1).split(',')]

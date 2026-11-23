@@ -141,6 +141,14 @@ function testSession() {
     assert.ok(s.game, 'the game is kept');
     work = 0; s.resume(); clock += 17;
     assert.strictEqual(s.step([{}, {}], true), 1, 'resume after overload');
+    // Isolated stalls after warmup do not look like sustained overload.
+    for (let i = 0; i < OVERLOAD_WINDOW + 10; i++) {
+        work = i % 20 === 0 ? 500 : 1;
+        clock += 17;
+        s.step([{}, {}], true);
+    }
+    assert.strictEqual(s.paused, false);
+    assert.strictEqual(s.maximum(), 500);
     // an exception pauses with the reason
     game.tick = () => { throw new Error('bad opcode'); };
     clock += 17; s.step([{}, {}], true);
@@ -150,8 +158,11 @@ function testSession() {
     assert.strictEqual(s.step([{}, {}], true), 0);
     // pictures: only the newest, once
     const t = new Session({tick() {}, stop() {}}, 'gb', 'g.gb', {});
-    t.paint('a', 1, 1); t.paint('b', 1, 1);
-    assert.strictEqual(t.take().pixels, 'b');
+    assert.throws(() => t.paint(Buffer.alloc(1), 1, 1), /Invalid emulator RGBA frame/);
+    const a = Buffer.from([255, 0, 0, 255]), b = Buffer.from([0, 0, 255, 255]);
+    t.paint(a, 1, 1); t.paint(b, 1, 1);
+    assert.strictEqual(t.take().pixels, b);
+    assert.strictEqual(t.discarded, 1);
     assert.strictEqual(t.take(), null);
     // arcade: one time-scaled tick per screen frame
     let delta = 0;
@@ -542,6 +553,13 @@ async function testApp() {
         clicks.BTN_DIAG();
         assert.ok(keys().includes('STATE_SAVE'), 'state slots are available for the CHIP-8 core');
         press('STATE_SLOT'); press('STATE_SAVE'); press('STATE_LOAD');
+        assert.ok(keys().includes('GPU_TEST'), 'GPU test is accessible from Diagnostics');
+        press('GPU_TEST');
+        assert.ok(keys().includes('GPU_SIZE'));
+        press('GPU_MOTION');
+        press('GPU_SIZE');
+        press('GPU_TEST');
+        assert.ok(!keys().includes('GPU_SIZE'));
         assert.ok(keys().includes('TONE'), 'diagnostics is accessible from the BMW button bar');
         // screen hidden: held
         visible = false; tick(); visible = true; focus = false; tick(); focus = true;

@@ -9,6 +9,8 @@ const MAPPING = {
     left: C.LEFT, right: C.RIGHT,
 };
 // Cartridge RAM at CPU $6000-$7FFF; battery-backed on carts with header bit 1 of byte 6.
+const KEYS = Object.keys(MAPPING);
+const CYCLES = 341 * 262 / 3;
 const SRAM_START = 0x6000, SRAM_SIZE = 0x2000;
 
 class NesGame {
@@ -17,7 +19,7 @@ class NesGame {
      * options.save: earlier battery RAM (Buffer), loaded before the CPU starts.
      */
     constructor(bytes, output, options) {
-        this.title = 'NES'; this.width = 256; this.height = 240;
+        this.title = 'NES'; this.frameMs = CYCLES * 1000 / 1789773; this.cycleRemainder = 0; this.width = 256; this.height = 240;
         this.output = output;
         this.rgba = Buffer.alloc(256 * 240 * 4);
         this.uint32 = new Uint32Array(this.rgba.buffer, this.rgba.byteOffset, 256 * 240);
@@ -27,7 +29,7 @@ class NesGame {
         // buffer, so it never touches a DOM canvas or WebAudio API.
         this.nes.setDisplay({
             renderPixel: (x, y, packed) => {
-                if (x >= 0 && x < 256 && y >= 0 && y < 240) this.uint32[y * 256 + x] = packed;
+                this.uint32[(y << 8) + x] = packed;
             },
             updateScreen: () => output(this.rgba, 256, 240),
         });
@@ -53,24 +55,27 @@ class NesGame {
         this.audioCount = 0;
         for (let player = 0; player < 2; player++) {
             const next = pads[player] || {}, previous = this.previous[player];
-            Object.keys(MAPPING).forEach(key => {
-                if (!!previous[key] === !!next[key]) return;
+            for (const key of KEYS) {
+                if (!!previous[key] === !!next[key]) continue;
                 const joypad = player === 0 ? this.nes.pad1 : this.nes.pad2;
                 if (next[key]) joypad.pressButton(MAPPING[key]);
                 else joypad.releaseButton(MAPPING[key]);
-            });
+            }
             this.previous[player] = next;
         }
         // One NTSC video frame = 341 dots * 262 scanlines / 3 PPU dots per CPU clock.
-        for (let i = 0; i < 29781; i++) this.nes.runCycle();
+        const clocks = CYCLES + this.cycleRemainder, count = Math.floor(clocks);
+        this.cycleRemainder = clocks - count;
+        for (let i = 0; i < count; i++) this.nes.runCycle();
     }
+    setAudioEnabled(on) { this.nes.apu.mixSamples = !!on; }
     getAudioSamples() {
         return this.audioCount ? {rate: this.audioRate, left: this.audio.subarray(0, this.audioCount)} : null;
     }
     releaseInput() {
         for (let player = 0; player < 2; player++) {
             const joypad = player === 0 ? this.nes.pad1 : this.nes.pad2;
-            Object.keys(MAPPING).forEach(key => joypad.releaseButton(MAPPING[key]));
+            for (const key of KEYS) joypad.releaseButton(MAPPING[key]);
         }
         this.previous = [{}, {}];
     }

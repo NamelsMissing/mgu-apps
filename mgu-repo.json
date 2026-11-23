@@ -74,18 +74,18 @@
       "id": "mgu_gamestation",
       "kind": "app",
       "title": "MGU GameStation",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "path": "apps/mgu_gamestation",
       "icon": "icon.png",
       "mguHmi": [
         "ID7"
       ],
       "requires": {
-        "idrive7-renderd": "2.1.6",
+        "mgu-render": "0.6.25",
         "mgu-inputgate": "1.0.0",
         "mgu-game-net": "0.1.0",
         "mgu-gamestation-audio": "0.1.0",
-        "mgu-gamestation-retro": "0.2.0"
+        "mgu-gamestation-retro": "0.3.0"
       },
       "build": {
         "python": "tools/build_store_app.py",
@@ -156,7 +156,7 @@
       "id": "mgu-gamestation-retro",
       "kind": "tool",
       "title": "GameStation Retro Cores",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "path": "native/gamestation-retro",
       "mguHmi": ["ID7"],
       "uninstallable": true

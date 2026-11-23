@@ -62,9 +62,13 @@ function atlasById(id) { const a = atlasList.find((x) => x.id === id); return a 
 // pixel images (e.g. a game's frame): id -> { w, h, data (RGBA bytes), ver }. setImage() bumps ver;
 // a frame records id + ver, so a changed picture is a changed frame, and the transport uploads it
 const imageById = new Map();
-function setImage(id, w, h, data) {
+function setImage(id, w, h, data, alpha = true) {
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 2048 || h > 2048 ||
+        !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || data.byteLength !== w * h * 4)
+        throw new RangeError('Invalid RGBA image');
+
     const im = imageById.get(id) || { ver: 0 };
-    im.w = w | 0; im.h = h | 0; im.data = data; im.ver = (im.ver + 1) >>> 0;
+    im.w = w | 0; im.h = h | 0; im.data = data; im.alpha = !!alpha; im.ver = (im.ver + 1) >>> 0;
     imageById.set(id, im);
     return im;
 }
@@ -88,7 +92,7 @@ class Recorder {
         this.layersUsed = null;      // Set of layer ids this recording draws
         this.atlases = new Set();    // glyph atlases and colour ramps it uses (uploaded once by the transport)
         this.ramps = new Set();
-        this.images = new Set();     // pixel images it draws (setImage)
+        this.images = new Set(); this.imageOffsets = [];     // pixel images it draws (setImage)
         this.targets = [];           // what a tap or the controller can press on the page: { x, y, w, h, run, key } (target)
         this._extra = 0;
         this.extraUsed = false;      // the drawing read extra (it reaches below the page: display.js places it so)
@@ -97,7 +101,7 @@ class Recorder {
     /** logical px the screen has below the app's page (display.js), 0 if none */
     get extra() { if (this._extra) this.extraUsed = true; return this._extra; }
     set extra(v) { this._extra = v || 0; }
-    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); return this; }
+    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); this.imageOffsets.length = 0; return this; }
     _grow(k) {
         if (this.n + k <= this.u.length) return;
         let len = this.u.length * 2;
@@ -122,7 +126,7 @@ class Recorder {
         if (!im || !(w > 0 && h > 0)) return this;
         this._grow(7); const f = this.f, i = this.n;
         this.u[i] = OP.IMAGE; this.u[i + 1] = id; this.u[i + 2] = im.ver; f[i + 3] = x; f[i + 4] = y; f[i + 5] = w; f[i + 6] = h;
-        this.images.add(id);
+        this.images.add(id); this.imageOffsets.push(i);
         this.n += 7; return this;
     }
     clear(c) { this._grow(2); this.u[this.n++] = OP.CLEAR; this.u[this.n++] = pack(c || [0, 0, 0, 0]); return this; }
@@ -218,6 +222,7 @@ class Recorder {
     /** Append another recording (its fonts, ramps and layers come along). */
     append(r) {
         const w = r.words();
+        if (r.imageOffsets) r.imageOffsets.forEach(i => this.imageOffsets.push(this.n + i));
         this._grow(w.length); this.u.set(w, this.n); this.n += w.length;
         r.atlases.forEach((a) => this.atlases.add(a)); r.ramps.forEach((a) => this.ramps.add(a));
         if (r.images) r.images.forEach((id) => this.images.add(id));

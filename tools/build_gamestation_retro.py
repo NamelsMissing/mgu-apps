@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NATIVE = ROOT / 'native/gamestation-retro'
 SOURCES = ROOT / 'tools/retro_sources'
 CORES = {
+    'nes': ('fceumm_libretro.so', 'fb919fb', ['HAVE_HDPACK=0', 'HAVE_NTSC=0']),
     'gba': ('gpsp_libretro.so', '5819380', ['HAVE_DYNAREC=0']),
     'a26': ('stella2014_libretro.so', '7d1361e', []),
     'a78': ('prosystem_libretro.so', '8a88014', []),
@@ -42,8 +43,11 @@ def main():
             source.mkdir()
             with tarfile.open(SOURCES / (name + '.tar.gz')) as archive:
                 archive.extractall(source, filter='data')
-            makefile = []
+            makefile = ['-f', 'Makefile.libretro'] if name == 'nes' else []
             cc = compiler
+            if name == 'nes':
+                frontend = source / 'Makefile.libretro'
+                frontend.write_text(frontend.read_text().replace(' -Wl,--no-undefined', '').replace(' -Wl,-no-undefined', ''))
             if name == 'ps1':
                 makefile = ['-f', 'Makefile.libretro']
                 cc = [*compiler, '-Wno-error=date-time']
