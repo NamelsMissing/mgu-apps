@@ -41,7 +41,7 @@ For PlayStation, use a phone for the full digital pad, including L2 and R2. Use 
 
 ## Safety and storage
 
-A game requires a valid Vehicle2 speed reading at or below 0.5 km/h from the last five seconds, plus a visible and focused game screen. An invalid signal immediately invalidates the previous reading. Loss of the gate stops audio, clears controls and saves battery RAM when available. The App Settings overlay and other pages hold the session. JavaScript and Wasm sessions cap catch-up at two frames. Native cartridge sessions send one request at a time and discard in-flight output after focus or speed loss. Sessions pause on errors and sustained overload. The original save directories and Continue data stay in place.
+A game requires a valid Vehicle2 speed reading at or below 0.5 km/h from the last five seconds, plus a visible and focused game screen. An invalid signal immediately invalidates the previous reading. Loss of the gate stops audio, clears controls and writes in-game saves when available. The App Settings overlay and other pages hold the session. JavaScript and Wasm sessions cap catch-up at two frames. Native sessions send one request at a time and discard in-flight output after focus or speed loss. Sessions pause on errors and sustained overload. The original save directories and Continue data stay in place.
 
 Deleting a ROM preserves `data/saves/<system>/<file>.sav` and all save states. A later import under the same name can find the same battery file. Save states are currently available for CHIP-8 and Super-CHIP from **Diagnostics**. Each slot is tied to the ROM SHA-256 and has a checksum and format version. Loading returns the game to a paused state. Files are written atomically in the application data directory. Only used console folders are created.
 
@@ -102,3 +102,5 @@ python3 tools/build_store_app.py mgu_gamestation
 ```
 
 The SDK-independent tests pass on Node.js 8.7, 8.17 and 24. They cover generated cartridges, adapters, saves, UI targets, speed/focus gates, the firewall contract and PCM conversion/lifecycle. A local Chromium run also exercised simultaneous WebSockets, upload, log download and reconnection. A local ALSA `null` run exercised the native binary, 48 kHz stereo negotiation, graceful stop, watchdog and device errors. The Store builder produced the local `.mgu` and `.tgz` with BMW OAP SDK 24.10.2. The SDK stays outside source control. Actual vehicle acceptance requires testing installation, BMW menu and renderer, two phones over BMW Wi-Fi, all input paths and interruption from Radio, Bluetooth, CarPlay, guidance and the voice assistant. Measure per-core load and end-to-end audio delay on that target before enabling output as a default.
+
+Local PlayStation smoke tests exercised streamed CHD and ISO import, software video, stereo PCM and memory-card reload using original demo content.
