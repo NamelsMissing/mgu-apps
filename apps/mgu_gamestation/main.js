@@ -308,7 +308,7 @@ mgu.run({
             stopGpuTest();
             session = next;
             outputDue = 0;
-            session.title = kind === 'arcade' ? 'Pong' : title(name);
+            session.title = game.title || title(name);
             session.hasSave = typeof game.sram === 'function' && !!game.sram();
             idrive.setPong(kind === 'arcade');
             library.remember(kind, name);
@@ -359,6 +359,8 @@ mgu.run({
             const spec = PLATFORMS[platform];
             if (spec.id === 'arcade') return [{kind: 'arcade', name: 'pong', title: 'Pong',
                 detail: 'Two players, or one against the car'}];
+            if (spec.id === 'mine') return [{kind: 'mine', name: 'mineworks', title: 'Mineworks Tycoon',
+                detail: 'Build shafts, hire managers and upgrade transport; auto-save and offline income'}];
             return library.list(spec.id).map(g => ({kind: g.kind, name: g.name, title: g.title,
                 detail: (g.size >= 1048576 ? (g.size / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(g.size / 1024)) + ' KB') +
                     (g.saved ? '  ·  save kept' : '')}));
@@ -546,6 +548,7 @@ mgu.run({
         function help() {
             if (!useIDrive()) return session && session.arcade ? 'Phones: up / down move the paddle.' : '';
             const cw = KEY_NAMES[idrive.turnClockwise] || 'B', ccw = KEY_NAMES[idrive.turnCounterclockwise] || 'X';
+            if (session && session.kind === 'mine') return 'Mineworks: UP/DOWN choose; A upgrade; B hire manager; START boosts. Touch also works.';
             if (session && session.kind === 'chip8') return 'iDrive keypad uses the selected mapping. A phone shows all 16 keys.';
             if (session && (session.kind === 'sms' || session.kind === 'gg'))
                 return 'iDrive: push = D-pad, press = 1, turn mapped to B = 2, double press = ' +
@@ -653,7 +656,7 @@ mgu.run({
                 platform, deleting, armed: armed && armed.key,
                 running: session ? {kind: session.kind, name: session.name} : null,
                 last: last && !(session && session.kind === last.kind && session.name === last.name) ? last : null,
-                platforms: PLATFORMS.map(p => Object.assign({count: p.id === 'arcade' ? 1 : counts[p.id] || 0}, p)),
+                platforms: PLATFORMS.map(p => Object.assign({count: p.builtIn || p.id === 'arcade' ? 1 : counts[p.id] || 0}, p)),
                 game: null};
             if (session) {
                 const f = session.frame, spec = byId[session.kind];
