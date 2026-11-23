@@ -84,6 +84,7 @@ class Session {
                 this.game.tick(pads, Math.max(0.5, Math.min(2, elapsed / FRAME_MS)));
                 this.sendAudio();
             });
+            if (!this.paused && now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
             return 1;
         }
         const due = Math.max(0, elapsed) / this.frameMs + this.carry + 1e-6;
