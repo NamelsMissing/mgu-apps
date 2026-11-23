@@ -62,6 +62,11 @@ class Session {
     step(pads, allowed) {
         if (this.stopped || this.paused || !allowed) { this.hold(); return 0; }
         const now = this.now();
+        if (this.game.asynchronous) {
+            this.game.tick();
+            if (now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
+            return 0;
+        }
         if (!this.last) { this.last = now - this.frameMs; }
         const elapsed = now - this.last;
         this.last = now;
@@ -95,7 +100,9 @@ class Session {
             if (this.log) this.log.warn('[GameStation] emulator error: ' + this.detail);
             return;
         }
-        const spent = this.now() - t0;
+        this.recordFrame(this.now() - t0);
+    }
+    recordFrame(spent) {
         this.frames++;
         if (spent >= STALL_MS) { this.pause('overload', 'one frame took ' + Math.round(spent) + ' ms'); return; }
         this.samples.push(spent);

@@ -159,6 +159,22 @@ mgu.run({
                 const save = spec.battery ? library.loadSave(kind, name) : null;
                 game = spec.create(bytes, (px, w, h) => { if (next) next.paint(px, w, h); }, {
                     name, save, cpuPlayer2: singlePlayer(), keymap: ctx.settings.get('chip8Mapping'),
+                    canRun: () => !!next && session === next && mayRun() && !next.paused,
+                    pads: () => padsForMode(mode(), idrive.buttons(), server.pads()),
+                    onFrame: (block, duration) => {
+                        next.recordFrame(duration);
+                        next.hasSave = !!game.sram();
+                        fpsFrames++;
+                        if (block && !next.paused) audio.write(block);
+                        if (next.paused) { running = false; releasePlay(); }
+                    },
+                    onError: message => {
+                        if (!next || session !== next) return;
+                        next.pause('error', message);
+                        running = false;
+                        releasePlay();
+                        log.warn('[GameStation] native emulator: ' + message);
+                    },
                 });
                 next = new Session(game, kind, name, {store: (k, n, b) => library.store(k, n, b),
                     audio: block => audio.write(block), log});
@@ -182,6 +198,12 @@ mgu.run({
         function togglePause() {
             if (!session) return;
             if (!inFront()) return;
+            if (session.paused && parked() && session.game.asynchronous && session.game.stopped) {
+                const {kind, name} = session;
+                quit();
+                start(kind, name);
+                return;
+            }
             if (session.paused && !parked()) { say(lockHint(), 'warn'); return; }
             session.toggle();
             if (session.paused) { running = false; releasePlay(); }

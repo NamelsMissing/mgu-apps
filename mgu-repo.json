@@ -74,7 +74,7 @@
       "id": "mgu_gamestation",
       "kind": "app",
       "title": "MGU GameStation",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "path": "apps/mgu_gamestation",
       "icon": "icon.png",
       "mguHmi": [
@@ -84,7 +84,8 @@
         "idrive7-renderd": "2.1.6",
         "mgu-inputgate": "1.0.0",
         "mgu-game-net": "0.1.0",
-        "mgu-gamestation-audio": "0.1.0"
+        "mgu-gamestation-audio": "0.1.0",
+        "mgu-gamestation-retro": "0.1.0"
       },
       "build": {
         "python": "tools/build_store_app.py",
@@ -148,6 +149,15 @@
       "title": "GameStation PCM Output",
       "version": "0.1.0",
       "path": "native/gamestation-audio",
+      "mguHmi": ["ID7"],
+      "uninstallable": true
+    },
+    {
+      "id": "mgu-gamestation-retro",
+      "kind": "tool",
+      "title": "GameStation Retro Cores",
+      "version": "0.1.0",
+      "path": "native/gamestation-retro",
       "mguHmi": ["ID7"],
       "uninstallable": true
     },

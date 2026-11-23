@@ -4,6 +4,13 @@ const DIRECTIONS = ['up', 'down', 'left', 'right'];
 const STANDARD = DIRECTIONS.concat(['a', 'b', 'select', 'start']);
 const HEX_KEYS = Array.from({length: 16}, (_, i) => 'k' + i.toString(16));
 const MAX_ROM = 8 * 1024 * 1024;
+const SECOND_PAD = ['rUp', 'rDown', 'rLeft', 'rRight'];
+
+function native(id, short, title, extensions, players, buttons, validate, options) {
+    return Object.assign({id, short, title, tag: short, extensions, players, buttons, validate,
+        create: (...args) => new (require('./retro_core').RetroGame)(id, ...args),
+        audio: 'stereo', experimental: true}, options);
+}
 
 const platforms = [
     {id: 'nes', short: 'NES', title: 'Nintendo', tag: 'NES', extensions: ['.nes'],
@@ -36,6 +43,23 @@ const platforms = [
         buttons: DIRECTIONS.concat(['a', 'b', 'c', 'start']), video: [320, 240], audio: 'stereo', battery: true,
         experimental: true, validate: bytes => bytes.length >= 0x200 && bytes.length % 2 === 0 &&
             /^SEGA (MEGA DRIVE|GENESIS)/.test(bytes.toString('ascii', 0x100, 0x110))},
+    native('gba', 'GBA', 'Game Boy Advance', ['.gba'], 1, STANDARD.concat(['l', 'r']),
+        bytes => bytes.length >= 192 && bytes[0xb2] === 0x96, {battery: true, maxRom: 32 * 1024 * 1024}),
+    native('a26', 'ATARI 2600', 'Atari 2600', ['.a26'], 2, DIRECTIONS.concat(['a', 'select', 'start']),
+        bytes => bytes.length >= 1024 && bytes.length <= 1024 * 128 && bytes.length % 256 === 0, {tag: '2600'}),
+    native('a78', 'ATARI 7800', 'Atari 7800', ['.a78'], 2, STANDARD.concat(['x']),
+        bytes => bytes.length >= 128 + 4096 && bytes.toString('ascii', 1, 10) === 'ATARI7800' &&
+            bytes.readUInt32BE(49) === bytes.length - 128, {tag: '7800'}),
+    native('pce', 'PC ENGINE', 'PC Engine / TurboGrafx-16', ['.pce'], 2, STANDARD,
+        bytes => bytes.length >= 8192 && [0, 512].includes(bytes.length % 8192), {battery: true, tag: 'PCE'}),
+    native('vb', 'VIRTUAL BOY', 'Virtual Boy', ['.vb'], 1, STANDARD.concat(['l', 'r'], SECOND_PAD),
+        bytes => bytes.length >= 256 && (bytes.length & (bytes.length - 1)) === 0, {battery: true, tag: 'VB'}),
+    native('ws', 'WONDERSWAN', 'WonderSwan / Color', ['.ws', '.wsc'], 1,
+        DIRECTIONS.concat(['a', 'b', 'start'], SECOND_PAD),
+        bytes => bytes.length >= 65536 && bytes.length % 8192 === 0, {battery: true, tag: 'WS'}),
+    native('ngp', 'NEO GEO POCKET', 'Neo Geo Pocket / Color', ['.ngp', '.ngc'], 1,
+        DIRECTIONS.concat(['a', 'b', 'start']),
+        bytes => bytes.length >= 32768 && bytes.toString('ascii', 0, 28).includes('SNK CORPORATION'), {tag: 'NGP'}),
 ];
 
 function validNes(bytes) {
@@ -68,9 +92,11 @@ function detect(name) {
     return matches.length === 1 ? matches[0] : null;
 }
 
+function maxRom(kind) { return byId[kind] && byId[kind].maxRom || MAX_ROM; }
+
 function validRom(kind, name, bytes) {
     return !!(byId[kind] && detect(name) === kind && Buffer.isBuffer(bytes) &&
-        bytes.length <= MAX_ROM && byId[kind].validate(bytes));
+        bytes.length <= maxRom(kind) && byId[kind].validate(bytes));
 }
 
-module.exports = {platforms, byId, consoles, extensions, detect, validRom, MAX_ROM};
+module.exports = {platforms, byId, consoles, extensions, detect, validRom, maxRom, MAX_ROM};

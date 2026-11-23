@@ -2,7 +2,7 @@
   "id": "mgu_gamestation",
   "title": "MGU GameStation",
   "description": "Offline retro games with iDrive or phone controllers, two players and in-game saves. Parked only.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAG1",
   "iconGlyph": "GAME",

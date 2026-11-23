@@ -78,7 +78,7 @@ function testLibrary() {
         fs.writeFileSync(path.join(dir, 'roms', 'nes', ' old.nes'), nesRom());
         assert.deepStrictEqual(lib.list('nes').map(g => g.name), ['alpha game.nes', ' old.nes', 'Zeta.nes'].sort((a, b) =>
             title(a).toLowerCase().localeCompare(title(b).toLowerCase())));
-        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0, chip8: 0, sms: 0, gg: 0, genesis: 0});
+        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0, chip8: 0, sms: 0, gg: 0, genesis: 0, gba: 0, a26: 0, a78: 0, pce: 0, vb: 0, ws: 0, ngp: 0});
         // saves: written only when changed, atomically
         assert.strictEqual(lib.loadSave('nes', 'Zeta.nes'), null);
         assert.strictEqual(lib.store('nes', 'Zeta.nes', Buffer.from([1, 2, 3])), true);
@@ -405,7 +405,7 @@ async function testApp() {
     const clicks = {}, hooks = {}, settings = {controllerMode: 'phones', theme: 'ice'}, grabs = [];
     let frame = null, tick = null, speed = null, visible = true, focus = true;
     const ctx = {
-        log: quiet, dataDir: dir, spec: {version: '0.4.0'},
+        log: quiet, dataDir: dir, spec: {version: '0.5.0'},
         settings: {get: k => settings[k], set: (k, v) => { settings[k] = v; }, onChange: () => {}},
         theme: () => THEMES.ice,
         signals: {watch: (iface, inst, handlers) => {
@@ -423,6 +423,17 @@ async function testApp() {
     const keys = () => { tick(); return frame.targets.map(t => t.key); };
     const press = key => { tick(); const t = frame.targets.find(x => x.key === key); assert.ok(t, 'no target ' + key); t.run(); };
     const parked = () => speed({speedVehicleCentreOfGravity: 0});
+    const native = require(path.join(APP, 'retro_core'));
+    const original = native.RetroGame;
+    let nativeFrames = 0;
+    native.RetroGame = class extends original {
+        constructor(id, bytes, output, options) {
+            super(id, bytes, output, Object.assign({}, options, {
+                helper: path.join(APP, '../../native/gamestation-retro/mgu-gamestation-retro'),
+                onFrame(block, duration) { nativeFrames++; options.onFrame(block, duration); },
+            }));
+        }
+    };
     try {
         await spec.start(ctx);
         const manifest = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
@@ -509,7 +520,29 @@ async function testApp() {
         assert.ok(keys().includes('TONE'), 'diagnostics is accessible from the BMW button bar');
         // screen hidden: held
         visible = false; tick(); visible = true; focus = false; tick(); focus = true;
+
+        if (process.platform === 'linux' && process.arch === 'x64') {
+            const {fixtures} = require('./gamestation_retro.test');
+            lib.add('gba', 'Native.gba', fixtures().gba);
+            parked();
+            hooks.tab(PAGE.GAMES);
+            press('PLATFORM_' + PLATFORMS.findIndex(p => p.id === 'gba'));
+            press('GAME_0');
+            tick();
+            for (let i = 0; i < 100 && nativeFrames < 3; i++) await new Promise(r => setTimeout(r, 15));
+            assert.ok(nativeFrames >= 3, 'native emulator starts through the normal GameStation UI');
+            speed({speedVehicleCentreOfGravity: 640});
+            const held = nativeFrames;
+            await new Promise(r => setTimeout(r, 80));
+            assert.strictEqual(nativeFrames, held, 'native frame commands and delivery stop on vehicle motion');
+            assert.ok(lib.loadSave('gba', 'Native.gba'), 'battery cache saved when the car moves');
+            parked(); tick();
+            for (let i = 0; i < 100 && nativeFrames === held; i++) await new Promise(r => setTimeout(r, 15));
+            assert.ok(nativeFrames > held, 'native emulator resumes after verified standstill');
+            press('QUIT');
+        }
     } finally {
+        native.RetroGame = original;
         process.listeners('exit').filter(l => before.indexOf(l) < 0).forEach(l => { l(); process.removeListener('exit', l); });
         rmrf(dir);
     }

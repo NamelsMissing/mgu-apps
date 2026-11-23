@@ -127,6 +127,14 @@ function checkManifest() {
     assert.ok(!audio.units && !audio.enable, 'PCM helper runs as a child only');
     for (const f of audio.files) assert.ok(fs.statSync(path.join(audioRoot, f.path)).isFile());
 
+    const retroPath = path.join(root, 'native/gamestation-retro');
+    const retro = JSON.parse(fs.readFileSync(path.join(retroPath, 'component.json'), 'utf8'));
+    const retroEntry = catalog.components.find(c => c.id === retro.id);
+    assert.strictEqual(appEntry.requires[retro.id], retro.version);
+    assert.strictEqual(retroEntry.version, retro.version);
+    assert.ok(!retro.units && !retro.enable, 'retro worker is on demand');
+    for (const file of retro.files) assert.ok(fs.statSync(path.join(retroPath, file.path)).isFile());
+
 }
 
 checkFirewall().then(checkService).then(checkProbe).then(checkManifest).then(

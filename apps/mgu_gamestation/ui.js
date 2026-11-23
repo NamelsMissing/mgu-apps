@@ -125,23 +125,27 @@ function makeUi(G, colors) {
 
     /* ---------------- Games ---------------- */
     function drawGames(cv, t, m, a) {
-        const S = t.sel || t.accent, gap = 12, chipW = (W - 2 * EDGE - (m.platforms.length - 1) * gap) / m.platforms.length, chipH = 66;
+        const S = t.sel || t.accent, columns = Math.ceil(m.platforms.length / 2);
+        const gap = 10, chipW = (W - 2 * EDGE - (columns - 1) * gap) / columns, chipH = 52;
         m.platforms.forEach((p, i) => {
-            const x = EDGE + i * (chipW + gap), on = i === m.platform;
-            card(cv, x, TOP, chipW, chipH, on ? 0.15 : 0.06);
-            if (on) cv.fillRect(x + 14, TOP + chipH - 5, chipW - 28, 4, S);
-            label(cv, p.short, x + 16, TOP + 30, 21, on ? t.text : t.dim, chipW - 32, {font: 'bold'});
-            label(cv, (p.id === 'arcade' ? '1 game' : p.count + (p.count === 1 ? ' game' : ' games')) + (p.experimental ? ' / Trial' : ''), x + 22, TOP + 55, 16, t.dim, chipW - 40);
-            cv.target(x, TOP, chipW, chipH, () => a.platform(i), 'PLATFORM_' + i, 10);
+            const x = EDGE + (i % columns) * (chipW + gap), y = TOP + Math.floor(i / columns) * (chipH + 6);
+            const on = i === m.platform;
+            card(cv, x, y, chipW, chipH, on ? 0.15 : 0.06);
+            if (on) cv.fillRect(x + 14, y + chipH - 4, chipW - 28, 3, S);
+            label(cv, p.short, x + 16, y + 23, 19, on ? t.text : t.dim, chipW - 32, {font: 'bold'});
+            label(cv, (p.id === 'arcade' ? '1 game' : p.count + (p.count === 1 ? ' game' : ' games')) + (p.experimental ? ' / Trial' : ''),
+                x + 16, y + 42, 15, t.dim, chipW - 32);
+            cv.target(x, y, chipW, chipH, () => a.platform(i), 'PLATFORM_' + i, 10);
         });
-        const list = m.list, y0 = TOP + chipH + 14, rowH = 84, colW = (W - 2 * EDGE - 16) / LIST_COLS;
+        const platformRows = Math.ceil(m.platforms.length / columns);
+        const list = m.list, y0 = TOP + platformRows * (chipH + 6) + 10, rowH = 74, colW = (W - 2 * EDGE - 16) / LIST_COLS;
         const spec = m.platforms[m.platform];
         if (!list.total) {
             card(cv, EDGE, y0, W - 2 * EDGE, FOOT_Y - y0 - 14);
-            cv.text('No ' + spec.short + ' games yet', W / 2, y0 + 92, 32, t.text, {align: 'center', font: 'bold', literal: true});
+            cv.text('No ' + spec.short + ' games yet', W / 2, y0 + 65, 32, t.text, {align: 'center', font: 'bold', literal: true});
             cv.text('Open Controllers, scan a QR code with your phone and upload a game you own.',
-                W / 2, y0 + 136, 21, t.dim, {align: 'center', literal: true});
-            button(cv, t, W / 2 - 170, y0 + 172, 340, 56, 'Open Controllers', () => a.open(PAGE.PADS), 'EMPTY_PADS', {primary: true});
+                W / 2, y0 + 105, 21, t.dim, {align: 'center', literal: true});
+            button(cv, t, W / 2 - 170, y0 + 131, 340, 56, 'Open Controllers', () => a.open(PAGE.PADS), 'EMPTY_PADS', {primary: true});
         }
         list.items.forEach((item, k) => {
             const col = k % LIST_COLS, row = Math.floor(k / LIST_COLS);

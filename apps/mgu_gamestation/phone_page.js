@@ -45,6 +45,9 @@ header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:
 #g-up{left:33.3%;top:0}#g-down{left:33.3%;bottom:0}#g-left{left:0;top:33.3%}#g-right{right:0;top:33.3%}
 #dpad .tri{position:absolute;color:#7f8ca0;font-size:18px;width:33.4%;height:33.4%;display:flex;align-items:center;justify-content:center;pointer-events:none}
 #mid{grid-column:2;grid-row:2;display:flex;flex-direction:column;gap:12px;align-items:center}
+#secondpad{display:grid;grid-template-columns:repeat(2,1fr);gap:4px}
+#secondpad button{border-radius:7px;min-width:35px;min-height:32px}
+@media (orientation:portrait){#secondpad{grid-template-columns:repeat(4,1fr)}}
 .small{min-width:84px;height:38px;border-radius:19px;font-size:12px;letter-spacing:.08em}
 #actions{grid-column:3;grid-row:2;position:relative;width:min(44vw,210px);height:min(44vw,210px)}
 .face{position:absolute;width:36%;height:36%;border-radius:50%;font-size:21px}
@@ -82,7 +85,11 @@ input[type=file]{width:100%;color:var(--text);margin:8px 0}
 <div id="dpad"><div class="arm h"></div><div class="arm v"></div><div class="hub"></div>
 <div class="glow" id="g-up"></div><div class="glow" id="g-down"></div><div class="glow" id="g-left"></div><div class="glow" id="g-right"></div>
 <div class="tri" style="left:33.3%;top:0">&#9650;</div><div class="tri" style="left:33.3%;bottom:0">&#9660;</div><div class="tri" style="left:0;top:33.3%">&#9664;</div><div class="tri" style="right:0;top:33.3%">&#9654;</div></div>
-<div id="mid"><button class="key small" data-key="select">SELECT</button><button class="key small" data-key="start">START</button></div>
+<div id="mid"><div id="secondpad" aria-label="Second D-pad" hidden>
+<button class="key" data-key="rUp" aria-label="Second pad up">↑</button>
+<button class="key" data-key="rDown" aria-label="Second pad down">↓</button>
+<button class="key" data-key="rLeft" aria-label="Second pad left">←</button>
+<button class="key" data-key="rRight" aria-label="Second pad right">→</button></div><button class="key small" data-key="select">SELECT</button><button class="key small" data-key="start">START</button></div>
 <div id="actions"><button class="key face" id="x" data-key="x">X</button><button class="key face" id="y" data-key="y">Y</button><button class="key face" id="cbtn" data-key="c">C</button><button class="key face" id="a" data-key="a">A</button><button class="key face" id="b" data-key="b">B</button></div>
 <div id="hexpad" hidden>${hexButtons}</div>
 <p id="hint">Join the car's Wi-Fi and keep this page open. Slide your thumb on the cross for diagonals.</p>
@@ -90,7 +97,7 @@ input[type=file]{width:100%;color:var(--text);margin:8px 0}
 <section id="games"><header><h2>Games on the car</h2><button class="hbtn" id="close">Back to pad</button></header>
 <div id="list"><div class="empty">Loading&hellip;</div>
 <form id="upload"><b>Add a game you own</b><input type="file" id="rom" accept="${Object.keys(suffix).map(ext => '.' + ext).join(',')}" required>
-<button class="go" type="submit">Upload to the car</button><p id="result">${romTypes.map(id => names[id] + ' (' + extensions[id].join(', ') + ')').join(' / ')}. Max 8 MB.</p></form></div>
+<button class="go" type="submit">Upload to the car</button><p id="result">${romTypes.map(id => names[id] + ' (' + extensions[id].join(', ') + ')').join(' / ')}. Max 8 MiB / GBA 32 MiB.</p></form></div>
 <div><button class="hbtn" id="refresh">Refresh games</button>
 <button class="hbtn" id="log">Show diagnostic log</button>
 <a class="hbtn" id="export" hidden>Download log</a></div>
@@ -116,8 +123,13 @@ function show(){var s=$('status'),p=$('pause'),n=$('now');
  Array.prototype.forEach.call(document.querySelectorAll('[data-key]'),function(el){
   var key=el.getAttribute('data-key');el.hidden=!play||allowed.indexOf(key)<0;el.disabled=!enabled;
   var sega=state.kind==='sms'||state.kind==='gg';
-  if(key==='a'||key==='b')el.textContent=sega?(key==='a'?'1':'2'):key.toUpperCase();
-  if(key==='start')el.textContent=state.kind==='sms'?'PAUSE':'START'});
+  if(key==='a'||key==='b')el.textContent=state.kind==='a26'?'FIRE':
+    sega?(key==='a'?'1':'2'):state.kind==='pce'?(key==='a'?'I':'II'):
+    state.kind==='a78'?(key==='a'?'2':'1'):key.toUpperCase();
+  if(key==='start')el.textContent=state.kind==='sms'||state.kind==='a78'?'PAUSE':
+    state.kind==='a26'?'RESET':state.kind==='pce'?'RUN':state.kind==='ngp'?'OPTION':'START';
+  if(key==='x')el.textContent=state.kind==='a78'?'RESET':'X'});
+ $('secondpad').hidden=!play||allowed.indexOf('rUp')<0;
  $('dpad').hidden=!play||allowed.indexOf('up')<0;$('hexpad').hidden=!play||state.kind!=='chip8';
  $('actions').hidden=!play||allowed.indexOf('a')<0;
  $('mid').hidden=!play||allowed.indexOf('start')<0&&allowed.indexOf('select')<0;

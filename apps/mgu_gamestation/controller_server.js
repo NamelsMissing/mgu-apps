@@ -10,8 +10,8 @@ const crypto = require('crypto');
 const os = require('os');
 const url = require('url');
 const page = require('./phone_page');
-const {Library, EXTENSIONS, MAX_ROM, safeName} = require('./library');
-const {detect, validRom, platforms} = require('./core_registry');
+const {Library, EXTENSIONS, safeName} = require('./library');
+const {detect, validRom, maxRom, platforms} = require('./core_registry');
 
 const PORT = 18878;
 const NET_STATUS_PORT = 18978;
@@ -169,7 +169,8 @@ class ControllerServer {
         const declared = Number(req.headers['content-length'] || 0);
         if (!kind || query.platform !== undefined && query.platform !== kind)
             return reply(res, 400, 'Unsupported or ambiguous ROM format');
-        if (declared > MAX_ROM) return reply(res, 413, 'File too large (max 8 MB)');
+        const limit = maxRom(kind), tooLarge = 'File too large (max ' + limit / 1048576 + ' MiB)';
+        if (declared > limit) return reply(res, 413, tooLarge);
         if (this.activeUpload) return reply(res, 409, 'Another upload is in progress');
         this.activeUpload = req;
         let size = 0, buffers = [], done = false;
@@ -186,10 +187,10 @@ class ControllerServer {
         req.on('data', part => {
             if (done) return;
             size += part.length;
-            if (size > MAX_ROM) {
+            if (size > limit) {
                 finish();
                 res.setHeader('Connection', 'close');
-                return reply(res, 413, 'File too large (max 8 MB)');
+                return reply(res, 413, tooLarge);
             }
             buffers.push(part);
         });

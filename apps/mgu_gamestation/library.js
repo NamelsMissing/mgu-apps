@@ -8,7 +8,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const {consoles: CONSOLES, extensions: EXTENSIONS, MAX_ROM, byId, validRom} = require('./core_registry');
+const {consoles: CONSOLES, extensions: EXTENSIONS, MAX_ROM, maxRom, byId, validRom} = require('./core_registry');
 
 const MAX_STATE = 24 * 1024;
 const MAX_SAVE = 256 * 1024;
@@ -59,7 +59,7 @@ class Library {
             let size = 0, saved = false;
             try {
                 const stat = fs.lstatSync(path.join(this.romDir(kind), name));
-                if (!stat.isFile() || stat.size > MAX_ROM) return null;
+                if (!stat.isFile() || stat.size > maxRom(kind)) return null;
                 size = stat.size;
             } catch (_) { return null; }
             try { saved = fs.statSync(this.saveFile(kind, name)).size > 0; } catch (_) { saved = false; }
@@ -75,7 +75,7 @@ class Library {
         if (!allowed(kind, name) || !plain(name)) return false;
         try {
             const stat = fs.lstatSync(path.join(this.romDir(kind), name));
-            return stat.isFile() && stat.size <= MAX_ROM;
+            return stat.isFile() && stat.size <= maxRom(kind);
         } catch (_) { return false; }
     }
     read(kind, name) {

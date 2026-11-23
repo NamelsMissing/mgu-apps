@@ -1,4 +1,4 @@
-MGU GameStation v0.4.0
+MGU GameStation v0.5.0
 
 This app bundles the following emulator source modules (with module-format
 conversion, Node.js 8 compatibility and SNES diagnostic suppression;
@@ -36,3 +36,7 @@ see tools/vendor_retro_cores.py for the exact modifications):
 No commercial game ROMs or console firmware are bundled.
 The GameStation code, vendor bundles, and bundling scripts are available
 in the same source repository as the app for review and redistribution.
+
+The separately packaged mgu-gamestation-retro tool contains gpSP, Stella 2014,
+ProSystem, Beetle PCE Fast, Beetle VB, Beetle WonderSwan, and Beetle NGP. See that tool
+and tools/retro_sources for licenses and corresponding source.
