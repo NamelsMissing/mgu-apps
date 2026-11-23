@@ -100,7 +100,7 @@ Use lighting effects only while safely parked in P on private ground, with nobod
 
 ### Background components installed with apps
 
-The same [store catalog](mgu-repo.json) lists **13 apps** and **6 native helper components**. These tools are dependencies, not additional user-facing MGU apps.
+The same [store catalog](mgu-repo.json) lists **13 apps** and **8 native helper components**. These tools are dependencies, not additional user-facing MGU apps.
 
 | Helper | Version | Used by |
 | --- | --- | --- |
