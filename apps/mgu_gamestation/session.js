@@ -20,6 +20,7 @@ class Session {
         this.game = game; this.kind = kind; this.name = name;
         this.now = o.now || Date.now; this.storeSave = o.store || null; this.log = o.log || null;
         this.audio = o.audio || null;
+        this.canAudio = o.canAudio || (() => true);
         this.frameMs = game.frameMs || FRAME_MS;
         this.paused = false; this.reason = '';
         this.last = 0; this.carry = 0;
@@ -79,7 +80,10 @@ class Session {
         this.last = now;
         if (this.arcade) {
             // Pong moves by time: one tick per screen frame, scaled to 60 Hz steps.
-            this.run(() => this.game.tick(pads, Math.max(0.5, Math.min(2, elapsed / FRAME_MS))));
+            this.run(() => {
+                this.game.tick(pads, Math.max(0.5, Math.min(2, elapsed / FRAME_MS)));
+                this.sendAudio();
+            });
             return 1;
         }
         const due = Math.max(0, elapsed) / this.frameMs + this.carry + 1e-6;
@@ -89,15 +93,17 @@ class Session {
         for (let i = 0; i < count && !this.paused; i++) {
             this.run(() => {
                 this.game.tick(pads, 1);
-                if (this.game.getAudioSamples) {
-                    const block = this.game.getAudioSamples();
-                    if (this.audio && block) this.audio(block);
-                }
+                this.sendAudio();
             });
             if (!this.paused) advanced++;
         }
         if (!this.paused && now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
         return advanced;
+    }
+    sendAudio() {
+        if (!this.audio || !this.game.getAudioSamples || !this.canAudio()) return;
+        const block = this.game.getAudioSamples();
+        if (block) this.audio(block);
     }
     run(fn) {
         const t0 = this.now();

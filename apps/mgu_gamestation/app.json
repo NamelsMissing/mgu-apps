@@ -1,8 +1,8 @@
 {
   "id": "mgu_gamestation",
   "title": "MGU GameStation",
-  "description": "Offline retro games with GPU video, native NES support, iDrive or phone controllers and in-game saves. Parked only.",
-  "version": "0.7.0",
+  "description": "Offline retro games with GPU fullscreen, routed game audio, native NES support, iDrive or phone controllers and in-game saves. Parked only.",
+  "version": "0.8.0",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAG1",
   "iconGlyph": "GAME",
@@ -11,8 +11,8 @@
   "signals": {
     "org.genivi.am.commandinterface.CommandControl": {
       "_instances": "1",
-      "_optional": "Read-only audio diagnostics",
-      "_methods": ["getListMainSources", "getListMainSinks", "getListMainConnections"]
+      "_optional": "Dedicated GameStation PCM route",
+      "_methods": ["getListMainSources", "getListMainSinks", "getListMainConnections", "connect", "disconnect"]
     },
     "de.bmw.infotainment.vehicle.Vehicle2": { "statusCarSpeed2": "rs" },
     "de.bmw.infotainment.controlelements.FrontCCU": {"statusRotaryEncoderState": "rs"}
@@ -45,10 +45,16 @@
      "options": [["arrows", "Directions 2/8/4/6"], ["alternate", "Directions 5/8/7/9"]]},
     {"key": "videoFpsLimit", "label": "Video FPS Limit", "type": "choice", "default": "auto",
      "options": [["auto", "Auto"], ["60", "60 FPS"], ["30", "30 FPS"], ["20", "20 FPS"]]},
-    {"key": "videoScale", "label": "Game picture", "type": "choice", "default": "fit",
-     "options": [["fit", "Fit screen"], ["integer", "Integer scale"]]},
-    {"key": "audioEnabled", "label": "Game audio (experimental)", "type": "bool", "default": false},
-    {"key": "audioVolume", "label": "Game volume", "type": "number", "min": 0, "max": 100, "step": 10, "default": 30},
+    {"key": "gameDisplayMode", "label": "Game Display Mode", "type": "choice", "default": "standard",
+     "options": [["standard", "Standard"], ["fullscreen", "Fullscreen"], ["immersive", "Immersive"]]},
+    {"key": "startGamesFullscreen", "label": "Start games in fullscreen", "type": "bool", "default": true},
+    {"key": "videoScale", "label": "Game Scaling", "type": "choice", "default": "fit",
+     "options": [["fit", "Aspect ratio"], ["integer", "Integer scaling"], ["crop", "Fill / Crop"], ["stretch", "Stretch (distorts image)"]]},
+    {"key": "audioEnabled", "label": "Game Audio Enabled", "type": "bool", "default": true},
+    {"key": "audioOutput", "label": "Game Audio Output", "type": "choice", "default": "auto",
+     "options": [["auto", "Auto (dedicated BMW route)"], ["legacy", "Previously configured PCM"], ["off", "Off"]]},
+    {"key": "audioVolume", "label": "Game Volume", "type": "number", "min": 0, "max": 100, "step": 10, "default": 30},
+    {"key": "audioDiagnostics", "label": "Open Audio Diagnostics", "type": "bool", "default": false},
     {"key": "theme", "label": "Colour theme", "type": "choice", "default": "ice",
      "options": [["ice", "Ice White"], ["m_tricolour", "M Tricolour"], ["amber", "Night Amber"]]},
     {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",

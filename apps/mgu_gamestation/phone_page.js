@@ -81,7 +81,7 @@ input[type=file]{width:100%;color:var(--text);margin:8px 0}
 .hex{position:static;width:clamp(38px,12vw,70px);height:clamp(38px,12vw,70px);border-radius:12px;touch-action:none}
 #diag-log{width:100%;min-height:130px;color:var(--text);background:var(--panel);margin-top:10px}
 </style></head><body>
-<header><span class="badge">P<span id="player">1</span></span><span id="now">GameStation</span><span id="status">CONNECTING</span><button class="hbtn" id="pause" hidden>Pause</button><button class="hbtn" id="open">Games</button></header>
+<header><span class="badge">P<span id="player">1</span></span><span id="now">GameStation</span><span id="status">CONNECTING</span><button class="hbtn" id="pause" hidden>Pause</button><button class="hbtn" id="gameMenu" hidden>Game Menu</button><button class="hbtn" id="open">Games</button></header>
 <main id="pad">
 <div id="left-shoulders"><button class="key shoulder" id="lbtn" data-key="l">L</button><button class="key shoulder" data-key="l2">L2</button></div>
 <div id="right-shoulders"><button class="key shoulder" data-key="r2">R2</button><button class="key shoulder" id="rbtn" data-key="r">R</button></div>
@@ -143,6 +143,7 @@ function show(){var s=$('status'),p=$('pause'),n=$('now');
  $('dpad').hidden=!play||allowed.indexOf('up')<0;$('hexpad').hidden=!play||state.kind!=='chip8';
  $('actions').hidden=!play||allowed.indexOf('a')<0;
  $('mid').hidden=!play||allowed.indexOf('start')<0&&allowed.indexOf('select')<0;
+ $('gameMenu').hidden=!state.title||!play||!state.gameMenu;
  p.hidden=!state.title||!play;p.textContent=state.paused?'Resume':'Pause'}
 function connect(){ws=new WebSocket('ws://'+location.host+'/?t='+encodeURIComponent(token)+'&p='+player);
  ws.onopen=function(){release();clearInterval(timer);timer=setInterval(sendKeys,400);show()};
@@ -166,6 +167,7 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-key]'),function(b)
  function end(e){if(e.pointerId===id){id=null;apply([])}}
  pad.addEventListener('pointerup',end);pad.addEventListener('pointercancel',end);pad.addEventListener('lostpointercapture',end)})();
 window.addEventListener('blur',release);document.addEventListener('visibilitychange',function(){if(document.hidden)release()});
+$('gameMenu').addEventListener('click',function(){send({type:'gameMenu'})});
 $('pause').addEventListener('click',function(){send({type:state.paused?'resume':'pause'})});
 // Games panel: list, delete, upload.
 function size(n){return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB'}

@@ -64,6 +64,15 @@ function testCores() {
     pong.tick([{down: true}, {up: true}], 1);
     assert.ok(pong.left > 225 && pong.right < 225);
     pong.draw({roundRect() {}, fillRect() {}, text() {}, circle() {}}, 0, 0, 900, 450);
+    pong.setAudioEnabled(true);
+    pong.ballY = 12; pong.vy = -5;
+    pong.tick([{}, {}], 1);
+    assert.ok(pong.getAudioSamples().left.some(value => value !== 0), 'Pong wall bounce produces an effect');
+    pong.releaseInput();
+    pong.tick([{}, {}], 1);
+    assert.ok(pong.getAudioSamples().left.every(value => value === 0), 'no stale Pong effect after release');
+    pong.setAudioEnabled(false);
+    assert.strictEqual(pong.getAudioSamples(), null);
     const solo = new Pong({cpuPlayer2: true});
     solo.ballY = 400; solo.vx = 5;
     solo.tick([{}, {}], 1);

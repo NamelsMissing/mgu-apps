@@ -74,7 +74,7 @@
       "id": "mgu_gamestation",
       "kind": "app",
       "title": "MGU GameStation",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "path": "apps/mgu_gamestation",
       "icon": "icon.png",
       "mguHmi": [
@@ -84,7 +84,7 @@
         "mgu-render": "0.6.25",
         "mgu-inputgate": "1.0.0",
         "mgu-game-net": "0.1.0",
-        "mgu-gamestation-audio": "0.1.0",
+        "mgu-gamestation-audio": "0.2.0",
         "mgu-gamestation-retro": "0.3.0"
       },
       "build": {
@@ -147,7 +147,7 @@
       "id": "mgu-gamestation-audio",
       "kind": "tool",
       "title": "GameStation PCM Output",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "path": "native/gamestation-audio",
       "mguHmi": ["ID7"],
       "uninstallable": true

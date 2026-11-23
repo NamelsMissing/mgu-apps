@@ -1,15 +1,16 @@
 'use strict';
 
-const {spawn} = require('child_process');
+const {spawn, execFile} = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
 const RATE = 48000;
 const BUFFER_MS = 64;
 const STOP_MS = 120;
+const MAX_ATTEMPTS = 4;
 const HELPER = '/var/opt/mgu-gamestation-audio/current/mgu-gamestation-audio';
 const MAX_PENDING = RATE * 4 / 25;
-const COMMAND = 'org.genivi.am.commandinterface.CommandControl';
+const {readFrontSource} = require('./audio_route');
 
 class PcmConverter {
     constructor() { this.reset(); }
@@ -77,6 +78,11 @@ class AudioOutput {
         this.readDevice = opts.readDevice || (() => readDevice(dataDir));
         this.spawn = opts.spawn || spawn;
         this.command = opts.command || HELPER;
+        this.probe = opts.probe || (device => new Promise((resolve, reject) => {
+            execFile(this.command, ['--probe', device], {timeout: 1800, killSignal: 'SIGKILL', maxBuffer: 4096},
+                (error, _, stderr) => error ? reject(new Error('ALSA endpoint: ' +
+                    (String(stderr || '').trim().slice(-200) || error.message))) : resolve());
+        }));
         this.now = opts.now || Date.now;
         this.onError = opts.onError || (() => {});
         this.converter = new PcmConverter();
@@ -90,35 +96,111 @@ class AudioOutput {
         this.dropped = this.underruns = this.deviceDrops = 0;
         this.closeTimer = null;
         this.error = '';
-        this.route = 'Not queried';
+        this.router = opts.router || null;
+        this.mode = this.router ? 'auto' : 'legacy';
+        this.routeJob = null;
+        this.generation = 0;
+        this.retryAt = this.checkAt = this.failures = 0;
+        this.received = this.queued = this.blocks = this.inputRate = this.written = 0;
+        this.opened = false;
+        this.readyTimer = null;
+        this.waitForOpen = !!this.router;
+        this.onState = opts.onState || (() => {});
     }
-    configure(enabled, percent) {
+    configure(enabled, percent, mode) {
         const on = enabled === true, volume = Math.max(0, Math.min(1, Number(percent) / 100 || 0));
-        if (this.enabled !== on || this.volume !== volume) {
-            this.stop();
-            this.enabled = on;
-            this.volume = volume;
-        }
+        const next = mode === 'off' || mode === 'legacy' ? mode : this.router ? 'auto' : 'legacy';
+        if (this.enabled !== on || this.mode !== next || (this.volume > 0) !== (volume > 0)) this.stop();
+        this.enabled = on;
+        this.mode = next;
+        this.volume = volume;
     }
     setActive(active) {
-        if (this.active === active) return;
-        if (!active) this.stop();
-        else {
-            this.active = true;
-            this.failed = false;
-            this.device = this.readDevice();
-            this.error = this.enabled && !this.device ? 'No explicit ALSA device configured' : '';
+        const want = active && this.enabled && !!this.volume && this.mode !== 'off';
+        if (!want) {
+            if (this.active) this.stop();
+            return;
         }
+        if (!this.active) {
+            this.active = true;
+            this.device = this.mode === 'legacy' ? this.readDevice() : '';
+            this.resetCounters();
+            this.failed = false;
+            this.retryAt = this.checkAt = this.failures = 0;
+            this.error = this.mode === 'legacy' && !this.device ? 'No explicit ALSA device configured' : '';
+        }
+        if (this.router && this.mode === 'legacy' && this.failed && this.failures < MAX_ATTEMPTS && this.now() >= this.retryAt) this.failed = false;
+        if (this.router) this.service();
+    }
+    resetCounters() {
+        this.received = this.queued = this.blocks = this.inputRate = this.written = 0;
+        this.opened = false;
+    }
+    failLater(message) {
+        if (this.error !== message) this.onError(message);
+        this.error = message;
+        this.failed = true;
+        this.retryAt = this.now() + Math.min(15000, 1000 * Math.pow(2, Math.min(4, this.failures++)));
+    }
+    routeInfo() {
+        return this.router && this.mode === 'auto' ? this.router.info : {state: this.mode === 'legacy' ? 'Legacy direct PCM' : 'Off'};
+    }
+    service() {
+        if (this.routeJob || this.closing || this.failures >= MAX_ATTEMPTS) return;
+        const generation = this.generation;
+        const valid = () => this.active && this.generation === generation;
+        if (!this.active || this.mode !== 'auto') {
+            if (this.router.owner && this.now() >= this.retryAt) this.runJob(() => this.router.release());
+            return;
+        }
+        if (this.now() < this.retryAt || this.router.uncertain) return;
+        if (this.device && this.now() < this.checkAt) return;
+        this.runJob(async () => {
+            if (this.device) {
+                if (!await this.router.check()) throw new Error('BMW GameStation audio connection lost');
+            } else {
+                if (this.router.owner) await this.router.release();
+                if (!valid()) return;
+                const device = await this.router.acquire(valid, this.probe);
+                if (!valid() || !device) return;
+                this.device = device;
+                this.failed = false;
+                this.error = '';
+                this.onState('BMW GameStation route connected');
+            }
+            this.checkAt = this.now() + 1500;
+        });
+    }
+    runJob(work) {
+        this.routeJob = Promise.resolve().then(work).catch(e => {
+            this.device = '';
+            this.router.info.state = 'Unavailable';
+            this.closeChild();
+            this.failLater(e.message);
+            this.releaseAfterJob = true;
+        }).then(async () => {
+            if ((!this.active || this.mode !== 'auto' || this.releaseAfterJob) && this.router.owner) {
+                try { await this.router.release(); }
+                catch (e) { this.failLater(e.message); }
+            }
+            this.releaseAfterJob = false;
+        }).then(() => { this.routeJob = null; });
+        return this.routeJob;
+    }
+    acceptsPcm() {
+        return this.active && !!this.device && this.enabled && !this.failed && !this.closing &&
+            !(this.mode === 'legacy' && this.router && this.router.owner);
     }
     start() {
         const child = this.spawn(this.command, [this.device], {stdio: ['pipe', 'pipe', 'pipe']});
         this.child = child;
         child.pcmStats = null;
+        if (this.waitForOpen) this.readyTimer = setTimeout(() => this.fail(child, 'ALSA setup timed out'), 2000);
         let report = '';
         child.on('error', e => this.fail(child, e.message));
         child.stdin.on('error', e => { if (e.code !== 'EPIPE') this.fail(child, e.message); });
         child.stdout.on('data', data => {
-            if (this.child !== child) return;
+            if (this.child !== child && this.closing !== child) return;
             report += String(data);
             if (report.length > 4096) { report = ''; return; }
             const lines = report.split('\n');
@@ -127,35 +209,54 @@ class AudioOutput {
                 try {
                     const stats = JSON.parse(line);
                     if (['bufferFrames', 'periodFrames', 'pendingFrames', 'underruns', 'droppedFrames']
-                        .every(key => Number.isSafeInteger(stats[key]) && stats[key] >= 0)) child.pcmStats = stats;
+                        .every(key => Number.isSafeInteger(stats[key]) && stats[key] >= 0)) {
+                        if (!child.pcmStats && this.child === child) {
+                            clearTimeout(this.readyTimer);
+                            this.readyTimer = null;
+                            this.opened = true;
+                            this.failures = 0;
+                            this.onState('ALSA device opened');
+                        }
+                        child.pcmStats = stats;
+                    }
                 } catch (_) { /* helper diagnostics only */ }
             }
         });
         child.stderr.on('data', data => {
             if (this.child !== child) return;
             const message = String(data).trim().slice(0, 240);
-            if (message) this.error = message;
+            if (message) child.pcmError = message;
         });
         child.once('close', code => {
             if (this.closing === child) {
+                this.collect(child);
                 clearTimeout(this.closeTimer);
                 this.closing = this.closeTimer = null;
             }
-            if (this.child === child) this.fail(child, this.error || 'ALSA process ended (' + code + ')', true);
+            if (this.child === child) this.fail(child, child.pcmError || 'ALSA process ended (' + code + ')', true);
+            if (this.router) this.service();
         });
         return child;
     }
     fail(child, message, closed) {
         if (this.child !== child) return;
-        this.failed = true;
-        this.error = message;
-        this.onError(message);
+        this.failLater(message);
+        if (this.mode === 'auto') {
+            this.device = '';
+            this.releaseAfterJob = true;
+        }
         this.closeChild(closed);
+        if (this.mode === 'auto' && !this.routeJob) this.runJob(() => {});
+
     }
     write(block) {
-        if (!block || !this.active || !this.enabled || !this.volume || !this.device || this.failed || this.closing) return;
+        if (!block || !this.active) return false;
+        this.received += block.left ? block.left.length : 0;
+        this.inputRate = block.rate;
+        if (!this.acceptsPcm()) return false;
         try {
             const now = this.now(), child = this.child || this.start();
+            if (this.waitForOpen && !child.pcmStats) return false;
             const pending = child.stdin.writableLength === undefined ? child.stdin._writableState.length : child.stdin.writableLength;
             if (pending > 0 || this.lastWrite && (now - this.lastWrite > 120 || now < this.lastWrite)) {
                 this.dropped++;
@@ -166,21 +267,40 @@ class AudioOutput {
             }
             const pcm = this.converter.convert(block, this.volume);
             if (pcm.length > MAX_PENDING) { this.dropped++; this.converter.reset(); return; }
-            if (pcm.length) { child.stdin.write(pcm); this.lastWrite = now; }
+            if (pcm.length) {
+                child.stdin.write(pcm);
+                this.lastWrite = now;
+                this.queued += pcm.length / 4;
+                this.blocks++;
+                return true;
+            }
         } catch (e) {
             if (this.child) this.fail(this.child, e.message);
-            else { this.failed = true; this.error = e.message; this.onError(e.message); }
+            else {
+                this.failLater(e.message);
+                if (this.mode === 'auto') {
+                    this.device = '';
+                    this.releaseAfterJob = true;
+                    if (!this.routeJob) this.runJob(() => {});
+                }
+            }
         }
     }
+    collect(child) {
+        const stats = child.pcmStats;
+        if (!stats) return;
+        this.underruns += stats.underruns;
+        this.deviceDrops += stats.droppedFrames;
+        this.written += stats.writtenFrames || 0;
+    }
     closeChild(closed) {
+        clearTimeout(this.readyTimer);
+        this.readyTimer = null;
         if (this.child) {
             const child = this.child;
             this.child = null;
-            if (child.pcmStats) {
-                this.underruns += child.pcmStats.underruns;
-                this.deviceDrops += child.pcmStats.droppedFrames;
-            }
-            if (!closed) {
+            if (closed) this.collect(child);
+            else {
                 this.closing = child;
                 child.stdin.destroy();
                 child.kill('SIGTERM');
@@ -195,11 +315,17 @@ class AudioOutput {
     }
     stop() {
         this.active = false;
+        this.generation++;
+        if (this.routeJob) this.releaseAfterJob = true;
+        this.device = '';
         this.closeChild();
+        if (this.router && !this.routeJob && this.router.owner) this.runJob(() => this.router.release());
+        return this.routeJob || Promise.resolve();
     }
     diagnostics() {
         const stream = this.child && this.child.stdin, stats = this.child && this.child.pcmStats;
-        return {backend: 'Native ALSA', state: stats ? 'PCM' : this.child ? 'Opening' : this.enabled ? 'idle' : 'off',
+        return {backend: 'Native ALSA / ' + this.mode, state: stats ? 'PCM' : this.child ? 'Opening' :
+            this.enabled && this.mode !== 'off' ? 'idle' : 'off',
             device: this.device, rate: RATE, format: 'S16_LE stereo', targetMs: BUFFER_MS,
             pending: stream ? (stream.writableLength === undefined ? stream._writableState.length : stream.writableLength) : 0,
             deviceMs: stats ? stats.pendingFrames / (RATE / 1000) : null,
@@ -207,30 +333,10 @@ class AudioOutput {
             periodMs: stats ? stats.periodFrames / (RATE / 1000) : null,
             underruns: this.underruns + (stats ? stats.underruns : 0),
             droppedFrames: this.deviceDrops + (stats ? stats.droppedFrames : 0),
-            overflows: this.dropped, route: this.route, error: this.error};
+            overflows: this.dropped, route: this.routeInfo(), error: this.error,
+            opened: this.opened, received: this.received, queued: this.queued, blocks: this.blocks, inputRate: this.inputRate,
+            written: this.written + (stats && stats.writtenFrames || 0)};
     }
-}
-
-async function readFrontSource(signals) {
-    const proxy = await signals.proxy(COMMAND, '1');
-    const list = async (method, keys) => {
-        const result = await signals.call(proxy, method, {}, 1800);
-        const key = result && (result.amError === 'E_OK' || result.amError === 0) &&
-            keys.find(k => Array.isArray(result[k]));
-        if (!key) throw new Error('AudioManager: ' + method);
-        return result[key];
-    };
-    const sources = await list('getListMainSources', ['listMainSources']);
-    const sinks = await list('getListMainSinks', ['listMainSinks']);
-    const links = await list('getListMainConnections', ['listConnections', 'listMainConnections']);
-    const front = sinks.filter(row => row.name === 'MediaSink_Front');
-    if (front.length !== 1) return 'Front sink unavailable';
-    return links.filter(row => row.sinkID === front[0].sinkID &&
-        (row.connectionState === 'CS_CONNECTED' || row.connectionState === 2))
-        .map(row => {
-            const source = sources.find(s => s.sourceID === row.sourceID);
-            return source ? source.name : String(row.sourceID);
-        }).join(', ') || 'No active front route';
 }
 
 module.exports = {AudioOutput, PcmConverter, readDevice, readFrontSource, HELPER};

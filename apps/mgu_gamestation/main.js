@@ -16,7 +16,8 @@ const {Library, title} = require('./library');
 const {Session} = require('./session');
 const crypto = require('crypto');
 const {byId} = require('./core_registry');
-const {AudioOutput, readFrontSource} = require('./audio');
+const {AudioOutput} = require('./audio');
+const {AudioRoute} = require('./audio_route');
 const {IDrivePad, padsForMode} = require('./idrive_pad');
 const {makeUi, PAGE, PAGE_SIZE, PLATFORMS, IMAGE, W, H} = require('./ui');
 
@@ -28,7 +29,8 @@ const KEY_NAMES = {a: 'A', b: 'B', c: 'C', x: 'X', y: 'Y', l: 'L', r: 'R', start
 
 mgu.run({
     async start(ctx) {
-        let events = [], logPage = 0, metricsPage = 0, gpuTest = null, slot = 1, tone = null, routeAt = 0, routePending = false;
+        let events = [], logPage = 0, metricsPage = 0, gpuTest = null, slot = 1, tone = null, toneResult = null;
+        let audioPage = false, displayMode = 'standard', gameMenu = false;
         function record(level, message) {
             ctx.log[level](message);
             if (events.length === 100) events.shift();
@@ -36,8 +38,15 @@ mgu.run({
         }
         const log = {info: text => record('info', text), warn: text => record('warn', text)};
         log.info('[GameStation] started');
-        const audio = new AudioOutput(ctx.dataDir, {onError: message => log.warn('[GameStation] audio: ' + message)});
-        const configureAudio = () => audio.configure(ctx.settings.get('audioEnabled'), ctx.settings.get('audioVolume'));
+        const audio = new AudioOutput(ctx.dataDir, {router: new AudioRoute(ctx.signals),
+            onError: message => log.warn('[GameStation] audio: ' + message),
+            onState: message => log.info('[GameStation] audio: ' + message)});
+        const audioOn = () => ctx.settings.get('audioEnabled') === true && ctx.settings.get('audioOutput') !== 'off';
+        const configureAudio = () => audio.configure(audioOn(), ctx.settings.get('audioVolume'), ctx.settings.get('audioOutput'));
+        const configuredDisplay = () => {
+            const mode = ctx.settings.get('gameDisplayMode');
+            return mode === 'immersive' || mode === 'fullscreen' ? mode : 'standard';
+        };
         const ui = makeUi(G, kitCanvas);
         const library = new Library(ctx.dataDir);
         const idrive = new IDrivePad();
@@ -93,9 +102,15 @@ mgu.run({
         configureAudio();
         ctx.settings.onChange(key => {
             if (key === 'idriveClockwise' || key === 'idriveCounterclockwise' || key === null) configureIDrive();
-            if (key === 'audioEnabled' || key === 'audioVolume' || key === null) {
+            if (key === 'audioEnabled' || key === 'audioVolume' || key === 'audioOutput' || key === null) {
                 stopTone(); configureAudio();
-                if (session && session.game.setAudioEnabled) session.game.setAudioEnabled(ctx.settings.get('audioEnabled'));
+            }
+            if (key === 'gameDisplayMode' || key === null) setDisplayMode(configuredDisplay());
+            if (key === 'audioDiagnostics' && ctx.settings.get(key) === true) {
+                if (ctx.display && ctx.display.sheet && ctx.display.closeSheet) ctx.display.closeSheet();
+                openAudioDiagnostics();
+                if (ctx.ui.close && ctx.ui.isVisible('SETTINGS')) ctx.ui.close('SETTINGS');
+                ctx.settings.set(key, false);
             }
         });
         if (ctx.controller && ctx.controller.onInput) ctx.controller.onInput(v => {
@@ -126,7 +141,7 @@ mgu.run({
             if (client.imageStats.error) return {title: 'FRAME UPLOAD FAILED', detail: client.imageStats.error};
             return null;
         };
-        const mayRun = () => !!session && page === PAGE.PLAY && parked() && inFront() && !videoIssue();
+        const mayRun = () => !!session && page === PAGE.PLAY && parked() && inFront() && !videoIssue() && !gameMenu;
         function releaseImage(id) {
             if (gpu()) gpu().dropImage(id);
             imageById.delete(id);
@@ -147,6 +162,7 @@ mgu.run({
             if (!session) { running = false; return; }
             running = go && !session.paused;
             if (!tone) audio.setActive(running && !!byId[session.kind].audio);
+            if (session.game.setAudioEnabled) session.game.setAudioEnabled(audio.acceptsPcm());
             if (session.arcade) session.game.cpuPlayer2 = singlePlayer();
             const ran = session.step(padsForMode(mode(), idrive.buttons(), server.pads()), go);
             fpsFrames += ran;
@@ -163,7 +179,7 @@ mgu.run({
             }
         }
         function syncIDriveCapture() {
-            const want = mayRun() && useIDrive() && !session.paused;
+            const want = mayRun() && useIDrive() && !session.paused && !gameMenu;
             if (want === grabbed) return;
             grabbed = want;
             idrive.setEnabled(want);
@@ -180,7 +196,9 @@ mgu.run({
         }
         function stopTone() {
             if (!tone) return;
-            clearInterval(tone);
+            clearInterval(tone.timer);
+            toneResult = audio.diagnostics();
+            toneResult.route = Object.assign({}, toneResult.route);
             tone = null;
             audio.stop();
             configureAudio();
@@ -188,14 +206,42 @@ mgu.run({
         function toggleTone() {
             if (tone) return stopTone();
             if (!parked() || !inFront() || page !== PAGE.DIAG) return;
+            if (ctx.settings.get('audioOutput') === 'off') {
+                say('Enable a Game Audio output before testing the speakers.', 'warn');
+                return;
+            }
+            audioPage = true;
+            metricsPage = 0;
+            toneResult = null;
             const started = Date.now(), samples = new Float32Array(960);
-            for (let i = 0; i < samples.length; i++) samples[i] = 0.1 * Math.sin(i * Math.PI / 48);
-            audio.configure(true, 15);
+            for (let i = 0; i < samples.length; i++) samples[i] = 0.12 * Math.sin(i * Math.PI / 48);
+            audio.configure(true, 15, ctx.settings.get('audioOutput'));
             audio.setActive(true);
-            tone = setInterval(() => {
-                if (!parked() || !inFront() || page !== PAGE.DIAG || Date.now() - started >= 1000) return stopTone();
-                audio.write({rate: 48000, left: samples});
-            }, 20);
+            tone = {generated: 0, timer: setInterval(() => {
+                if (!parked() || !inFront() || page !== PAGE.DIAG || Date.now() - started >= 9000 || tone.generated >= 40) return stopTone();
+                audio.setActive(true);
+                if (audio.acceptsPcm() && audio.write({rate: 48000, left: samples})) tone.generated++;
+            }, 20)};
+        }
+        function setDisplayMode(mode) {
+            displayMode = mode;
+            gameMenu = false;
+            if (ctx.ui.text) ctx.ui.text('BTN_ACTION', mode === 'standard' || page !== PAGE.PLAY ? 'Play / Back' : 'Game menu');
+        }
+        function toggleGameMenu() {
+            if (page !== PAGE.PLAY || !session || displayMode === 'standard' || !inFront()) return;
+            gameMenu = !gameMenu;
+            if (gameMenu && running) {
+                running = false;
+                session.hold();
+                releasePlay();
+                session.save();
+            }
+        }
+        function openAudioDiagnostics() {
+            open(PAGE.DIAG);
+            audioPage = true;
+            metricsPage = 0;
         }
         function quit() {
             stopTone();
@@ -223,7 +269,7 @@ mgu.run({
                     if (!next.frame) log.info('[GameStation] first emulator image ' + w + 'x' + h);
                     next.paint(px, w, h);
                 }, {
-                    name, save, preferJs, cpuPlayer2: singlePlayer(), keymap: ctx.settings.get('chip8Mapping'),
+                    name, save, preferJs, canAudio: () => mayRun() && audio.acceptsPcm(), cpuPlayer2: singlePlayer(), keymap: ctx.settings.get('chip8Mapping'),
                     canRun: () => !!next && session === next && mayRun() && !next.paused,
                     pads: () => padsForMode(mode(), idrive.buttons(), server.pads()),
                     onFrame: (block, duration) => {
@@ -248,9 +294,9 @@ mgu.run({
                         log.warn('[GameStation] native emulator: ' + message);
                     },
                 });
-                if (game.setAudioEnabled) game.setAudioEnabled(ctx.settings.get('audioEnabled'));
+                if (game.setAudioEnabled) game.setAudioEnabled(false);
                 next = new Session(game, kind, name, {store: (k, n, b) => library.store(k, n, b),
-                    audio: block => audio.write(block), log});
+                    audio: block => audio.write(block), canAudio: () => mayRun() && audio.acceptsPcm(), log});
                 if (spec.states) next.romHash = crypto.createHash('sha256').update(bytes).digest('hex');
                 if (save) say('In-game save loaded.');
             } catch (e) {
@@ -268,6 +314,7 @@ mgu.run({
             library.remember(kind, name);
             deleting = false; armed = null; fps = 0; fpsFrames = 0; fpsAt = Date.now();
             page = PAGE.PLAY;
+            setDisplayMode(ctx.settings.get('startGamesFullscreen') === false ? 'standard' : configuredDisplay());
             log.info('[GameStation] started ' + kind + '/' + name);
         }
         function togglePause() {
@@ -279,12 +326,17 @@ mgu.run({
                 start(kind, name, kind === 'nes' && !frames);
                 return;
             }
-            if (session.paused && !parked()) { say(lockHint(), 'warn'); return; }
+            if (!parked()) { say(lockHint(), 'warn'); return; }
             if (videoIssue()) {
                 if (gpu() && gpu().imageStats.error) gpu().dropImage(IMAGE);
                 return;
             }
+            if (gameMenu && !session.paused) {
+                gameMenu = false;
+                return;
+            }
             session.toggle();
+            gameMenu = session.paused && displayMode !== 'standard';
             if (session.paused) { running = false; releasePlay(); }
         }
 
@@ -296,6 +348,9 @@ mgu.run({
             if (next !== page) notice = null;
             if (next !== PAGE.GAMES) { deleting = false; armed = null; }
             page = next;
+            if (next !== PAGE.PLAY) gameMenu = false;
+            if (next !== PAGE.DIAG) { audioPage = false; metricsPage = 0; }
+            if (ctx.ui.text) ctx.ui.text('BTN_ACTION', next === PAGE.PLAY && displayMode !== 'standard' ? 'Game menu' : 'Play / Back');
             if (leaving) { running = false; session.hold(); releasePlay(); }
             if (next === PAGE.GAMES) refreshCounts();
         }
@@ -352,11 +407,29 @@ mgu.run({
             toggleDelete: () => { deleting = !deleting; armed = null; },
             remove,
             togglePause,
+            gameMenu: toggleGameMenu,
+            fullscreen: () => setDisplayMode(displayMode === 'standard' ?
+                (configuredDisplay() === 'immersive' ? 'immersive' : 'fullscreen') : 'standard'),
+            toggleAudio: () => {
+                if (ctx.settings.get('audioOutput') === 'off') {
+                    ctx.settings.set('audioOutput', 'auto');
+                    ctx.settings.set('audioEnabled', true);
+                } else ctx.settings.set('audioEnabled', !audioOn());
+                configureAudio();
+            },
+            volume: delta => {
+                ctx.settings.set('audioVolume', Math.max(0, Math.min(100, (Number(ctx.settings.get('audioVolume')) || 0) + delta)));
+                configureAudio();
+            },
+            audioDiagnostics: () => {
+                if (audioPage) { stopTone(); audioPage = false; metricsPage = 0; }
+                else openAudioDiagnostics();
+            },
             tone: toggleTone,
             gpuTest: () => gpuTest ? stopGpuTest() : startGpuTest(0, false),
             gpuMotion: () => { if (gpuTest) startGpuTest(gpuTest.index, !gpuTest.moving); },
             gpuSize: () => { if (gpuTest) startGpuTest((gpuTest.index + 1) % SIZES.length, gpuTest.moving); },
-            metricsScroll: d => { metricsPage = Math.max(0, Math.min(2, metricsPage + d)); },
+            metricsScroll: d => { metricsPage = Math.max(0, Math.min(audioPage ? 1 : 2, metricsPage + d)); },
             nextSlot: () => { slot = slot % 3 + 1; },
             storeState: () => changeState(true),
             loadState: () => changeState(false),
@@ -368,11 +441,13 @@ mgu.run({
                 const next = MODE_ORDER[(MODE_ORDER.indexOf(mode()) + 1) % MODE_ORDER.length];
                 ctx.settings.set('controllerMode', next);
             },
-            drawArcade: (cv, x, y, w, h) => {
+            drawArcade: (cv, x, y, w, h, fitted) => {
                 if (!session || !session.arcade) return;
-                const k = Math.min(w / session.game.width, h / session.game.height);
-                const gw = session.game.width * k, gh = session.game.height * k;
-                session.game.draw(cv, x + (w - gw) / 2, y + (h - gh) / 2, gw, gh);
+                const game = session.game;
+                if (fitted) return game.draw(cv, x, y, w, h);
+                const scale = Math.min(w / game.width, h / game.height);
+                const gw = scale * game.width, gh = scale * game.height;
+                game.draw(cv, x + (w - gw) / 2, y + (h - gh) / 2, gw, gh);
             },
         };
 
@@ -384,14 +459,17 @@ mgu.run({
         function phoneState() {
             return {title: session ? session.title : '', kind: session ? session.kind : '',
                 paused: !!(session && (session.paused || !mayRun())), moving: !parked(),
-                lock: lock(), controllerMode: mode(), players: session ? byId[session.kind].players : 2};
+                lock: lock(), gameMenu: page === PAGE.PLAY && displayMode !== 'standard', controllerMode: mode(), players: session ? byId[session.kind].players : 2};
         }
         const server = new ControllerServer(ctx.dataDir, {
             upload: (kind, name) => { refreshCounts(); say('Game added from a phone: ' + name); },
             removing: (kind, name) => { if (session && session.kind === kind && session.name === name) quit(); },
             removed: (kind, name) => { refreshCounts(); say('Deleted from a phone: ' + name); },
             command: (player, msg) => {
-                if (!session || !isPhonePlayer(player) || !mayRun()) return;
+                if (!session || !isPhonePlayer(player)) return;
+                if (msg.type === 'gameMenu') return toggleGameMenu();
+                if (msg.type === 'resume' && gameMenu && parked() && inFront()) return togglePause();
+                if (!mayRun()) return;
                 if (msg.type === 'pause' && !session.paused) togglePause();
                 else if (msg.type === 'resume' && session.paused) togglePause();
             },
@@ -405,7 +483,7 @@ mgu.run({
         /* ---------------- the HMI's bar, the header's tabs ---------------- */
         ctx.ui.onClick('BTN_PLATFORM', () => actions.platform((platform + 1) % PLATFORMS.length));
         ctx.ui.onClick('BTN_ACTION', () => {
-            if (page === PAGE.PLAY && session) return togglePause();
+            if (page === PAGE.PLAY && session) return displayMode === 'standard' ? togglePause() : toggleGameMenu();
             const list = listOf();
             if (session) return open(PAGE.PLAY);
             const last = library.last();
@@ -415,10 +493,15 @@ mgu.run({
         });
         ctx.ui.onClick('BTN_PAIR', () => open(page === PAGE.PADS ? (session ? PAGE.PLAY : PAGE.GAMES) : PAGE.PADS));
         ctx.ui.onClick('BTN_DIAG', () => open(page === PAGE.DIAG ? (session ? PAGE.PLAY : PAGE.GAMES) : PAGE.DIAG));
+        if (ctx.onTap) ctx.onTap((x, y) => { if (x >= 0 && x < W && y >= 52) toggleGameMenu(); });
         if (typeof ctx.onTab === 'function') ctx.onTab(i => open(i));
         checkSafety = () => {
             if (!parked() || !inFront()) { stopTone(); stopGpuTest(); }
             if (running && !mayRun()) {
+                if (page === PAGE.PLAY && displayMode !== 'standard' && !inFront()) {
+                    gameMenu = true;
+                    session.pause('user');
+                }
                 running = false;
                 session.hold();
                 releasePlay();
@@ -433,7 +516,7 @@ mgu.run({
 
         let exited = false;
         function shutdown() {
-            if (exited) return;
+            if (exited) return audio.routeJob;
             exited = true;
             clearInterval(safetyTimer);
             clearTimeout(emulationTimer);
@@ -441,6 +524,7 @@ mgu.run({
             quit();
             server.stop();
             process.removeListener('exit', shutdown);
+            return audio.stop();
         }
         process.on('exit', shutdown);
         if (ctx.onShutdown) ctx.onShutdown(shutdown);
@@ -504,13 +588,6 @@ mgu.run({
         }
         function diagnostics() {
             const d = audio.diagnostics(), memory = process.memoryUsage(), phones = server.status();
-            if (!routePending && Date.now() - routeAt > 5000 && typeof ctx.signals.proxy === 'function') {
-                routeAt = Date.now();
-                routePending = true;
-                readFrontSource(ctx.signals).then(route => { audio.route = route; }, e => {
-                    audio.route = e.message;
-                }).then(() => { routePending = false; });
-            }
             const rows = [
                 ['GameStation', ctx.spec.version],
                 ['Core / ROM', session ? session.kind + ' / ' + session.name : 'None'],
@@ -535,16 +612,31 @@ mgu.run({
                     (server.net.ready ? 'open' : 'closed')],
                 ['Controllers', mode() + ' / ' + phones.filter(Boolean).length + ' phone(s) online'],
                 ['Storage', session && session.romHash ? 'Save states (3 slots)' : session && session.hasSave ? 'Battery RAM' : 'ROM library'],
-                ['PCM backend', d.backend + ' / ' + d.state + ' / ' + (d.device || 'no device selected')],
-                ['PCM format', d.rate + ' Hz ' + d.format + ' / ' + d.pending + ' B pending'],
-                ['ALSA delay / buffer', d.deviceMs === null ? d.targetMs + ' ms requested' :
-                    d.deviceMs.toFixed(1) + ' / ' + d.bufferMs.toFixed(1) + ' ms / period ' + d.periodMs.toFixed(1) + ' ms'],
-                ['PCM interruptions', d.underruns + ' underruns / ' + d.overflows + ' dropped blocks / ' + d.droppedFrames + ' dropped samples'],
-                ['BMW media source', d.route],
-                ['Last audio error', d.error || 'None'],
             ];
+            const route = d.route;
+            const stream = toneResult || d;
+            const audioRows = [
+                ['Audio output', d.backend + ' / ' + d.state],
+                ['BMW source', route.source ? route.source + ' / ID ' + route.sourceID : 'Dedicated source unconfirmed'],
+                ['BMW sink', route.sink ? route.sink + ' / ID ' + route.sinkID : '-'],
+                ['Connection', route.state + (route.connectionID ? ' / ID ' + route.connectionID : '')],
+                ['ALSA endpoint', d.device || '-'],
+                ['Input / output', (d.inputRate || '-') + ' Hz / ' + d.rate + ' Hz ' + d.format],
+                ['PCM frames', d.received + ' received / ' + d.queued + ' queued / ' + d.written + ' written'],
+                ['PCM blocks', d.blocks + ' queued / ' + d.overflows + ' dropped'],
+                ['ALSA queue', d.deviceMs === null ? d.targetMs + ' ms requested' :
+                    d.deviceMs.toFixed(1) + ' ms pending / ' + d.bufferMs.toFixed(1) + ' ms buffer / ' + d.periodMs.toFixed(1) + ' ms period'],
+                ['PCM interruptions', d.underruns + ' underruns / ' + d.droppedFrames + ' dropped samples'],
+                ['Last audio error', d.error || 'None'],
+                ['Test signal', tone || toneResult ? '960 samples generated / ' + stream.blocks + ' blocks queued' : 'Not started'],
+                ['Test ALSA device', stream.opened ? 'Opened' : 'Unconfirmed'],
+                ['Test BMW link', stream.route.state],
+                ['Test PCM written', stream.written],
+                ['Audible in car', 'Manual confirmation pending'],
+            ];
+            const shown = audioPage ? audioRows : rows;
             const end = Math.max(0, events.length - logPage * 7);
-            return {rows: rows.slice(metricsPage * METRICS_ROWS, (metricsPage + 1) * METRICS_ROWS), lines: events.slice(Math.max(0, end - 7), end), slot, states: !!(session && session.romHash),
+            return {audioPage, rows: shown.slice(metricsPage * METRICS_ROWS, (metricsPage + 1) * METRICS_ROWS), lines: events.slice(Math.max(0, end - 7), end), slot, states: !!(session && session.romHash),
                 tone: !!tone, logPage, gpuTest: gpuTest && {
                     w: gpuTest.w, h: gpuTest.h, moving: gpuTest.moving, id: TEST_IMAGE, displayReady: gpuActive(),
                     status: !gpuTest.registered ? 'Preparing RGBA buffer' : !gpuActive() ? 'Registered / GPU inactive' :
@@ -570,7 +662,8 @@ mgu.run({
                     videoIssue: videoIssue(),
                     width: f ? f.width : 0, height: f ? f.height : 0, players: players(), help: help(),
                     saved: !!session.hasSave, states: !!session.romHash, audio: audio.diagnostics().state,
-                    scale: ctx.settings.get('videoScale'),
+                    scale: ctx.settings.get('videoScale'), displayMode, gameMenu,
+                    audioOn: audioOn(), volume: Number(ctx.settings.get('audioVolume')) || 0,
                     fps: running ? fps : undefined, videoFps};
             }
             if (page === PAGE.GAMES) m.list = listOf();
@@ -582,6 +675,7 @@ mgu.run({
         ctx.loop('MAIN', 30, () => {
             if (exited) return;
             const now = Date.now();
+            audio.service();
             server.poll();
             checkSafety();
             if (!session || session.arcade || emulationTimer === null) advanceGame();

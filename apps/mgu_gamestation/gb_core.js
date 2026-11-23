@@ -18,10 +18,12 @@ class GameBoyGame {
         const save = options && options.save, core = this.core();
         this.audioLeft = new Float32Array(2048);
         this.audioRight = new Float32Array(2048);
+        this.pcmEnabled = true;
         this.audioCount = 0;
         this.audioRate = core.clocksPerSecond / core.audioResamplerFirstPassFactor;
         this.dcLeft = this.dcRight = 0;
         core.onAudioSample = (left, right) => {
+            if (!this.pcmEnabled) return;
             this.dcLeft += (left - this.dcLeft) * 0.01;
             this.dcRight += (right - this.dcRight) * 0.01;
             if (this.audioCount >= this.audioLeft.length) return;
@@ -45,6 +47,7 @@ class GameBoyGame {
         for (let i = 0; i < pixels.length; i++) this.rgba[i] = pixels[i];
         this.output(this.rgba, 160, 144);
     }
+    setAudioEnabled(on) { this.pcmEnabled = !!on; }
     getAudioSamples() {
         const n = this.audioCount;
         return n ? {rate: this.audioRate, left: this.audioLeft.subarray(0, n), right: this.audioRight.subarray(0, n)} : null;

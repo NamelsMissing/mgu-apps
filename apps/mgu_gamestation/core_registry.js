@@ -50,7 +50,7 @@ const platforms = [
         create: (...args) => new (require('./gb_core').GameBoyGame)(...args), players: 1, buttons: STANDARD,
         video: [160, 144], audio: 'stereo', battery: true, validate: bytes => bytes.length >= 0x8000 && bytes.length % 0x4000 === 0},
     {id: 'arcade', core: 'Pong / JS (built-in)', short: 'ARCADE', title: 'Built-in games', tag: 'ARC', extensions: [],
-        create: (_, __, options) => new (require('./arcade').Pong)(options), players: 2, buttons: ['up', 'down']},
+        create: (_, __, options) => new (require('./arcade').Pong)(options), players: 2, audio: 'mono', buttons: ['up', 'down']},
     {id: 'chip8', core: 'CHIP-8 / JS (built-in)', short: 'CHIP-8', title: 'CHIP-8 / Super-CHIP', tag: 'CH8', extensions: ['.ch8', '.sc8'],
         create: (...args) => new (require('./chip8_core').Chip8Game)(...args), players: 1,
         buttons: HEX_KEYS, video: [128, 64], audio: 'mono', states: true,

@@ -169,6 +169,22 @@ function testSession() {
     const pong = new Session({tick(p, d) { delta = d; }, draw() {}, stop() {}}, 'arcade', 'pong', {now: () => clock});
     pong.step([{}, {}], true); clock += 33; pong.step([{}, {}], true);
     assert.ok(delta > 1.9 && delta <= 2, 'Pong moves by elapsed time');
+    let at = 100, played = 0, coreTicks = 0;
+    const timed = new Session({
+        tick() { coreTicks++; },
+        getAudioSamples() { return {rate: 48000, left: new Float32Array(800)}; },
+    }, 'nes', 'timed.nes', {now: () => at, audio: block => { played += block.left.length; }});
+    for (let i = 0; i < 60; i++) {
+        at = 100 + i * (1000 / 60);
+        timed.step([{}, {}], true);
+        if (i % 3 === 0) timed.take(); // 20 Hz image consumption, with a renderer drop.
+    }
+    assert.strictEqual(coreTicks, 60);
+    assert.strictEqual(played, 48000, 'PCM follows core steps even when video consumes every third frame');
+    timed.pause();
+    at += 200;
+    timed.step([{}, {}], true);
+    assert.strictEqual(played, 48000, 'paused time does not enqueue PCM');
     console.log('ok: session pacing, catch-up cap, pause / resume, autosave, overload and error pause');
 }
 
@@ -293,6 +309,8 @@ async function testServer() {
         server.players[0] = p;
         server.onData(p, maskedFrame({type: 'pause'}));
         assert.ok(seen.indexOf('cmd:1:pause') >= 0);
+        server.onData(p, maskedFrame({type: 'gameMenu'}));
+        assert.ok(seen.indexOf('cmd:1:gameMenu') >= 0);
         server.broadcast({title: 'Zelda-like', paused: true});
         const out = written[written.length - 1];
         assert.strictEqual(out[0], 0x81);
@@ -410,6 +428,21 @@ function testUi() {
     assert.strictEqual(ascii('Pokémon – Gelbe Edition'), 'Pokemon - Gelbe Edition');
     assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 900, h: 450}, 256, 240), {x: 210, y: 0, w: 480, h: 450});
     assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 900, h: 450}, 256, 240, 'integer'), {x: 322, y: 105, w: 256, h: 240});
+    const physical = fitRect({x: 0, y: 0, w: 1600, h: 520}, 256, 240, 'integer', 1.1);
+    assert.strictEqual(Math.round(physical.w * 1.1), 512, 'integer scaling uses physical pixels');
+    const crop = fitRect({x: 0, y: 0, w: 1600, h: 520}, 256, 240, 'crop');
+    assert.strictEqual(crop.w, 1600);
+    assert.ok(crop.y < 0 && crop.h > 520);
+    assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 1600, h: 520}, 256, 240, 'stretch'), {x:0, y:0, w:1600, h:520});
+    const immersed = new Recorder(W, H);
+    immersed.chrome = {};
+    immersed.own = true;
+    immersed.extra = 48;
+    a.gameMenu = () => {};
+    makeUi(G, kitCanvas).draw(immersed, THEMES.ice, base({page: PAGE.PLAY, game: game({displayMode:'immersive'})}), a);
+    assert.strictEqual(immersed.extraUsed, true);
+    assert.deepStrictEqual(immersed.chrome.tabs.tabs, []);
+    assert.deepStrictEqual(keys(immersed), ['GAME_MENU']);
     const icon = fs.readFileSync(path.join(APP, 'icon.png'));
     assert.strictEqual(icon.readUInt32BE(16), 140);
     assert.strictEqual(icon.readUInt32BE(20), 140);
@@ -439,10 +472,10 @@ async function testApp() {
     lib.add('nes', 'Plain.nes', nesRom(false));
 
     const clicks = {}, hooks = {}, settings = {controllerMode: 'phones', theme: 'ice'}, grabs = [];
-    let frame = null, tick = null, speed = null, visible = true, focus = true;
+    let frame = null, tick = null, speed = null, visible = true, focus = true, settingChange = () => {};
     const ctx = {
         log: quiet, dataDir: dir, spec: {version: '0.5.0'},
-        settings: {get: k => settings[k], set: (k, v) => { settings[k] = v; }, onChange: () => {}},
+        settings: {get: k => settings[k], set: (k, v) => { settings[k] = v; settingChange(k); }, onChange: fn => { settingChange = fn; }},
         theme: () => THEMES.ice,
         signals: {watch: (iface, inst, handlers) => {
             if (handlers.statusCarSpeed2) speed = handlers.statusCarSpeed2;
@@ -453,6 +486,7 @@ async function testApp() {
         ui: {onClick: (id, fn) => { clicks[id] = fn; }, onVisible: fn => { hooks.visible = fn; }, onFocus: fn => { hooks.focus = fn; },
             isVisible: () => visible, hasFocus: () => focus, image: (n, cv) => { frame = cv; return Promise.resolve(); }},
         onTab: fn => { hooks.tab = fn; },
+        onTap: fn => { hooks.tap = fn; },
         canvas: (w, h) => { const r = new Recorder(w, h, {textScale: 1}); r.reset(); return r; },
         loop: (name, fps, fn) => { tick = fn; },
     };
@@ -548,6 +582,29 @@ async function testApp() {
         hooks.tab(PAGE.GAMES); press('PLATFORM_3'); press('GAME_0');
         tick(); await new Promise(r => setTimeout(r, 20)); tick();
         assert.deepStrictEqual(keys(), ['PAUSE', 'TO_GAMES', 'TO_PADS', 'QUIT'], 'Pong runs');
+        ctx.settings.set('gameDisplayMode', 'fullscreen');
+        assert.deepStrictEqual(keys(), ['GAME_MENU']);
+        assert.strictEqual(grabs[grabs.length - 1], true, 'the running game still accepts iDrive');
+        hooks.tap(1000, 250);
+        assert.ok(keys().includes('EXIT_FULLSCREEN') && keys().includes('AUDIO_TOGGLE'));
+        assert.strictEqual(grabs[grabs.length - 1], false, 'menu hands iDrive back to the app');
+        press('VOLUME_UP');
+        assert.strictEqual(settings.audioVolume, 10);
+        press('PAUSE');
+        assert.deepStrictEqual(keys(), ['GAME_MENU']);
+        clicks.BTN_ACTION();
+        assert.ok(keys().includes('EXIT_FULLSCREEN'), 'BMW action opens menu');
+        press('EXIT_FULLSCREEN');
+        assert.deepStrictEqual(keys(), ['PAUSE', 'TO_GAMES', 'TO_PADS', 'QUIT']);
+        ctx.settings.set('gameDisplayMode', 'immersive');
+        speed({speedVehicleCentreOfGravity: 65535});
+        assert.ok(!keys().includes('PAUSE') && keys().includes('QUIT'), 'safety overlay preserves exit while preventing resume');
+        parked(); tick();
+        focus = false; hooks.focus('MAIN', false); focus = true; hooks.focus('MAIN', true);
+        assert.ok(keys().includes('EXIT_FULLSCREEN'));
+        press('QUIT');
+        assert.ok(keys().includes('GAME_0'), 'quit returns straight to library');
+        ctx.settings.set('gameDisplayMode', 'standard');
         lib.add('chip8', 'Key.ch8', Buffer.from('1200', 'hex'));
         hooks.tab(PAGE.GAMES); press('PLATFORM_4'); press('GAME_0');
         clicks.BTN_DIAG();
@@ -561,6 +618,11 @@ async function testApp() {
         press('GPU_TEST');
         assert.ok(!keys().includes('GPU_SIZE'));
         assert.ok(keys().includes('TONE'), 'diagnostics is accessible from the BMW button bar');
+        press('AUDIO_DIAG');
+        press('TONE');
+        speed({speedVehicleCentreOfGravity: 65535});
+        assert.ok(!keys().includes('TONE'), 'speaker test cannot run without fresh standstill');
+        parked();
         // screen hidden: held
         visible = false; tick(); visible = true; focus = false; tick(); focus = true;
 

@@ -20,11 +20,13 @@ class SegaGame {
         this.keys = new Uint8Array(13);
         this.left = new Float32Array(SAMPLES + 1);
         this.right = this.gg ? new Float32Array(SAMPLES + 1) : null;
+        this.pcmEnabled = true;
         this.samples = 0;
         this.nextSample = 0;
         this.core.sn76489.stereo = 255;
         this.core.sn76489.capture = psg => {
             psg.output.next_buf_sample = ++this.nextSample * FRAME_CLOCKS / SAMPLES;
+            if (!this.pcmEnabled) return;
             if (this.samples >= this.left.length) return;
             this.left[this.samples] = psg.mix_sample(this.gg ? psg.stereo >> 4 : 15) / 32768;
             if (this.right) this.right[this.samples] = psg.mix_sample(psg.stereo & 15) / 32768;
@@ -51,6 +53,7 @@ class SegaGame {
             this.output(this.pixels.subarray(0, 256 * frame.bottom_rendered_line * 4), 256, frame.bottom_rendered_line);
         }
     }
+    setAudioEnabled(on) { this.pcmEnabled = !!on; }
     getAudioSamples() {
         return this.samples ? {rate: RATE, left: this.left.subarray(0, this.samples),
             right: this.right && this.right.subarray(0, this.samples)} : null;

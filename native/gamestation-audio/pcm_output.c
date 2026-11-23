@@ -37,6 +37,7 @@ struct counters {
     unsigned long period_frames;
     unsigned long underruns;
     unsigned long dropped;
+    unsigned long written;
     long pending;
 };
 
@@ -77,8 +78,9 @@ static int load_alsa(struct alsa *alsa) {
 
 static int usable_device(const char *name) {
     static const char *reserved[] = {
-        "carplay", "androidauto", "mediasink_audioout", "hfp",
-        "emergency", "ecall", "speech", "voice", "navigation", "ringtone"
+        "carplay", "androidauto", "android_auto", "carlife", "mediasink_audioout", "hfp",
+        "emergency", "ecall", "speech", "voice", "navigation", "ringtone", "bluetooth", "a2dp",
+        "warning", "systemtone", "radio", "assistant", "oapgenericmedia"
     };
     char lower[161];
     size_t length = strlen(name), i;
@@ -89,7 +91,7 @@ static int usable_device(const char *name) {
         lower[i] = (char)tolower(ch);
     }
     lower[length] = '\0';
-    if (!strcmp(lower, "default") || !strncmp(lower, "hw:", 3) ||
+    if (strstr(lower, "default") || strstr(lower, "dmix") || !strncmp(lower, "hw:", 3) ||
         !strncmp(lower, "plughw:", 7) || !strncmp(lower, "plug:hw:", 8)) return 0;
     for (i = 0; i < sizeof(reserved) / sizeof(reserved[0]); i++)
         if (strstr(lower, reserved[i])) return 0;
@@ -104,9 +106,9 @@ static long long monotonic_ms(void) {
 
 static void report(const struct counters *stats) {
     printf("{\"bufferFrames\":%lu,\"periodFrames\":%lu,\"pendingFrames\":%ld,"
-           "\"underruns\":%lu,\"droppedFrames\":%lu}\n",
+           "\"underruns\":%lu,\"droppedFrames\":%lu,\"writtenFrames\":%lu}\n",
            stats->buffer_frames, stats->period_frames, stats->pending,
-           stats->underruns, stats->dropped);
+           stats->underruns, stats->dropped, stats->written);
     fflush(stdout);
 }
 
@@ -166,8 +168,16 @@ static int play(const struct alsa *alsa, void *pcm, struct counters *stats) {
         }
         if (frames && !stopping) {
             long written = alsa->write_frames(pcm, latest, frames);
-            if (written < 0 && written != -EAGAIN && recover(alsa, pcm, (int)written, stats) < 0) return 1;
+            if (written < 0 && written != -EAGAIN) {
+                if (recover(alsa, pcm, (int)written, stats) < 0) return 1;
+                written = stopping ? 0 : alsa->write_frames(pcm, latest, frames);
+                if (written < 0 && written != -EAGAIN && written != -EPIPE && written != -ESTRPIPE) {
+                    fprintf(stderr, "ALSA write after recovery: %s\n", alsa->error((int)written));
+                    return 1;
+                }
+            }
             if (written < 0) written = 0;
+            stats->written += (unsigned long)written;
             stats->pending += written;
             stats->dropped += frames - (size_t)written;
         }
@@ -179,6 +189,7 @@ static int play(const struct alsa *alsa, void *pcm, struct counters *stats) {
             last_report = now;
         }
     }
+    report(stats);
     return 0;
 }
 
@@ -188,7 +199,9 @@ int main(int argc, char **argv) {
     struct sigaction action = {.sa_handler = stop};
     void *pcm = NULL;
     int status = 1;
-    if (argc != 2 || !usable_device(argv[1])) {
+    int probe = argc == 3 && !strcmp(argv[1], "--probe");
+    const char *device = probe ? argv[2] : argc == 2 ? argv[1] : "";
+    if (!usable_device(device)) {
         fprintf(stderr, "Specify a verified dedicated ALSA PCM endpoint\n");
         return 2;
     }
@@ -197,7 +210,7 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &action, NULL);
     if (load_alsa(&alsa) < 0) goto done;
     int format = alsa.format("S16_LE");
-    int result = format < 0 ? format : alsa.open(&pcm, argv[1], PCM_PLAYBACK, PCM_NONBLOCK);
+    int result = format < 0 ? format : alsa.open(&pcm, device, PCM_PLAYBACK, PCM_NONBLOCK);
     if (result < 0) {
         fprintf(stderr, "ALSA open: %s\n", alsa.error(result));
         goto done;
@@ -211,7 +224,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ALSA negotiated buffer outside real-time limits\n");
         goto done;
     }
-    status = play(&alsa, pcm, &stats);
+    if (probe) { report(&stats); status = 0; }
+    else status = play(&alsa, pcm, &stats);
 done:
     if (pcm) {
         alsa.drop(pcm);

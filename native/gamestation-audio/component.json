@@ -1,9 +1,9 @@
 {
   "id": "mgu-gamestation-audio",
   "kind": "tool",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "GameStation PCM Output",
-  "description": "On-demand 48 kHz stereo ALSA output for GameStation on an explicitly configured PCM endpoint",
+  "description": "On-demand 48 kHz stereo ALSA output for GameStation with a bounded PCM queue and endpoint probe",
   "mguHmi": ["ID7"],
   "files": [
     {"path": "mgu-gamestation-audio", "mode": "0755"},

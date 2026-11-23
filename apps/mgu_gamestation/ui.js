@@ -31,11 +31,16 @@ function megabytes(bytes) {
     return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
 }
 /** Largest rectangle of aspect w:h inside the box, centred. */
-function fitRect(box, w, h, scale) {
+function fitRect(box, w, h, scale, deviceScale) {
     const fit = Math.min(box.w / w, box.h / h);
-    const k = scale === 'integer' && fit >= 1 ? Math.floor(fit) : fit;
-    const rw = Math.floor(w * k), rh = Math.floor(h * k);
-    return {x: Math.round(box.x + (box.w - rw) / 2), y: Math.round(box.y + (box.h - rh) / 2), w: rw, h: rh};
+    const device = deviceScale || 1;
+    let k = fit;
+    if (scale === 'crop') k = Math.max(box.w / w, box.h / h);
+    if (scale === 'integer' && fit * device >= 1) k = Math.floor(fit * device) / device;
+    const rw = scale === 'stretch' ? box.w : Math.floor(w * k * device + 1e-7) / device;
+    const rh = scale === 'stretch' ? box.h : Math.floor(h * k * device + 1e-7) / device;
+    return {x: Math.round((box.x + (box.w - rw) / 2) * device) / device,
+        y: Math.round((box.y + (box.h - rh) / 2) * device) / device, w: rw, h: rh};
 }
 
 function makeUi(G, colors) {
@@ -193,6 +198,59 @@ function makeUi(G, colors) {
         dot(cv, EDGE + 92, y + 14, p.ok, t, p.wait);
         label(cv, p.state, EDGE + 108, y + 20, 16, p.ok ? t.dim : p.wait ? t.warn : t.crit, SIDE - 124);
     }
+    function held(g, m) { return !m.allowed || g.paused || !g.focus || g.videoIssue; }
+
+    function picture(cv, g, a, box, exact) {
+        cv.fillRect(box.x, box.y, box.w, box.h, '#000000');
+        if (!g.arcade && !g.width) return;
+        if (g.arcade && !exact && (!g.scale || g.scale === 'fit')) {
+            a.drawArcade(cv, box.x, box.y, box.w, box.h);
+            return;
+        }
+        const r = fitRect(box, g.arcade ? 900 : g.width, g.arcade ? 450 : g.height, g.scale,
+            exact && cv.place ? cv.place.scale : 1);
+        if (g.scale === 'crop') cv.clip(box.x, box.y, box.w, box.h);
+        if (g.arcade) a.drawArcade(cv, r.x, r.y, r.w, r.h, true);
+        else cv.image(IMAGE, r.x, r.y, r.w, r.h);
+        if (g.scale === 'crop') cv.noclip();
+    }
+
+    function drawFullscreen(cv, t, m, a) {
+        const g = m.game, top = cv.chrome ? 0 : TOP;
+        const extra = g.displayMode === 'immersive' && cv.own ? cv.extra || 0 : 0;
+        cv.extraUsed = extra > 0;
+        const area = {x: 0, y: top, w: W, h: H + extra - top};
+        picture(cv, g, a, area, true);
+        const paused = held(g, m);
+        if (!g.gameMenu && !paused) {
+            button(cv, t, W - 134, top + 10, 122, 40, 'Game menu', a.gameMenu, 'GAME_MENU');
+            // Standard GPU layout uses a bounded hit area to keep the BMW bar live.
+            if (!cv.own) cv.scroll = {bounds: area};
+            return;
+        }
+        const x = (W - 790) / 2, y = top + (area.h - 194) / 2, w = 790, h = 194;
+        cv.roundRect(x, y, w, h, 15, withAlpha('#090e16', 0.94));
+        const status = !m.allowed ? m.lockHint : g.videoIssue ? g.videoIssue.title + ' / ' + g.videoIssue.detail :
+            g.reason === 'overload' ? 'EMULATOR TOO SLOW / ' + g.detail : g.reason === 'error' ? 'EMULATOR STOPPED / ' + g.detail :
+            !g.focus ? 'SCREEN NOT IN FRONT' : g.paused ? g.title + ' / Paused' : g.title;
+        label(cv, status, x + 15, y + 32, 20, t.text, w - 30);
+        const choices = [
+            [g.videoIssue ? 'Retry video' : g.paused || g.gameMenu ? 'Resume' : 'Pause', a.togglePause, 'PAUSE', {off: !m.allowed || !g.focus}],
+            ['Games', () => a.open(PAGE.GAMES), 'TO_GAMES'],
+            ['Controllers', () => a.open(PAGE.PADS), 'TO_PADS'],
+            ['Exit fullscreen', a.fullscreen, 'EXIT_FULLSCREEN'],
+            ['Quit game', a.quit, 'QUIT', {color: t.crit}],
+        ];
+        choices.forEach((b, i) => button(cv, t, x + 15 + i * 153, y + 47, 148, 45, b[0], b[1], b[2], b[3]));
+        button(cv, t, x + 15, y + 107, 148, 44, g.audioOn ? 'Audio on' : 'Audio off', a.toggleAudio, 'AUDIO_TOGGLE');
+        button(cv, t, x + 180, y + 107, 52, 44, '-', () => a.volume(-10), 'VOLUME_DOWN');
+        label(cv, g.volume + '%', x + 245, y + 135, 17, t.text, 65);
+        button(cv, t, x + 307, y + 107, 52, 44, '+', () => a.volume(10), 'VOLUME_UP');
+        if (g.gameMenu && !g.paused) button(cv, t, x + w - 163, y + 107, 148, 44, 'Close menu', a.gameMenu, 'CLOSE_MENU');
+        if (g.fps !== undefined) label(cv, g.fps + ' EMU FPS / ' + g.videoFps + ' VIDEO', x + 388, y + 135, 16, t.dim, 215);
+        if (!cv.own) cv.scroll = {bounds: area};
+    }
+
     function drawPlay(cv, t, m, a) {
         const g = m.game;
         if (!g) {
@@ -205,6 +263,7 @@ function makeUi(G, colors) {
             ]);
             return;
         }
+        if (g.displayMode && g.displayMode !== 'standard') return drawFullscreen(cv, t, m, a);
         // left: what it is and who plays
         G.panel(cv, t, EDGE, TOP, SIDE, H - TOP - 12, '');
         cv.text(g.platform, EDGE + 22, TOP + 34, 15, t.dim, {font: 'bold', spacing: 2, literal: true});
@@ -213,14 +272,8 @@ function makeUi(G, colors) {
         playerRow(cv, t, TOP + 240, 2, g.players[1]);
         if (g.help) paragraph(cv, g.help, EDGE + 22, TOP + 310, 15, t.dim, SIDE - 44, 6);
         // centre: the picture
-        cv.roundRect(STAGE.x, STAGE.y, STAGE.w, STAGE.h, 10, '#000000');
-        if (g.arcade) a.drawArcade(cv, STAGE.x, STAGE.y, STAGE.w, STAGE.h);
-        else if (g.width) {
-            const r = fitRect(STAGE, g.width, g.height, g.scale);
-            cv.image(IMAGE, r.x, r.y, r.w, r.h);
-        }
-        const held = !m.allowed || g.paused || !g.focus || g.videoIssue;
-        if (held) {
+        picture(cv, g, a, STAGE, false);
+        if (held(g, m)) {
             const bw = Math.min(760, STAGE.w - 60), bx = STAGE.x + (STAGE.w - bw) / 2, by = STAGE.y + STAGE.h / 2 - 78;
             cv.roundRect(bx, by, bw, 156, 16, withAlpha('#000000', 0.82));
             cv.strokeRoundRect(bx, by, bw, 156, 16, 1.5, withAlpha(!m.allowed || g.reason === 'overload' || g.reason === 'error' ? t.warn : '#ffffff', 0.4));
@@ -317,7 +370,8 @@ function makeUi(G, colors) {
             d.states && {text: 'Save', w: 110, key: 'STATE_SAVE', run: a.storeState, off: !m.allowed},
             d.states && {text: 'Load', w: 110, key: 'STATE_LOAD', run: a.loadState, off: !m.allowed},
             a.gpuTest && {text: d.gpuTest ? 'Stop GPU test' : 'Test GPU Image', w: 195, key: 'GPU_TEST', run: a.gpuTest, off: !m.allowed},
-            {text: d.tone ? 'Stop test tone' : 'Play test tone', w: 195, key: 'TONE', run: a.tone, off: !m.allowed},
+            a.audioDiagnostics && {text: d.audioPage ? 'Performance' : 'Audio diagnostics', w: 205, key: 'AUDIO_DIAG', run: a.audioDiagnostics},
+            {text: d.tone ? 'Stop speaker test' : 'Test Speaker', w: 195, key: 'TONE', run: a.tone, off: !m.allowed},
         ]);
     }
 
@@ -326,7 +380,9 @@ function makeUi(G, colors) {
         const badge = m.allowed ? {text: 'PARKED', color: t.ok || t.accent} :
             {text: m.lock === 'moving' ? 'MOVING' : 'NO SPEED SIGNAL', color: t.crit};
         const badges = [m.game && m.page !== PAGE.PLAY ? {text: m.game.paused ? 'GAME PAUSED' : 'GAME RUNNING', color: t.accent2 || t.accent} : null, badge];
-        G.frame(cv, t, TABS, m.page, badges);
+        const immersive = m.page === PAGE.PLAY && m.game && m.game.displayMode === 'immersive' && cv.own &&
+            !m.game.gameMenu && !held(m.game, m);
+        G.frame(cv, t, immersive ? [] : TABS, immersive ? -1 : m.page, badges);
         if (m.page === PAGE.PLAY) drawPlay(cv, t, m, a);
         else if (m.page === PAGE.PADS) drawPads(cv, t, m, a);
         else if (m.page === PAGE.DIAG) drawDiagnostics(cv, t, m, a);

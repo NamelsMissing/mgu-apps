@@ -320,7 +320,7 @@ class ControllerServer {
                 if (!Object.keys(next).length) p.waitForRelease = false;
                 else if (!mayPress) p.waitForRelease = true;
                 p.keys = p.waitForRelease ? {} : next; p.lastSeen = Date.now();
-            } else if (msg.type === 'pause' || msg.type === 'resume') {
+            } else if (msg.type === 'pause' || msg.type === 'resume' || msg.type === 'gameMenu') {
                 p.lastSeen = Date.now();
                 if (this.events.command) this.events.command(p.index + 1, {type: msg.type});
             }

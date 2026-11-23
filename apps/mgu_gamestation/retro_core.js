@@ -130,7 +130,7 @@ class RetroGame {
             this.paint(bytes.slice(0, frame.pixels), frame.width, frame.height);
         }
         let audio = null;
-        if (frame.samples) {
+        if (frame.samples && (!this.opts.canAudio || this.opts.canAudio())) {
             for (let i = 0; i < frame.samples; i++) {
                 this.left[i] = bytes.readInt16LE(frame.pixels + i * 4) / 32768;
                 this.right[i] = bytes.readInt16LE(frame.pixels + i * 4 + 2) / 32768;

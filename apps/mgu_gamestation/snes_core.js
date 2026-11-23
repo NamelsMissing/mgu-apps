@@ -43,6 +43,8 @@ class SnesGame {
         if (this.saveSize && save && save.length === this.saveSize) this.snes.mmu.sram.set(save, 0);
     }
     tick(pads) {
+        // The DSP is clocked even while muted. Its output belongs to this frame only.
+        this.snes.apu.dsp.samplePos = 0;
         this.snes.mmu.joy1 = mask(pads[0]);
         this.snes.mmu.joy2 = mask(pads[1]);
         quiet(() => this.snes.frame());
