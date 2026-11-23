@@ -24,7 +24,8 @@ function plain(name) {
     return !!name && name.length <= 120 && !/[\/\\\0]/.test(name) && name[0] !== '.';
 }
 function allowed(kind, name) {
-    return !!EXTENSIONS[kind] && EXTENSIONS[kind].some(ext => String(name).toLowerCase().endsWith(ext));
+    return kind === 'mine' ? name === 'mineworks' :
+        !!EXTENSIONS[kind] && EXTENSIONS[kind].some(ext => String(name).toLowerCase().endsWith(ext));
 }
 /** Title shown for a ROM file: no extension, underscores as spaces. */
 function title(name) {
@@ -214,6 +215,7 @@ class Library {
         const l = this.state.last;
         if (!l) return null;
         if (l.kind === 'arcade') return {kind: 'arcade', name: 'pong', title: 'Pong'};
+        if (l.kind === 'mine' && l.name === 'mineworks') return {kind: 'mine', name: l.name, title: 'Mineworks Tycoon'};
         return this.has(l.kind, l.name) ? {kind: l.kind, name: l.name, title: title(l.name)} : null;
     }
 }
