@@ -11,7 +11,7 @@ const os = require('os');
 const url = require('url');
 const page = require('./phone_page');
 const {Library, EXTENSIONS, safeName} = require('./library');
-const {detect, validRom, maxRom, platforms} = require('./core_registry');
+const {detect, validRom, maxRom, platforms, byId} = require('./core_registry');
 
 const PORT = 18878;
 const NET_STATUS_PORT = 18978;
@@ -172,6 +172,7 @@ class ControllerServer {
         const limit = maxRom(kind), tooLarge = 'File too large (max ' + limit / 1048576 + ' MiB)';
         if (declared > limit) return reply(res, 413, tooLarge);
         if (this.activeUpload) return reply(res, 409, 'Another upload is in progress');
+        if (byId[kind].disc) return this.uploadDisc(req, res, kind, name, replace, limit, tooLarge);
         this.activeUpload = req;
         let size = 0, buffers = [], done = false;
         const deadline = setTimeout(() => req.destroy(), 60000);
@@ -209,6 +210,54 @@ class ControllerServer {
                 reply(res, 500, 'Cannot store the game: ' + e.message);
             }
         });
+    }
+    uploadDisc(req, res, kind, name, replace, limit, tooLarge) {
+        let upload;
+        try { upload = this.library.stageDisc(kind, name, replace); }
+        catch (e) { return reply(res, 500, 'Cannot start the upload: ' + e.message); }
+        const stream = upload.stream;
+        let size = 0, done = false;
+        this.activeUpload = req;
+        const deadline = setTimeout(() => { finish(); req.destroy(); }, 15 * 60 * 1000);
+        const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(deadline);
+            this.activeUpload = null;
+            req.unpipe(stream);
+            try { upload.discard(); }
+            catch (e) { this.log.warn('[GameStation] disc upload cleanup: ' + e.message); }
+        };
+        req.on('aborted', finish);
+        req.on('error', finish);
+        res.on('close', finish);
+        req.on('data', part => {
+            size += part.length;
+            if (!done && size > limit) {
+                finish();
+                res.setHeader('Connection', 'close');
+                reply(res, 413, tooLarge);
+            }
+        });
+        const failure = error => {
+            if (done) return;
+            finish();
+            if (error.code === 'EEXIST') return reply(res, 409, 'A game with this name already exists.');
+            if (error.code === 'INVALID_DISC') return reply(res, 400, error.message);
+            res.setHeader('Connection', 'close');
+            reply(res, 500, 'Cannot store the game: ' + error.message);
+        };
+        stream.on('error', failure);
+        stream.on('finish', () => {
+            if (done) return;
+            try { upload.publish(); }
+            catch (e) { return failure(e); }
+            finish();
+            this.log.info('[GameStation] imported ' + kind + '/' + name + ' (' + size + ' bytes)');
+            if (this.events.upload) this.events.upload(kind, name);
+            reply(res, 201, 'Added ' + name + '. Pick it on the BMW screen.');
+        });
+        req.pipe(stream);
     }
     remove(res, query) {
         const kind = query.platform, name = String(query.name || '');

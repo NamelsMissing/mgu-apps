@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const EventEmitter = require('events');
+const {PassThrough} = require('stream');
 const Module = require('module');
 
 const APP = path.join(__dirname, '..', 'apps', 'mgu_gamestation');
@@ -78,7 +79,7 @@ function testLibrary() {
         fs.writeFileSync(path.join(dir, 'roms', 'nes', ' old.nes'), nesRom());
         assert.deepStrictEqual(lib.list('nes').map(g => g.name), ['alpha game.nes', ' old.nes', 'Zeta.nes'].sort((a, b) =>
             title(a).toLowerCase().localeCompare(title(b).toLowerCase())));
-        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0, chip8: 0, sms: 0, gg: 0, genesis: 0, gba: 0, a26: 0, a78: 0, pce: 0, vb: 0, ws: 0, ngp: 0});
+        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0, chip8: 0, sms: 0, gg: 0, genesis: 0, gba: 0, a26: 0, a78: 0, pce: 0, vb: 0, ws: 0, ngp: 0, ps1: 0});
         // saves: written only when changed, atomically
         assert.strictEqual(lib.loadSave('nes', 'Zeta.nes'), null);
         assert.strictEqual(lib.store('nes', 'Zeta.nes', Buffer.from([1, 2, 3])), true);
@@ -212,6 +213,21 @@ function call(server, method, url, remote, body) {
     if (method === 'POST') { if (body) req.emit('data', body); req.emit('end'); }
     return res;
 }
+function uploadDisc(server, name, body, replace) {
+    return new Promise(resolve => {
+        const req = new PassThrough();
+        req.socket = {remoteAddress: '172.16.222.20'};
+        req.method = 'POST';
+        req.url = '/rom?t=' + server.token + '&platform=ps1&name=' + encodeURIComponent(name) +
+            (replace ? '&replace=1' : '');
+        req.headers = {};
+        const res = response();
+        res.end = () => resolve(res.status);
+        server.request(req, res);
+        req.write(body.slice(0, 11));
+        req.end(body.slice(11));
+    });
+}
 function maskedFrame(obj) {
     const payload = Buffer.from(JSON.stringify(obj)), key = Buffer.from([9, 8, 7, 6]);
     const wire = Buffer.alloc(6 + payload.length);
@@ -248,6 +264,15 @@ async function testServer() {
         assert.strictEqual(call(server, 'POST', '/delete?t=' + t + '&platform=nes&name=nope.nes').status, 404);
         assert.strictEqual(call(server, 'POST', '/delete?t=' + t + '&platform=nes&name=My%20Game.nes').status, 200);
         assert.deepStrictEqual(seen.filter(s => !/^removing/.test(s)), ['up:My Game.nes', 'up:My Game.nes', 'rm:My Game.nes']);
+        const iso = Buffer.alloc(17 * 2048);
+        iso.write('\x01CD001\x01', 16 * 2048, 'binary');
+        assert.strictEqual(await uploadDisc(server, 'Disc.iso', iso), 201);
+        assert.strictEqual(await uploadDisc(server, 'Disc.iso', iso), 409);
+        assert.strictEqual(await uploadDisc(server, 'Disc.iso', Buffer.alloc(32), true), 400);
+        const disc = server.library.read('ps1', 'Disc.iso');
+        assert.strictEqual(disc, path.join(dir, 'roms', 'ps1', 'Disc.iso'));
+        assert.ok(fs.readFileSync(disc).equals(iso), 'a rejected replacement leaves the disc intact');
+        assert.deepStrictEqual(fs.readdirSync(path.dirname(disc)), ['Disc.iso'], 'temporary upload files are removed');
         assert.ok(server.url(2).indexOf('http://172.16.222.1:') === 0);
 
         // pads: a pause command, state pushed to the phone, slot takeover after silence

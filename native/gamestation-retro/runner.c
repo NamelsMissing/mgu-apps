@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 enum { MAX_WIDTH = 768, MAX_HEIGHT = 512, MAX_AUDIO = 4096,
@@ -16,7 +17,7 @@ enum { MAX_WIDTH = 768, MAX_HEIGHT = 512, MAX_AUDIO = 4096,
 static const struct { const char *id, *file; } cores[] = {
     {"gba", "gba.so"}, {"a26", "a26.so"}, {"pce", "pce.so"},
     {"vb", "vb.so"}, {"ws", "ws.so"}, {"a78", "a78.so"},
-    {"ngp", "ngp.so"}
+    {"ngp", "ngp.so"}, {"ps1", "ps1.so"}
 };
 
 static struct retro_game_info_ext content;
@@ -27,7 +28,7 @@ static int16_t pcm[MAX_AUDIO * 2];
 static size_t samples;
 static int frame_error;
 static FILE *protocol;
-static bool ngp;
+static bool ngp, ps1;
 
 static bool environment(unsigned cmd, void *data)
 {
@@ -43,6 +44,11 @@ static bool environment(unsigned cmd, void *data)
         struct retro_variable *variable = data;
         variable->value = NULL;
         if (!strcmp(variable->key, "gpsp_bios")) variable->value = "builtin";
+        if (ps1) {
+            if (!strcmp(variable->key, "pcsx_rearmed_bios")) variable->value = "HLE";
+            if (!strcmp(variable->key, "pcsx_rearmed_memcard1")) variable->value = "libretro";
+            if (!strcmp(variable->key, "pcsx_rearmed_memcard2")) variable->value = "none";
+        }
         return variable->value != NULL;
     }
     case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT: {
@@ -54,8 +60,8 @@ static bool environment(unsigned cmd, void *data)
     }
     case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY:
     case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY:
-        if (!ngp) return false;
-        /* Beetle NGP's standalone flash files are outside the SRAM protocol. */
+        if (!ngp && !ps1) return false;
+        /* Block core-managed files. PS1 uses HLE and the frontend memory card. */
         *(const char **)data = "/dev/null";
         return true;
     case RETRO_ENVIRONMENT_GET_GAME_INFO_EXT:
@@ -181,9 +187,14 @@ int main(int argc, char **argv)
     if (output < 0 || dup2(STDERR_FILENO, STDOUT_FILENO) < 0) return 2;
     protocol = fdopen(output, "wb");
     if (!protocol) return 2;
-    const char *ext = strrchr(argv[2], '.');
-    if (!ext || strchr(argv[2], '/') || strchr(argv[2], '\\')) return 2;
     ngp = !strcmp(argv[1], "ngp");
+    ps1 = !strcmp(argv[1], "ps1");
+    const char *base = strrchr(argv[2], '/');
+    if (ps1 ? argv[2][0] != '/' : base != NULL) return 2;
+    base = base ? base + 1 : argv[2];
+    const char *ext = strrchr(base, '.');
+    if (!ext || strchr(base, '\\')) return 2;
+    if (ps1 && strcasecmp(ext, ".chd") && strcasecmp(ext, ".iso")) return 2;
     void *core = load_core(argv[1]);
     if (!core) {
         const char *error = dlerror();
@@ -215,14 +226,14 @@ int main(int argc, char **argv)
 
     uint32_t sizes[2];
     if (retro_api_version() != RETRO_API_VERSION || fread(sizes, 4, 2, stdin) != 2 ||
-        !sizes[0] || sizes[0] > MAX_ROM || sizes[1] > MAX_SAVE) return 2;
-    uint8_t *rom = malloc(sizes[0]), *before = malloc(MAX_SAVE);
-    if (!rom || !before || fread(rom, 1, sizes[0], stdin) != sizes[0] ||
+        (ps1 ? sizes[0] != 0 : !sizes[0] || sizes[0] > MAX_ROM) || sizes[1] > MAX_SAVE) return 2;
+    uint8_t *rom = ps1 ? NULL : malloc(sizes[0]), *before = malloc(MAX_SAVE);
+    if ((!ps1 && (!rom || fread(rom, 1, sizes[0], stdin) != sizes[0])) || !before ||
         fread(before, 1, sizes[1], stdin) != sizes[1]) return 2;
     char stem[121];
-    size_t stem_length = (size_t)(ext - argv[2]);
+    size_t stem_length = (size_t)(ext - base);
     if (!stem_length || stem_length >= sizeof(stem)) return 2;
-    memcpy(stem, argv[2], stem_length);
+    memcpy(stem, base, stem_length);
     stem[stem_length] = '\0';
     content.full_path = argv[2];
     content.name = stem;
@@ -245,7 +256,7 @@ int main(int argc, char **argv)
     retro_set_input_state(input_state);
     retro_init();
     if (!retro_load_game(&game)) {
-        fprintf(stderr, "Retro core rejected the cartridge\n");
+        fprintf(stderr, "Retro core rejected the game image\n");
         return 2;
     }
     struct retro_system_av_info info = {0};

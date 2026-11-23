@@ -35,7 +35,8 @@ header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:
 .hbtn{background:none;border:1px solid var(--edge);color:var(--text);border-radius:999px;padding:7px 13px;font:inherit;font-size:13px;font-weight:600}
 #pad{flex:1;display:grid;grid-template-columns:1fr auto 1fr;grid-template-rows:auto 1fr auto;align-items:center;justify-items:center;padding:10px 12px 14px;gap:8px;min-height:0}
 .shoulder{grid-row:1;width:100%;max-width:200px;height:46px;border-radius:12px 12px 22px 22px}
-#lbtn{grid-column:1;justify-self:start}#rbtn{grid-column:3;justify-self:end}
+#left-shoulders,#right-shoulders{display:flex;align-items:center;gap:6px;grid-row:1;width:100%}
+#left-shoulders{grid-column:1}#right-shoulders{grid-column:-2;justify-content:flex-end}
 #dpad{grid-column:1;grid-row:2;position:relative;width:min(44vw,210px);height:min(44vw,210px);touch-action:none}
 #dpad .arm{position:absolute;background:var(--key);border:1px solid #344055}
 #dpad .h{left:0;right:0;top:33.3%;height:33.4%;border-radius:14px}#dpad .v{top:0;bottom:0;left:33.3%;width:33.4%;border-radius:14px}
@@ -52,6 +53,7 @@ header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:
 #actions{grid-column:3;grid-row:2;position:relative;width:min(44vw,210px);height:min(44vw,210px)}
 .face{position:absolute;width:36%;height:36%;border-radius:50%;font-size:21px}
 #a{right:0;top:32%}#b{left:32%;bottom:0}#x{left:32%;top:0}#y{left:0;top:32%}
+.playstation #a{left:32%;right:auto;top:auto;bottom:0}.playstation #b{left:auto;right:0;top:32%;bottom:auto}
 #cbtn{left:0;top:32%}
 #a,#b,#cbtn{background:#3a2440;border-color:#7c4a86}
 .key{background:var(--key);border:1px solid #344055;color:var(--text);font-weight:800;font-family:inherit;touch-action:none;display:flex;align-items:center;justify-content:center}
@@ -81,7 +83,8 @@ input[type=file]{width:100%;color:var(--text);margin:8px 0}
 </style></head><body>
 <header><span class="badge">P<span id="player">1</span></span><span id="now">GameStation</span><span id="status">CONNECTING</span><button class="hbtn" id="pause" hidden>Pause</button><button class="hbtn" id="open">Games</button></header>
 <main id="pad">
-<button class="key shoulder" id="lbtn" data-key="l">L</button><button class="key shoulder" id="rbtn" data-key="r">R</button>
+<div id="left-shoulders"><button class="key shoulder" id="lbtn" data-key="l">L</button><button class="key shoulder" data-key="l2">L2</button></div>
+<div id="right-shoulders"><button class="key shoulder" data-key="r2">R2</button><button class="key shoulder" id="rbtn" data-key="r">R</button></div>
 <div id="dpad"><div class="arm h"></div><div class="arm v"></div><div class="hub"></div>
 <div class="glow" id="g-up"></div><div class="glow" id="g-down"></div><div class="glow" id="g-left"></div><div class="glow" id="g-right"></div>
 <div class="tri" style="left:33.3%;top:0">&#9650;</div><div class="tri" style="left:33.3%;bottom:0">&#9660;</div><div class="tri" style="left:0;top:33.3%">&#9664;</div><div class="tri" style="right:0;top:33.3%">&#9654;</div></div>
@@ -128,7 +131,14 @@ function show(){var s=$('status'),p=$('pause'),n=$('now');
     state.kind==='a78'?(key==='a'?'2':'1'):key.toUpperCase();
   if(key==='start')el.textContent=state.kind==='sms'||state.kind==='a78'?'PAUSE':
     state.kind==='a26'?'RESET':state.kind==='pce'?'RUN':state.kind==='ngp'?'OPTION':'START';
-  if(key==='x')el.textContent=state.kind==='a78'?'RESET':'X'});
+  if(key==='x')el.textContent=state.kind==='a78'?'RESET':'X';
+  if(key==='y')el.textContent='Y';
+  if(key==='l'||key==='r')el.textContent=key.toUpperCase();
+  if(state.kind==='ps1'){
+   var labels={a:'✕',b:'○',x:'△',y:'□',l:'L1',r:'R1'};
+   if(labels[key])el.textContent=labels[key]
+  }});
+ $('pad').classList.toggle('playstation',state.kind==='ps1');
  $('secondpad').hidden=!play||allowed.indexOf('rUp')<0;
  $('dpad').hidden=!play||allowed.indexOf('up')<0;$('hexpad').hidden=!play||state.kind!=='chip8';
  $('actions').hidden=!play||allowed.indexOf('a')<0;

@@ -60,6 +60,9 @@ const platforms = [
     native('ngp', 'NEO GEO POCKET', 'Neo Geo Pocket / Color', ['.ngp', '.ngc'], 1,
         DIRECTIONS.concat(['a', 'b', 'start']),
         bytes => bytes.length >= 32768 && bytes.toString('ascii', 0, 28).includes('SNK CORPORATION'), {tag: 'NGP'}),
+    native('ps1', 'PLAYSTATION', 'PlayStation', ['.chd', '.iso'], 2,
+        STANDARD.concat(['x', 'y', 'l', 'r', 'l2', 'r2']), null,
+        {tag: 'PS1', battery: true, disc: true, maxRom: 800 * 1024 * 1024}),
 ];
 
 function validNes(bytes) {
@@ -95,7 +98,7 @@ function detect(name) {
 function maxRom(kind) { return byId[kind] && byId[kind].maxRom || MAX_ROM; }
 
 function validRom(kind, name, bytes) {
-    return !!(byId[kind] && detect(name) === kind && Buffer.isBuffer(bytes) &&
+    return !!(byId[kind] && byId[kind].validate && detect(name) === kind && Buffer.isBuffer(bytes) &&
         bytes.length <= maxRom(kind) && byId[kind].validate(bytes));
 }
 

@@ -1,4 +1,4 @@
-# MGU GameStation 0.5.0
+# MGU GameStation 0.6.0
 
 GameStation runs retro games offline on BMW iDrive 7 with the MGU Node.js 8 OAP runtime. The BMW screen renders the games. The app-menu icon uses 98 × 81 visible artwork centred in its 140 × 140 transparent canvas. Phones provide controls and ROM management over the car's local Wi-Fi. Bring your own legally obtained ROMs. Pong is built in.
 
@@ -23,6 +23,7 @@ Local tests use original synthetic programs. BMW installation, input, render tim
 | Virtual Boy | Beetle VB, `.vb` | 2D display | Stereo | 1, two phone D-pads | Cartridge SRAM where supported | Open, experimental |
 | WonderSwan / Color | Beetle WonderSwan, `.ws`, `.wsc` | Landscape or portrait | Stereo | 1, two phone D-pads | Cartridge SRAM/EEPROM where supported | Open, experimental |
 | Neo Geo Pocket / Color | Beetle NGP, `.ngp`, `.ngc` | 160 × 152 | Stereo | 1, Option | Flash persistence open | Open, experimental |
+| PlayStation | PCSX ReARMed, single-disc `.chd` (v5) or `.iso` | Software GPU | Stereo | 2 digital pads | One 128 KiB memory card per image | Host tested, experimental |
 
 The Sega 8-bit path uses NTSC, direct cartridge boot and the standard Sega mapper. PAL timing, alternate mappers, FM sound, link cable and Sega 8-bit battery RAM are outside this implementation. Super-CHIP is selected by the `.sc8` suffix. CHIP-8 interpreter quirks vary across ROMs. The tests exercise selected opcodes, graphics and timers. Mega Drive emulation inherits the compatibility limits of mdcore 0.1.0 and exposes three-button controllers. Generic `.bin`, `.smd` and firmware dumps are outside the ROM registry.
 
@@ -31,10 +32,12 @@ The Sega 8-bit path uses NTSC, direct cartridge boot and the standard Sega mappe
 1. Install **MGU GameStation** from the `NamelsMissing/mgu-apps` MGU Store source on `main`. The catalog declares `idrive7-renderd`, `mgu-inputgate`, **GameStation Phone Port** (`mgu-game-net`) **GameStation PCM Output** (`mgu-gamestation-audio`) and **GameStation Retro Cores** (`mgu-gamestation-retro`).
 2. Open the app while parked. **Games** shows console counts, ROMs, refresh, delete and Continue. **Arcade** starts Pong without an upload. **Playing** offers Pause, Resume and Quit. Settings provide fit-to-stage and integer scaling in renderer coordinates.
 3. Open **Controllers** and choose iDrive alone, one phone, two phones, or iDrive P1 plus phone P2. One-player systems use P1. Pair each phone using its own QR code over BMW Wi-Fi. The app prefers the IPv4 address of `wlan_bridge` and can discover a unique BMW hotspot address. If no such address is visible to OAP, it reports that in Controllers. The firewall helper keeps the port scoped to its existing BMW interface.
-4. Open **Games** on a paired phone to upload, list, replace or delete ROMs. Uploads are capped at 32 MiB for GBA and 8 MiB for other platforms, expire after 60 seconds and run one at a time. The server identifies the format by its supported suffix and checks the applicable cartridge header or size before publishing the file.
+4. Open **Games** on a paired phone to upload, list, replace or delete games. Uploads run one at a time. Cartridge uploads expire after 60 seconds and are capped at 32 MiB for GBA and 8 MiB for the other cartridge systems. PlayStation disc uploads stream to disk, expire after 15 minutes and are capped at 800 MiB per image. The server checks the file header or size before publishing it.
 5. Open **Diagnostics** for frame time, memory, FPS, connectivity, renderer setting, storage and audio status. Use Older and Newer to browse the bounded log. The newest page follows new events. Copy or download the text from the paired phone's Games panel.
 
 Virtual Boy and WonderSwan show their second directional pad on the phone. The phone page selects the active console's controls and reconnects automatically. Input expires after 1.6 seconds of silence. The slot becomes available after 2.5 seconds. The iDrive game control maps tilt to directions, press to A, double press to Start, and long press to Select where applicable. Clockwise and counterclockwise steps are configurable in Settings. Choose one of two CHIP-8 iDrive presets or use all sixteen keys on the phone.
+
+For PlayStation, use a phone for the full digital pad, including L2 and R2. Use a Mode 2 CHD v5 from your own disc for games with multiple tracks, or a 2048-byte-sector ISO for a single data track. The core uses its built-in HLE BIOS. Game compatibility, JIT permissions and sustained performance still need verification on an MGU.
 
 ## Safety and storage
 
@@ -80,8 +83,7 @@ Removing SNES per-instruction diagnostic allocation lowered the synthetic frame 
 ## Further platform investigations
 
 - **Mega Drive**. The published mdcore v0.1.0 Wasm runs headlessly under modern Node but fails to decode under Node.js 8.17. The bundled MIT C source is built for the original WebAssembly feature set with Zig 0.14.1. That binary runs in Node 8 with no imports or browser APIs. It uses a 16 MiB linear memory and exports framebuffer, PCM, pad and SRAM functions. A separate x86-64 native probe also ran 600 synthetic frames with scripted input and video/PCM output. No second service is needed for the checked Node 8 path. [mdcore v0.1.0](https://github.com/andrewnakas/mdcore/tree/v0.1.0)
-- **Nintendo 64 and Nintendo DS.** Candidate cores exist. Their head-unit timing and memory budget are open. DS also needs a second screen and a touch-oriented control path.
-- **PlayStation.** A native x86-64 PCSX ReARMed interpreter ran an original PS-X EXE through a software probe at about 48 ms per frame (roughly 21 FPS) at 640 × 480 on the test host. A faster rendering path, vehicle measurements, disc streaming, memory cards and media import remain open. [PCSX ReARMed](https://github.com/libretro/pcsx_rearmed/tree/0f544ce)
+- **Nintendo 64 and Nintendo DS.** Host probes rendered original demo content using software cores. N64 still needs analog and C-button controls and a larger save buffer. DS needs phone stylus input and persistent saves. Their head-unit timing and memory budget are open.
 - **PlayStation 2, PSP, GameCube and Wii.** PCSX2, PPSSPP and Dolphin are separate native emulator projects. Rendering backends, architecture requirements, storage and sustained performance would need testing on the target. Wii also needs controller mapping for pointer or motion input. The GameStation renderer receives software frames from its cores.
 - **Pokémon Mini.** The PokeMini test core booted locally. Its GPL-3.0-or-later license calls for a separate compatibility review before combining it with this GPL-2.0 worker. [PokeMini license](https://github.com/libretro/PokeMini/blob/132111b/LICENSE)
 - **SG-1000 and other cartridge platforms.** Future candidates can use the same native frontend after a compatible core and license review. [EmulatorJS core mapping](https://github.com/EmulatorJS/EmulatorJS/blob/5a65bde/data/src/consts.js)

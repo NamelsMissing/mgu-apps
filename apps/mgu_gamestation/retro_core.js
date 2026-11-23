@@ -9,6 +9,11 @@ const INPUT = ['b', 'y', 'select', 'start', 'up', 'down', 'left', 'right', 'a', 
 function mask(pad, id) {
     if (!pad) return 0;
     let bits = INPUT.reduce((word, key, i) => word | (pad[key] ? 1 << i : 0), 0);
+    if (id === 'ps1') {
+        bits = (bits & ~257) | (pad.a ? 1 : 0) | (pad.b ? 256 : 0);
+        if (pad.l2) bits |= 1 << 12;
+        if (pad.r2) bits |= 1 << 13;
+    }
     if (id === 'a26' && pad.a) bits |= 1;
     if (id === 'ngp') bits = (bits & ~257) | (pad.a ? 1 : 0) | (pad.b ? 256 : 0);
     if (id === 'vb') {
@@ -44,7 +49,8 @@ class RetroGame {
         this.inputEpoch = this.sentEpoch = 0;
         this.timer = this.deadline = null;
         this.error = '';
-        const child = this.child = spawn(opts.helper || HELPER, [id, opts.name], {stdio: ['pipe', 'pipe', 'pipe']});
+        const disc = id === 'ps1';
+        const child = this.child = spawn(opts.helper || HELPER, [id, disc ? bytes : opts.name], {stdio: ['pipe', 'pipe', 'pipe']});
         child.on('error', err => this.fail(err.message));
         child.stdin.on('error', err => {
             if (err.code !== 'EPIPE') this.fail(err.message);
@@ -59,10 +65,10 @@ class RetroGame {
             if (!this.stopped) this.fail(this.error.trim() || 'Native emulator ended (' + (signal || code) + ')');
         });
         const init = Buffer.alloc(8);
-        init.writeUInt32LE(bytes.length, 0);
+        init.writeUInt32LE(disc ? 0 : bytes.length, 0);
         init.writeUInt32LE(this.save ? this.save.length : 0, 4);
         child.stdin.write(init);
-        child.stdin.write(bytes);
+        if (!disc) child.stdin.write(bytes);
         if (this.save) child.stdin.write(this.save);
         this.deadline = setTimeout(() => this.fail('Native emulator did not start'), 5000);
     }

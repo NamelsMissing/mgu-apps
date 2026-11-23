@@ -41,6 +41,27 @@ function writeAtomic(file, data, createOnly) {
     }
 }
 
+function checkDisc(file, name) {
+    const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+    try {
+        const stat = fs.fstatSync(fd);
+        if (stat.isFile() && stat.size <= maxRom('ps1')) {
+            const header = Buffer.alloc(16);
+            if (name.toLowerCase().endsWith('.chd')) {
+                if (fs.readSync(fd, header, 0, 16, 0) === 16 &&
+                    header.toString('ascii', 0, 8) === 'MComprHD' &&
+                    header.readUInt32BE(8) === 124 && header.readUInt32BE(12) === 5 && stat.size > 124) return;
+            } else if (stat.size % 2048 === 0 && fs.readSync(fd, header, 0, 7, 16 * 2048) === 7 &&
+                header.toString('ascii', 1, 6) === 'CD001' && header[6] === 1) return;
+        }
+        const error = new Error('Use a PlayStation CHD v5 or a 2048-byte-sector ISO image.');
+        error.code = 'INVALID_DISC';
+        throw error;
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
 class Library {
     constructor(dataDir) {
         this.dir = dataDir;
@@ -80,7 +101,12 @@ class Library {
     }
     read(kind, name) {
         if (!this.has(kind, name)) throw new Error('Game not found');
-        const bytes = fs.readFileSync(path.join(this.romDir(kind), name));
+        const file = path.resolve(this.romDir(kind), name);
+        if (byId[kind].disc) {
+            checkDisc(file, name);
+            return file;
+        }
+        const bytes = fs.readFileSync(file);
         if (!validRom(kind, name, bytes)) throw new Error('Invalid ROM file');
         return bytes;
     }
@@ -93,6 +119,29 @@ class Library {
         const file = path.join(this.romDir(kind), clean);
         writeAtomic(file, bytes, !replace);
         return clean;
+    }
+    /** Stream a single-file disc to a private temporary file in its destination directory. */
+    stageDisc(kind, name, replace) {
+        if (!byId[kind] || !byId[kind].disc || !plain(name) || !allowed(kind, name))
+            throw new Error('Unsupported disc image name');
+        mkdir(path.join(this.dir, 'roms'));
+        mkdir(this.romDir(kind));
+        const file = path.join(this.romDir(kind), name);
+        const tmp = path.join(this.romDir(kind), '.upload-' + crypto.randomBytes(12).toString('hex'));
+        const fd = fs.openSync(tmp, 'wx', 0o600);
+        const stream = fs.createWriteStream(tmp, {fd});
+        return {
+            stream,
+            publish() {
+                checkDisc(tmp, name);
+                if (replace) fs.renameSync(tmp, file);
+                else fs.linkSync(tmp, file);
+            },
+            discard() {
+                stream.destroy();
+                try { fs.unlinkSync(tmp); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+            }
+        };
     }
     /** Delete a ROM while keeping battery RAM and states. Returns false when it did not exist. */
     remove(kind, name) {
