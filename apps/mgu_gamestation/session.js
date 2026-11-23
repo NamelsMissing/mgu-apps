@@ -18,6 +18,8 @@ class Session {
         const o = options || {};
         this.game = game; this.kind = kind; this.name = name;
         this.now = o.now || Date.now; this.storeSave = o.store || null; this.log = o.log || null;
+        this.audio = o.audio || null;
+        this.frameMs = game.frameMs || FRAME_MS;
         this.paused = false; this.reason = '';
         this.last = 0; this.carry = 0;
         this.samples = []; this.frames = 0;
@@ -50,6 +52,7 @@ class Session {
         this.paused = false; this.reason = ''; this.detail = '';
         this.samples = []; this.last = 0; this.carry = 0;
     }
+    hold() { this.last = 0; this.carry = 0; }
     toggle() { if (this.paused) this.resume(); else this.pause('user'); }
 
     /**
@@ -57,9 +60,9 @@ class Session {
      * of emulated frames run (0 while paused, held or not yet due).
      */
     step(pads, allowed) {
-        if (this.stopped || this.paused || !allowed) { this.last = 0; this.carry = 0; return 0; }
+        if (this.stopped || this.paused || !allowed) { this.hold(); return 0; }
         const now = this.now();
-        if (!this.last) { this.last = now - FRAME_MS; }
+        if (!this.last) { this.last = now - this.frameMs; }
         const elapsed = now - this.last;
         this.last = now;
         if (this.arcade) {
@@ -67,12 +70,22 @@ class Session {
             this.run(() => this.game.tick(pads, Math.max(0.5, Math.min(2, elapsed / FRAME_MS))));
             return 1;
         }
-        const due = elapsed / FRAME_MS + this.carry + 1e-6;     // (float rounding of 1000 / 60)
+        const due = Math.max(0, elapsed) / this.frameMs + this.carry + 1e-6;
         const count = Math.min(MAX_CATCH_UP, Math.floor(due));
-        this.carry = count === MAX_CATCH_UP ? 0 : due - count;      // too far behind: drop the rest
-        for (let i = 0; i < count && !this.paused; i++) this.run(() => this.game.tick(pads, 1));
+        this.carry = due >= MAX_CATCH_UP + 1 ? 0 : due - count;      // too far behind: drop the rest
+        let advanced = 0;
+        for (let i = 0; i < count && !this.paused; i++) {
+            this.run(() => {
+                this.game.tick(pads, 1);
+                if (this.game.getAudioSamples) {
+                    const block = this.game.getAudioSamples();
+                    if (this.audio && block) this.audio(block);
+                }
+            });
+            if (!this.paused) advanced++;
+        }
         if (!this.paused && now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
-        return count;
+        return advanced;
     }
     run(fn) {
         const t0 = this.now();

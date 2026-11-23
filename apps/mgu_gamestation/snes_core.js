@@ -52,6 +52,13 @@ class SnesGame {
             this.snes.ppu.frameBuffer.byteOffset, 512 * 208 * 4);
         this.output(pixels, 512, 208);
     }
+    getAudioSamples() {
+        const dsp = this.snes.apu.dsp, length = dsp.samplePos;
+        dsp.samplePos = 0;
+        return length ? {rate: 32000, frameSamples: 800, left: dsp.sampleBufferL.subarray(0, length),
+            right: dsp.sampleBufferR.subarray(0, length)} : null;
+    }
+    releaseInput() { this.snes.mmu.joy1 = this.snes.mmu.joy2 = 0; }
     /** Battery RAM to keep (a copy), or null when the cartridge has none. */
     sram() {
         if (!this.snes || !this.saveSize) return null;

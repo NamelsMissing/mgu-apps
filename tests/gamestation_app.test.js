@@ -1,6 +1,6 @@
 'use strict';
 
-// node tests/gamestation_app.test.js - GameStation 0.3: library and saves, the game session
+// node tests/gamestation_app.test.js - GameStation 0.4: library and saves, the game session
 // (pacing, pause, overload), battery RAM of all three cores, the phone server's new endpoints,
 // every page of the car UI, and main.js against a stand-in for the kit (parked-only gate,
 // tabs, start / quit / delete). No car, SDK, network or copyrighted ROMs needed.
@@ -78,7 +78,7 @@ function testLibrary() {
         fs.writeFileSync(path.join(dir, 'roms', 'nes', ' old.nes'), nesRom());
         assert.deepStrictEqual(lib.list('nes').map(g => g.name), ['alpha game.nes', ' old.nes', 'Zeta.nes'].sort((a, b) =>
             title(a).toLowerCase().localeCompare(title(b).toLowerCase())));
-        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0});
+        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0, chip8: 0, sms: 0, gg: 0, genesis: 0});
         // saves: written only when changed, atomically
         assert.strictEqual(lib.loadSave('nes', 'Zeta.nes'), null);
         assert.strictEqual(lib.store('nes', 'Zeta.nes', Buffer.from([1, 2, 3])), true);
@@ -91,8 +91,21 @@ function testLibrary() {
         assert.deepStrictEqual(new Library(dir).last(), {kind: 'nes', name: 'Zeta.nes', title: 'Zeta'});
         assert.strictEqual(lib.remove('nes', 'Zeta.nes'), true);
         assert.strictEqual(lib.remove('nes', 'Zeta.nes'), false);
-        assert.strictEqual(lib.loadSave('nes', 'Zeta.nes'), null, 'the save goes with the game');
+        assert.deepStrictEqual(Array.from(lib.loadSave('nes', 'Zeta.nes')), [1, 2, 3], 'deleting a ROM keeps its save');
         assert.strictEqual(new Library(dir).last(), null);
+        const hash = 'ab'.repeat(32);
+        lib.storeState('chip8', hash, 1, {pc: 512});
+        lib.storeState('chip8', hash, 2, {pc: 514});
+        assert.deepStrictEqual(new Library(dir).loadState('chip8', hash, 2), {pc: 514});
+        assert.throws(() => lib.statePath('chip8', '../' + hash, 1), /Invalid/);
+        const stateFile = lib.statePath('chip8', hash, 1);
+        const data = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        data.state.pc = 516;
+        fs.writeFileSync(stateFile, JSON.stringify(data));
+        assert.throws(() => lib.loadState('chip8', hash, 1), /checksum/);
+        data.version = 2;
+        fs.writeFileSync(stateFile, JSON.stringify(data));
+        assert.throws(() => lib.loadState('chip8', hash, 1), /Incompatible/);
         lib.remember('arcade', 'pong');
         assert.strictEqual(lib.last().title, 'Pong');
     } finally { rmrf(dir); }
@@ -187,8 +200,8 @@ function testSaves() {
 
 /* ---------------- phone server ---------------- */
 function response() {
-    return {status: null, body: null, headers: null,
-        writeHead(n, h) { this.status = n; this.headers = h; }, end(b) { this.body = b; }};
+    return Object.assign(new EventEmitter(), {status: null, body: null, headers: null,
+        writeHead(n, h) { this.status = n; this.headers = h; }, end(b) { this.body = b; }});
 }
 function call(server, method, url, remote, body) {
     const req = new EventEmitter();
@@ -307,7 +320,7 @@ function testUi() {
     uiActions = a;
     const keys = cv => cv.targets.map(t => t.key);
     const press = (cv, key) => cv.targets.find(t => t.key === key).run();
-    const platforms = PLATFORMS.map((p, i) => Object.assign({count: [9, 0, 2, 0][i]}, p));
+    const platforms = PLATFORMS.map((p, i) => Object.assign({count: [9, 0, 2, 1][i] || 0}, p));
     const games = n => Array.from({length: n}, (_, i) => ({kind: 'nes', name: 'g' + i + '.nes',
         title: i === 1 ? 'An extremely long game title that will never fit into a single card of the list' : 'Game ' + (i + 1),
         detail: '40 KB' + (i % 2 ? '  ·  save kept' : '')}));
@@ -317,7 +330,7 @@ function testUi() {
         pages: Math.max(1, Math.ceil(n / PAGE_SIZE)), start: page * PAGE_SIZE, total: n});
 
     let cv = render('games', base({list: list(9, 0), last: {kind: 'nes', name: 'g3.nes', title: 'Game 4'}}));
-    assert.deepStrictEqual(keys(cv), ['PLATFORM_0', 'PLATFORM_1', 'PLATFORM_2', 'PLATFORM_3',
+    assert.deepStrictEqual(keys(cv), [...PLATFORMS.map((_, i) => 'PLATFORM_' + i),
         'GAME_0', 'GAME_1', 'GAME_2', 'GAME_3', 'GAME_4', 'GAME_5', 'NEXT', 'CONTINUE', 'DELETE_MODE'],
         'platforms, then the games, then the footer (the knob walks them in this order)');
     press(cv, 'GAME_2'); press(cv, 'NEXT'); press(cv, 'PLATFORM_2'); press(cv, 'CONTINUE');
@@ -360,6 +373,12 @@ function testUi() {
 
     assert.strictEqual(ascii('Pokémon – Gelbe Edition'), 'Pokemon - Gelbe Edition');
     assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 900, h: 450}, 256, 240), {x: 210, y: 0, w: 480, h: 450});
+    assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 900, h: 450}, 256, 240, 'integer'), {x: 322, y: 105, w: 256, h: 240});
+    const icon = fs.readFileSync(path.join(APP, 'icon.png'));
+    assert.strictEqual(icon.readUInt32BE(16), 140);
+    assert.strictEqual(icon.readUInt32BE(20), 140);
+    assert.strictEqual(icon[25], 6, 'BMW app icon retains its RGBA canvas');
+
     console.log('ok: car UI pages (games, delete mode, playing, paused, Pong, controllers) and knob order');
 }
 
@@ -386,7 +405,7 @@ async function testApp() {
     const clicks = {}, hooks = {}, settings = {controllerMode: 'phones', theme: 'ice'}, grabs = [];
     let frame = null, tick = null, speed = null, visible = true, focus = true;
     const ctx = {
-        log: quiet, dataDir: dir, spec: {version: '0.3.0'},
+        log: quiet, dataDir: dir, spec: {version: '0.4.0'},
         settings: {get: k => settings[k], set: (k, v) => { settings[k] = v; }, onChange: () => {}},
         theme: () => THEMES.ice,
         signals: {watch: (iface, inst, handlers) => {
@@ -431,6 +450,26 @@ async function testApp() {
         assert.strictEqual(grabs[grabs.length - 1], false, 'knob released when the car moves');
         assert.ok(keys().indexOf('PAUSE') < 0, 'no resume while moving');
         parked();
+        tick();
+        assert.strictEqual(grabs[grabs.length - 1], true);
+        focus = false; hooks.focus('MAIN', false);
+        assert.strictEqual(grabs[grabs.length - 1], false, 'focus loss releases immediately');
+        focus = true; hooks.focus('MAIN', true);
+        tick();
+        speed({speedVehicleCentreOfGravity: 65535});
+        assert.strictEqual(grabs[grabs.length - 1], false, 'invalid speed invalidates the previous speed');
+        const realNow = Date.now;
+        const parkedAt = realNow();
+        try {
+            Date.now = () => parkedAt;
+            parked();
+            tick();
+            assert.strictEqual(grabs[grabs.length - 1], true);
+            Date.now = () => parkedAt + 5000;
+            tick();
+            assert.strictEqual(grabs[grabs.length - 1], false, 'five-second signal expiry');
+        } finally { Date.now = realNow; }
+        parked();
         // tabs keep the game; the Games page offers to go back
         hooks.tab(PAGE.GAMES);
         assert.ok(keys().indexOf('TO_GAME') >= 0);
@@ -462,6 +501,12 @@ async function testApp() {
         hooks.tab(PAGE.GAMES); press('PLATFORM_3'); press('GAME_0');
         tick(); await new Promise(r => setTimeout(r, 20)); tick();
         assert.deepStrictEqual(keys(), ['PAUSE', 'TO_GAMES', 'TO_PADS', 'QUIT'], 'Pong runs');
+        lib.add('chip8', 'Key.ch8', Buffer.from('1200', 'hex'));
+        hooks.tab(PAGE.GAMES); press('PLATFORM_4'); press('GAME_0');
+        clicks.BTN_DIAG();
+        assert.ok(keys().includes('STATE_SAVE'), 'state slots are available for the CHIP-8 core');
+        press('STATE_SLOT'); press('STATE_SAVE'); press('STATE_LOAD');
+        assert.ok(keys().includes('TONE'), 'diagnostics is accessible from the BMW button bar');
         // screen hidden: held
         visible = false; tick(); visible = true; focus = false; tick(); focus = true;
     } finally {

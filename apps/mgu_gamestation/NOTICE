@@ -1,4 +1,4 @@
-MGU GameStation v0.2.0
+MGU GameStation v0.4.0
 
 This app bundles the following emulator source modules (with module-format
 conversion, Node.js 8 compatibility and SNES diagnostic suppression;
@@ -22,6 +22,16 @@ see tools/vendor_retro_cores.py for the exact modifications):
 4. QR Code Generator for JavaScript, Copyright (c) 2009 Kazuhiko Arase.
    https://github.com/kazuhikoarase/qrcode-generator
    License: MIT (QR_VENDOR_LICENSE.txt).
+
+5. jsmoo SMS/GG, Copyright 2022 raddad772.
+   https://github.com/raddad772/jsmoo/tree/359d18e6ea8a8c1e275954d097071b83e6fdbd24
+   License: MIT (JSMOO_LICENSE.txt). Adaptations and source selection are in
+   tools/vendor_gamestation_sega.py.
+
+6. mdcore v0.1.0, Copyright (c) 2026 mdcore contributors.
+   https://github.com/andrewnakas/mdcore/tree/3db92517338179ea7797af1559255ccecaffb237
+   License: MIT (MDCORE_LICENSE.txt). Corresponding C source is included under
+   tools/gamestation_mdcore and built by tools/vendor_gamestation_genesis.py.
 
 No commercial game ROMs or console firmware are bundled.
 The GameStation code, vendor bundles, and bundling scripts are available

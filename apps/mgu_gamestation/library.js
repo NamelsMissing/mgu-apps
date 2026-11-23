@@ -7,10 +7,10 @@
 // Node 8: no recursive mkdir, no fs.promises. Writes go to a temp file first.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const {consoles: CONSOLES, extensions: EXTENSIONS, MAX_ROM, byId, validRom} = require('./core_registry');
 
-const CONSOLES = ['nes', 'snes', 'gb'];
-const EXTENSIONS = {nes: ['.nes'], snes: ['.sfc', '.smc'], gb: ['.gb', '.gbc']};
-const MAX_ROM = 8 * 1024 * 1024;
+const MAX_STATE = 24 * 1024;
 const MAX_SAVE = 256 * 1024;
 
 function mkdir(p) { try { fs.mkdirSync(p); } catch (e) { if (e.code !== 'EEXIST') throw e; } }
@@ -30,10 +30,15 @@ function allowed(kind, name) {
 function title(name) {
     return String(name).replace(/\.[A-Za-z0-9]{2,4}$/, '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || String(name);
 }
-function writeAtomic(file, data) {
-    const tmp = file + '.tmp';
-    fs.writeFileSync(tmp, data);
-    fs.renameSync(tmp, file);
+function writeAtomic(file, data, createOnly) {
+    const tmp = file + '.' + crypto.randomBytes(6).toString('hex') + '.tmp';
+    try {
+        fs.writeFileSync(tmp, data, {flag: 'wx', mode: 0o600});
+        if (createOnly) fs.linkSync(tmp, file);
+        else fs.renameSync(tmp, file);
+    } finally {
+        try { fs.unlinkSync(tmp); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    }
 }
 
 class Library {
@@ -52,7 +57,11 @@ class Library {
         try { names = fs.readdirSync(this.romDir(kind)); } catch (_) { return []; }
         return names.filter(n => allowed(kind, n) && plain(n)).map(name => {
             let size = 0, saved = false;
-            try { size = fs.statSync(path.join(this.romDir(kind), name)).size; } catch (_) { return null; }
+            try {
+                const stat = fs.lstatSync(path.join(this.romDir(kind), name));
+                if (!stat.isFile() || stat.size > MAX_ROM) return null;
+                size = stat.size;
+            } catch (_) { return null; }
             try { saved = fs.statSync(this.saveFile(kind, name)).size > 0; } catch (_) { saved = false; }
             return {kind, name, title: title(name), size, saved};
         }).filter(Boolean).sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()));
@@ -63,29 +72,32 @@ class Library {
         return out;
     }
     has(kind, name) {
-        return allowed(kind, name) && plain(name) && fs.existsSync(path.join(this.romDir(kind), name));
+        if (!allowed(kind, name) || !plain(name)) return false;
+        try {
+            const stat = fs.lstatSync(path.join(this.romDir(kind), name));
+            return stat.isFile() && stat.size <= MAX_ROM;
+        } catch (_) { return false; }
     }
     read(kind, name) {
         if (!this.has(kind, name)) throw new Error('Game not found');
         const bytes = fs.readFileSync(path.join(this.romDir(kind), name));
-        if (bytes.length > MAX_ROM) throw new Error('ROM is too large');
+        if (!validRom(kind, name, bytes)) throw new Error('Invalid ROM file');
         return bytes;
     }
     /** Store an imported ROM. replace: overwrite a file of the same name. Returns the stored name. */
     add(kind, name, bytes, replace) {
         const clean = safeName(name);
         if (!clean || !allowed(kind, clean)) throw new Error('Unsupported file name');
+        if (!validRom(kind, clean, bytes)) throw new Error('Invalid ROM file');
         mkdir(path.join(this.dir, 'roms')); mkdir(this.romDir(kind));
         const file = path.join(this.romDir(kind), clean);
-        if (replace) writeAtomic(file, bytes);
-        else fs.writeFileSync(file, bytes, {flag: 'wx'});
+        writeAtomic(file, bytes, !replace);
         return clean;
     }
-    /** Delete a ROM and its save. Returns false when it did not exist. */
+    /** Delete a ROM while keeping battery RAM and states. Returns false when it did not exist. */
     remove(kind, name) {
         if (!this.has(kind, name)) return false;
         fs.unlinkSync(path.join(this.romDir(kind), name));
-        try { fs.unlinkSync(this.saveFile(kind, name)); } catch (_) { /* no save */ }
         if (this.state.last && this.state.last.kind === kind && this.state.last.name === name) {
             this.state.last = null; this.writeState();
         }
@@ -107,6 +119,31 @@ class Library {
         mkdir(path.join(this.dir, 'saves')); mkdir(path.join(this.dir, 'saves', kind));
         writeAtomic(this.saveFile(kind, name), bytes);
         return true;
+    }
+
+    statePath(kind, hash, slot) {
+        if (!byId[kind] || !byId[kind].states || !/^[0-9a-f]{64}$/.test(hash) || ![1, 2, 3].includes(slot))
+            throw new Error('Invalid save slot');
+        return path.join(this.dir, 'states', kind, hash + '.' + slot + '.json');
+    }
+    storeState(kind, hash, slot, state) {
+        const file = this.statePath(kind, hash, slot);
+        const checksum = crypto.createHash('sha256').update(JSON.stringify(state)).digest('hex');
+        const data = JSON.stringify({version: 1, kind, hash, checksum, state});
+        if (Buffer.byteLength(data) > MAX_STATE) throw new Error('Save state too large');
+        mkdir(path.join(this.dir, 'states')); mkdir(path.dirname(file));
+        writeAtomic(file, data);
+    }
+    loadState(kind, hash, slot) {
+        const file = this.statePath(kind, hash, slot);
+        const stat = fs.lstatSync(file);
+        if (!stat.isFile() || stat.size > MAX_STATE) throw new Error('Invalid save state file');
+        const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (!data || data.version !== 1 || data.kind !== kind || data.hash !== hash || !data.state)
+            throw new Error('Incompatible save state');
+        if (data.checksum !== crypto.createHash('sha256').update(JSON.stringify(data.state)).digest('hex'))
+            throw new Error('Save state checksum mismatch');
+        return data.state;
     }
 
     /* ---------------- last game ---------------- */

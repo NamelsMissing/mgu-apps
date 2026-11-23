@@ -11,12 +11,12 @@ const os = require('os');
 const url = require('url');
 const page = require('./phone_page');
 const {Library, EXTENSIONS, MAX_ROM, safeName} = require('./library');
+const {detect, validRom, platforms} = require('./core_registry');
 
 const PORT = 18878;
 const NET_STATUS_PORT = 18978;
 const MAX_MESSAGE = 1024;
-const BUTTONS = ['up', 'down', 'left', 'right', 'a', 'b', 'x', 'y', 'l', 'r', 'select', 'start'];
-const FALLBACK_HOST = '172.16.222.97';
+const BUTTONS = new Set([].concat(...platforms.map(p => p.buttons)));
 const STALE_MS = 1600;               // phones send their buttons every 400 ms
 const TAKEOVER_MS = 2500;            // a silent slot may be taken by a reconnecting phone
 
@@ -32,22 +32,15 @@ function privateAddress(ip) {
 }
 function loopback(ip) { ip = bare(ip); return ip === '127.0.0.1' || ip === '::1'; }
 /** The car's Wi-Fi address (172.16.222.x on the BMW hotspot), or another private one. */
-function ownAddress() {
+function ownAddress(interfaces) {
     let all;
-    try { all = os.networkInterfaces(); }
-    catch (_) { return FALLBACK_HOST; } // No interface enumeration inside some OAP sandboxes.
-    const addresses = [];
-    Object.keys(all).forEach(k => (all[k] || []).forEach(i => {
-        if (i.family === 'IPv4' && !i.internal && privateAddress(i.address)) addresses.push(i.address);
-    }));
-    return addresses.find(ip => ip.indexOf('172.16.222.') === 0) || addresses[0] || FALLBACK_HOST;
-}
-function validRom(kind, name, bytes) {
-    if (!EXTENSIONS[kind] || !EXTENSIONS[kind].some(ext => String(name).toLowerCase().endsWith(ext))) return false;
-    if (!bytes || bytes.length < 32 || bytes.length > MAX_ROM) return false;
-    if (kind === 'nes') return bytes.slice(0, 4).toString('binary') === 'NES\x1a';
-    if (kind === 'gb') return bytes.length >= 0x150;
-    return true; // SNES copier headers may or may not be present.
+    try { all = interfaces || os.networkInterfaces(); }
+    catch (_) { return null; } // No interface enumeration inside some OAP sandboxes.
+    const valid = i => (i.family === 'IPv4' || i.family === 4) && !i.internal && privateAddress(i.address);
+    const bridge = (all.wlan_bridge || []).filter(valid);
+    const wifi = [].concat(...Object.keys(all).map(k => all[k] || [])).filter(i => valid(i) &&
+        i.address.startsWith('172.16.222.'));
+    return bridge.length === 1 ? bridge[0].address : wifi.length === 1 ? wifi[0].address : null;
 }
 const HEADERS = {'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'self' 'unsafe-inline' ws:; object-src 'none'; frame-ancestors 'none'"};
@@ -83,6 +76,7 @@ class ControllerServer {
         this.resolveAddress = this.events.address || ownAddress;
         this.host = null; this.hostAt = 0;
         this.net = {known: false, ready: false, error: ''}; this.netAt = 0; this.netBusy = false;
+        this.activeUpload = null;
     }
     get address() { return this.currentHost(); }
     /** Re-read the Wi-Fi address now and then: the hotspot may come up after the app. */
@@ -90,7 +84,17 @@ class ControllerServer {
         if (!this.hostAt || Date.now() - this.hostAt >= 3000) { this.host = this.resolveAddress(); this.hostAt = Date.now(); }
         return this.host;
     }
-    url(player) { return 'http://' + this.currentHost() + ':' + this.port + '/?p=' + player + '&t=' + this.token; }
+    url(player) {
+        const host = this.currentHost();
+        return host ? 'http://' + host + ':' + this.port + '/?p=' + player + '&t=' + this.token : null;
+    }
+    releasePads() {
+        this.players.forEach(p => {
+            if (!p) return;
+            p.waitForRelease = Object.keys(p.keys).length > 0 || p.waitForRelease;
+            p.keys = {};
+        });
+    }
     connected(p) { return !!(p && !p.closed && Date.now() - p.lastSeen < STALE_MS); }
     status() { return this.players.map(p => this.connected(p)); }
     pads() { return this.players.map(p => this.connected(p) ? p.keys : {}); }
@@ -143,6 +147,10 @@ class ControllerServer {
         if (!privateAddress(req.socket.remoteAddress)) return reply(res, 403, 'Local network only');
         if (q.query.t !== this.token) return reply(res, 403, 'Invalid pairing link. Scan the QR code on the BMW screen again.');
         if (req.method === 'GET' && q.pathname === '/') return reply(res, 200, page, 'text/html; charset=utf-8');
+        if (req.method === 'GET' && q.pathname === '/diagnostics' && this.events.diagnosticLog) {
+            if (q.query.download === '1') res.setHeader('Content-Disposition', 'attachment; filename="gamestation.log"');
+            return reply(res, 200, this.events.diagnosticLog());
+        }
         if (req.method === 'GET' && q.pathname === '/roms') return json(res, 200, this.catalog());
         if (req.method === 'POST' && q.pathname === '/rom') return this.upload(req, res, q.query);
         if (req.method === 'POST' && q.pathname === '/delete') return this.remove(res, q.query);
@@ -156,20 +164,39 @@ class ControllerServer {
         return {games, state: this.events.state ? this.events.state() : {}};
     }
     upload(req, res, query) {
-        const kind = query.platform, name = safeName(query.name), replace = query.replace === '1';
+        const name = safeName(typeof query.name === 'string' ? query.name : '');
+        const kind = detect(name), replace = query.replace === '1';
         const declared = Number(req.headers['content-length'] || 0);
-        if (!EXTENSIONS[kind] || !name || declared > MAX_ROM) return reply(res, 400, 'Invalid game file or too large (max 8 MB)');
+        if (!kind || query.platform !== undefined && query.platform !== kind)
+            return reply(res, 400, 'Unsupported or ambiguous ROM format');
+        if (declared > MAX_ROM) return reply(res, 413, 'File too large (max 8 MB)');
+        if (this.activeUpload) return reply(res, 409, 'Another upload is in progress');
+        this.activeUpload = req;
         let size = 0, buffers = [], done = false;
+        const deadline = setTimeout(() => req.destroy(), 60000);
+        const finish = () => {
+            clearTimeout(deadline);
+            if (this.activeUpload === req) this.activeUpload = null;
+            done = true;
+            buffers = [];
+        };
+        req.on('aborted', finish);
+        req.on('error', finish);
+        res.on('close', finish);
         req.on('data', part => {
             if (done) return;
             size += part.length;
-            if (size > MAX_ROM) { done = true; reply(res, 413, 'File too large (max 8 MB)'); req.destroy(); return; }
+            if (size > MAX_ROM) {
+                finish();
+                res.setHeader('Connection', 'close');
+                return reply(res, 413, 'File too large (max 8 MB)');
+            }
             buffers.push(part);
         });
         req.on('end', () => {
             if (done) return;
-            done = true;
-            const bytes = Buffer.concat(buffers); buffers = [];
+            const bytes = Buffer.concat(buffers, size);
+            finish();
             if (!validRom(kind, name, bytes)) return reply(res, 400, 'This is not a valid ' + kind.toUpperCase() + ' game file.');
             try {
                 const stored = this.library.add(kind, name, bytes, replace);
@@ -236,10 +263,13 @@ class ControllerServer {
             if (opcode !== 1) { p.socket.destroy(); return; }
             let msg; try { msg = JSON.parse(data.toString('utf8')); } catch (_) { continue; }
             if (!msg || typeof msg !== 'object') continue;
-            if (msg.type === 'buttons' && Array.isArray(msg.keys) && msg.keys.length <= BUTTONS.length) {
+            if (msg.type === 'buttons' && Array.isArray(msg.keys) && msg.keys.length <= BUTTONS.size) {
                 const next = {};
-                msg.keys.forEach(k => { if (BUTTONS.indexOf(k) >= 0) next[k] = true; });
-                p.keys = next; p.lastSeen = Date.now();
+                msg.keys.forEach(k => { if (BUTTONS.has(k)) next[k] = true; });
+                const mayPress = !this.events.acceptsButtons || this.events.acceptsButtons(p.index + 1);
+                if (!Object.keys(next).length) p.waitForRelease = false;
+                else if (!mayPress) p.waitForRelease = true;
+                p.keys = p.waitForRelease ? {} : next; p.lastSeen = Date.now();
             } else if (msg.type === 'pause' || msg.type === 'resume') {
                 p.lastSeen = Date.now();
                 if (this.events.command) this.events.command(p.index + 1, {type: msg.type});
@@ -253,6 +283,7 @@ class ControllerServer {
     /** Tell both phones what the car shows (game, paused, parked). */
     broadcast(value) { this.players.forEach(p => this.send(p, Object.assign({type: 'state'}, value))); }
     stop() {
+        if (this.activeUpload) this.activeUpload.destroy();
         this.players.forEach(p => { if (p) { p.closed = true; try { p.socket.destroy(); } catch (_) { /* gone */ } } });
         this.players = [null, null];
         if (this.http) { try { this.http.close(); } catch (_) { /* not listening */ } }

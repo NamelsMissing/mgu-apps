@@ -73,7 +73,7 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**GameStation**](apps/mgu_gamestation/README.md) | **0.3.0** | Experimental | Offline retro games with saves, iDrive controls and optional phone gamepads for one or two players. |
+| [**GameStation**](apps/mgu_gamestation/README.md) | **0.4.0** | Experimental | Offline retro games with CHIP-8 and Sega cores, iDrive or phone controllers, and an opt-in ALSA PCM path. |
 | [**Video Hub**](apps/mgu_video_hub/README.md) | **0.2.0** | Experimental | Local videos and YouTube links using the head-unit playback tool; web video needs internet. |
 
 ### Sound
@@ -106,6 +106,7 @@ The same [store catalog](mgu-repo.json) lists **13 apps** and **6 native helper 
 | --- | --- | --- |
 | `mgu-equalizer-dsp` | **0.2.2** | Equalizer DSP, Video Hub and Audio Diagnostics |
 | `mgu-game-net` | **0.1.0** | GameStation phone controllers |
+| `mgu-gamestation-audio` | **0.1.0** | On-demand GameStation ALSA PCM output |
 | `mgu-gif-net` | **0.1.0** | GIF Home phone management |
 | `mgu-light-net` | **0.1.0** | Light Show phone remote |
 | `mgu-phone-bridge` | **0.1.6** | Phone Terminal |

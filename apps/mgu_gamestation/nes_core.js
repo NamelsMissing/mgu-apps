@@ -36,9 +36,21 @@ class NesGame {
         this.nes.setRom(rom);
         const save = options && options.save;
         if (this.battery && save && save.length === SRAM_SIZE) this.nes.cpu.ram.data.set(save, SRAM_START);
+        this.audio = new Float32Array(1024);
+        this.audioCount = 0;
+        this.audioRate = 1789773 / Math.floor(1789773 / 44100);
+        this.dc = 0;
+        this.nes.setAudio({
+            getSampleRate: () => 44100,
+            push: sample => {
+                this.dc += (sample - this.dc) * 0.003;
+                if (this.audioCount < this.audio.length) this.audio[this.audioCount++] = sample - this.dc;
+            },
+        });
         this.nes.bootup();
     }
     tick(pads) {
+        this.audioCount = 0;
         for (let player = 0; player < 2; player++) {
             const next = pads[player] || {}, previous = this.previous[player];
             Object.keys(MAPPING).forEach(key => {
@@ -51,6 +63,16 @@ class NesGame {
         }
         // One NTSC video frame = 341 dots * 262 scanlines / 3 PPU dots per CPU clock.
         for (let i = 0; i < 29781; i++) this.nes.runCycle();
+    }
+    getAudioSamples() {
+        return this.audioCount ? {rate: this.audioRate, left: this.audio.subarray(0, this.audioCount)} : null;
+    }
+    releaseInput() {
+        for (let player = 0; player < 2; player++) {
+            const joypad = player === 0 ? this.nes.pad1 : this.nes.pad2;
+            Object.keys(MAPPING).forEach(key => joypad.releaseButton(MAPPING[key]));
+        }
+        this.previous = [{}, {}];
     }
     /** Battery RAM to keep (a copy), or null when the cartridge has none. */
     sram() {

@@ -4,6 +4,17 @@
 // but does not expose arbitrary top-level HTML files to the installed OAP app.
 // The page is a gamepad (works upright and sideways) plus a Games panel to add and
 // delete games. Plain ES5 in the browser: older phones and in-car browsers work too.
+const {platforms, extensions, byId} = require('./core_registry');
+const romTypes = Object.keys(extensions);
+const names = romTypes.reduce((out, id) => Object.assign(out, {[id]: byId[id].short}), {});
+const suffix = romTypes.reduce((out, id) => {
+    extensions[id].forEach(ext => { out[ext.slice(1)] = id; });
+    return out;
+}, {});
+const buttons = platforms.reduce((out, p) => Object.assign(out, {[p.id]: p.buttons}), {});
+const hexButtons = byId.chip8.buttons.map(key => '<button class="key hex" data-key="' + key + '">' +
+    key[1].toUpperCase() + '</button>').join('');
+
 const HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
@@ -38,7 +49,8 @@ header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:
 #actions{grid-column:3;grid-row:2;position:relative;width:min(44vw,210px);height:min(44vw,210px)}
 .face{position:absolute;width:36%;height:36%;border-radius:50%;font-size:21px}
 #a{right:0;top:32%}#b{left:32%;bottom:0}#x{left:32%;top:0}#y{left:0;top:32%}
-#a,#b{background:#3a2440;border-color:#7c4a86}
+#cbtn{left:0;top:32%}
+#a,#b,#cbtn{background:#3a2440;border-color:#7c4a86}
 .key{background:var(--key);border:1px solid #344055;color:var(--text);font-weight:800;font-family:inherit;touch-action:none;display:flex;align-items:center;justify-content:center}
 .key.down{background:var(--p);border-color:var(--p);color:#05070a;transform:scale(.96)}
 #hint{grid-column:1/4;grid-row:3;color:var(--dim);font-size:12px;text-align:center}
@@ -59,6 +71,10 @@ input[type=file]{width:100%;color:var(--text);margin:8px 0}
 #result{margin:10px 0 0;font-size:13px;color:var(--dim)}
 @media (orientation:portrait){#pad{grid-template-columns:1fr 1fr;grid-template-rows:auto 1fr auto auto}#lbtn{grid-column:1}#rbtn{grid-column:2}#dpad{grid-column:1;grid-row:2}#actions{grid-column:2;grid-row:2}#mid{grid-column:1/3;grid-row:3;flex-direction:row}#hint{grid-column:1/3;grid-row:4}}
 @media (orientation:landscape) and (max-height:430px){header{padding:6px 12px}#pad{padding:4px 10px 8px}.shoulder{height:38px}#dpad,#actions{width:min(40vh,200px);height:min(40vh,200px)}#hint{display:none}}
+[hidden]{display:none!important}
+#hexpad{grid-column:1/-1;grid-row:1/4;align-self:center;justify-self:center;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.hex{position:static;width:clamp(38px,12vw,70px);height:clamp(38px,12vw,70px);border-radius:12px;touch-action:none}
+#diag-log{width:100%;min-height:130px;color:var(--text);background:var(--panel);margin-top:10px}
 </style></head><body>
 <header><span class="badge">P<span id="player">1</span></span><span id="now">GameStation</span><span id="status">CONNECTING</span><button class="hbtn" id="pause" hidden>Pause</button><button class="hbtn" id="open">Games</button></header>
 <main id="pad">
@@ -67,19 +83,24 @@ input[type=file]{width:100%;color:var(--text);margin:8px 0}
 <div class="glow" id="g-up"></div><div class="glow" id="g-down"></div><div class="glow" id="g-left"></div><div class="glow" id="g-right"></div>
 <div class="tri" style="left:33.3%;top:0">&#9650;</div><div class="tri" style="left:33.3%;bottom:0">&#9660;</div><div class="tri" style="left:0;top:33.3%">&#9664;</div><div class="tri" style="right:0;top:33.3%">&#9654;</div></div>
 <div id="mid"><button class="key small" data-key="select">SELECT</button><button class="key small" data-key="start">START</button></div>
-<div id="actions"><button class="key face" id="x" data-key="x">X</button><button class="key face" id="y" data-key="y">Y</button><button class="key face" id="a" data-key="a">A</button><button class="key face" id="b" data-key="b">B</button></div>
+<div id="actions"><button class="key face" id="x" data-key="x">X</button><button class="key face" id="y" data-key="y">Y</button><button class="key face" id="cbtn" data-key="c">C</button><button class="key face" id="a" data-key="a">A</button><button class="key face" id="b" data-key="b">B</button></div>
+<div id="hexpad" hidden>${hexButtons}</div>
 <p id="hint">Join the car's Wi-Fi and keep this page open. Slide your thumb on the cross for diagonals.</p>
 </main>
 <section id="games"><header><h2>Games on the car</h2><button class="hbtn" id="close">Back to pad</button></header>
 <div id="list"><div class="empty">Loading&hellip;</div>
-<form id="upload"><b>Add a game you own</b><input type="file" id="rom" accept=".nes,.sfc,.smc,.gb,.gbc" required>
-<button class="go" type="submit">Upload to the car</button><p id="result">NES (.nes), SNES (.sfc, .smc), Game Boy (.gb, .gbc). Max 8 MB.</p></form></div></section>
+<form id="upload"><b>Add a game you own</b><input type="file" id="rom" accept="${Object.keys(suffix).map(ext => '.' + ext).join(',')}" required>
+<button class="go" type="submit">Upload to the car</button><p id="result">${romTypes.map(id => names[id] + ' (' + extensions[id].join(', ') + ')').join(' / ')}. Max 8 MB.</p></form></div>
+<div><button class="hbtn" id="refresh">Refresh games</button>
+<button class="hbtn" id="log">Show diagnostic log</button>
+<a class="hbtn" id="export" hidden>Download log</a></div>
+<textarea id="diag-log" readonly hidden aria-label="Diagnostic log, select text to copy"></textarea></section>
 <script>
 (function(){'use strict';
 var q=new URLSearchParams(location.search),token=q.get('t')||'',player=q.get('p')==='2'?2:1,keys={},ws=null,timer=null,state={},buzz=!!navigator.vibrate;
 var $=function(id){return document.getElementById(id)};
 $('player').textContent=String(player);if(player===2)document.body.className='p2';
-var NAMES={nes:'NES',snes:'SNES',gb:'GAME BOY'},EXT={nes:'nes',sfc:'snes',smc:'snes',gb:'gb',gbc:'gb'};
+var NAMES=${JSON.stringify(names)},EXT=${JSON.stringify(suffix)},BUTTONS=${JSON.stringify(buttons)};
 function api(path){return path+(path.indexOf('?')<0?'?':'&')+'t='+encodeURIComponent(token)}
 function send(obj){if(ws&&ws.readyState===1)ws.send(JSON.stringify(obj))}
 function sendKeys(){send({type:'buttons',keys:Object.keys(keys).filter(function(k){return keys[k]})})}
@@ -87,12 +108,23 @@ function setKey(k,v){if(!!keys[k]===v)return;keys[k]=v;if(v&&buzz)navigator.vibr
 function release(){keys={};Array.prototype.forEach.call(document.querySelectorAll('.down,.glow.on'),function(el){el.classList.remove('down');el.classList.remove('on')});sendKeys()}
 function show(){var s=$('status'),p=$('pause'),n=$('now');
  if(!ws||ws.readyState!==1){s.textContent='OFFLINE';s.className='bad';p.hidden=true;return}
- if(state.moving){s.textContent='CAR MOVING';s.className='bad'}else if(state.paused){s.textContent='PAUSED';s.className=''}else{s.textContent='CONNECTED';s.className='good'}
+ if(state.moving){s.textContent=state.lock==='nosignal'?'NO SPEED SIGNAL':'CAR MOVING';s.className='bad'}else if(state.paused){s.textContent='PAUSED';s.className=''}else{s.textContent='CONNECTED';s.className='good'}
  n.innerHTML='';if(state.title){var b=document.createElement('b');b.textContent=state.title;n.appendChild(b)}else n.textContent='Pick a game on the BMW screen';
- p.hidden=!state.title;p.textContent=state.paused?'Resume':'Pause'}
+ var allowed=BUTTONS[state.kind]||[],play=player===1?state.controllerMode!=='idrive'&&state.controllerMode!=='hybrid':
+  state.players===2&&(state.controllerMode==='phones'||state.controllerMode==='hybrid');
+ var enabled=!!state.title&&play&&!state.moving&&!state.paused;
+ Array.prototype.forEach.call(document.querySelectorAll('[data-key]'),function(el){
+  var key=el.getAttribute('data-key');el.hidden=!play||allowed.indexOf(key)<0;el.disabled=!enabled;
+  var sega=state.kind==='sms'||state.kind==='gg';
+  if(key==='a'||key==='b')el.textContent=sega?(key==='a'?'1':'2'):key.toUpperCase();
+  if(key==='start')el.textContent=state.kind==='sms'?'PAUSE':'START'});
+ $('dpad').hidden=!play||allowed.indexOf('up')<0;$('hexpad').hidden=!play||state.kind!=='chip8';
+ $('actions').hidden=!play||allowed.indexOf('a')<0;
+ $('mid').hidden=!play||allowed.indexOf('start')<0&&allowed.indexOf('select')<0;
+ p.hidden=!state.title||!play;p.textContent=state.paused?'Resume':'Pause'}
 function connect(){ws=new WebSocket('ws://'+location.host+'/?t='+encodeURIComponent(token)+'&p='+player);
  ws.onopen=function(){release();clearInterval(timer);timer=setInterval(sendKeys,400);show()};
- ws.onmessage=function(e){try{var m=JSON.parse(e.data);if(m.type==='state'){state=m;show()}}catch(_){}};
+ ws.onmessage=function(e){try{var m=JSON.parse(e.data);if(m.type==='state'){if(state.kind!==m.kind||state.title!==m.title||m.paused||m.moving||state.controllerMode!==m.controllerMode)release();state=m;show()}}catch(_){}};
  ws.onclose=function(){clearInterval(timer);release();show();setTimeout(connect,1500)};
  ws.onerror=function(){};}
 // Buttons: each follows its own finger (several at once).
@@ -104,7 +136,7 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-key]'),function(b)
 // D-pad: one touch area, direction from the thumb's position (8 ways, small dead zone).
 (function(){var pad=$('dpad'),id=null,dirs=['up','down','left','right'];
  function apply(set){dirs.forEach(function(d){var v=set.indexOf(d)>=0;$('g-'+d).classList.toggle('on',v);setKey(d,v)})}
- function at(e){var r=pad.getBoundingClientRect(),x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5,s=[];
+ function at(e){if(state.paused||state.moving)return [];var r=pad.getBoundingClientRect(),x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5,s=[];
   if(Math.sqrt(x*x+y*y)<.1)return s;var a=Math.atan2(y,x)*180/Math.PI;
   if(a>-157.5&&a<-22.5)s.push('up');if(a>22.5&&a<157.5)s.push('down');if(a>112.5||a<-112.5)s.push('left');if(a>-67.5&&a<67.5)s.push('right');return s}
  pad.addEventListener('pointerdown',function(e){e.preventDefault();id=e.pointerId;try{pad.setPointerCapture(id)}catch(_){}apply(at(e))});
@@ -123,18 +155,24 @@ function render(data){var l=$('list'),f=$('upload');l.innerHTML='';
   games.forEach(function(g){var r=document.createElement('div');r.className='row';var t=document.createElement('div');t.className='t';t.textContent=g.title;
    var m=document.createElement('div');m.className='m';m.textContent=size(g.size)+(g.saved?' \\u00b7 save':'');t.appendChild(m);
    var d=document.createElement('button');d.className='del';d.textContent='Delete';d.onclick=function(){
-    if(!confirm('Delete '+g.title+(g.saved?' and its save':'')+' from the car?'))return;
+    if(!confirm('Delete '+g.title+' from the car?'))return;
     fetch(api('/delete?platform='+kind+'&name='+encodeURIComponent(g.name)),{method:'POST'}).then(function(r){return r.text().then(function(t){if(!r.ok)throw Error(t)})}).then(load).catch(function(e){alert(e.message)})};
    r.appendChild(t);r.appendChild(d);l.appendChild(r)})});
  l.appendChild(f)}
 function upload(file,kind,replace){var res=$('result');res.textContent='Uploading\\u2026';
  return fetch(api('/rom?platform='+kind+'&name='+encodeURIComponent(file.name)+(replace?'&replace=1':'')),{method:'POST',body:file}).then(function(r){return r.text().then(function(t){
-  if(r.status===409&&!replace){if(confirm('A game with this name is already on the car. Replace it?'))return upload(file,kind,true);res.textContent='Not uploaded.';return}
+  if(r.status===409&&!replace&&t.indexOf('already exists')>=0){if(confirm('A game with this name is already on the car. Replace it?'))return upload(file,kind,true);res.textContent='Not uploaded.';return}
   if(!r.ok)throw Error(t);res.textContent=t;load()})}).catch(function(e){res.textContent=e.message})}
 $('upload').addEventListener('submit',function(e){e.preventDefault();var file=$('rom').files[0];if(!file)return;
  var ext=(file.name.split('.').pop()||'').toLowerCase(),kind=EXT[ext];if(!kind){$('result').textContent='Unsupported file type .'+ext;return}upload(file,kind,false)});
 $('open').addEventListener('click',function(){release();$('games').className='open';load()});
 $('close').addEventListener('click',function(){$('games').className=''});
+$('refresh').addEventListener('click',load);
+$('log').addEventListener('click',function(){
+ fetch(api('/diagnostics')).then(function(r){if(!r.ok)throw Error('HTTP '+r.status);return r.text()}).then(function(t){
+  $('diag-log').value=t;$('diag-log').hidden=false;$('export').href=api('/diagnostics?download=1');$('export').hidden=false;
+ }).catch(function(e){$('diag-log').value=e.message;$('diag-log').hidden=false})
+});
 show();connect();
 })();
 </script></body></html>`;

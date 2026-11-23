@@ -2,13 +2,18 @@
   "id": "mgu_gamestation",
   "title": "MGU GameStation",
   "description": "Offline retro games with iDrive or phone controllers, two players and in-game saves. Parked only.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAG1",
   "iconGlyph": "GAME",
   "cpuLimit": 80,
   "maxDiskUsage": 134217728,
   "signals": {
+    "org.genivi.am.commandinterface.CommandControl": {
+      "_instances": "1",
+      "_optional": "Read-only audio diagnostics",
+      "_methods": ["getListMainSources", "getListMainSinks", "getListMainConnections"]
+    },
     "de.bmw.infotainment.vehicle.Vehicle2": { "statusCarSpeed2": "rs" },
     "de.bmw.infotainment.controlelements.FrontCCU": {"statusRotaryEncoderState": "rs"}
   },
@@ -21,6 +26,7 @@
         ["BTN_PLATFORM", "Next console"],
         ["BTN_ACTION", "Play / Back"],
         ["BTN_PAIR", "Controllers"],
+        ["BTN_DIAG", "Diagnostics"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }
@@ -30,11 +36,17 @@
      "options": [["idrive", "iDrive singleplayer"], ["phone", "Phone singleplayer"],
                  ["phones", "Two phones (multiplayer)"], ["hybrid", "iDrive P1 + phone P2"]]},
     {"key": "idriveClockwise", "label": "iDrive clockwise button", "type": "choice", "default": "b",
-     "options": [["a", "A"], ["b", "B"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
+     "options": [["a", "A"], ["b", "B"], ["c", "C (Mega Drive)"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
                  ["start", "START"], ["select", "SELECT"]]},
     {"key": "idriveCounterclockwise", "label": "iDrive counterclockwise button", "type": "choice", "default": "x",
-     "options": [["a", "A"], ["b", "B"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
+     "options": [["a", "A"], ["b", "B"], ["c", "C (Mega Drive)"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
                  ["start", "START"], ["select", "SELECT"]]},
+    {"key": "chip8Mapping", "label": "CHIP-8 iDrive keypad", "type": "choice", "default": "arrows",
+     "options": [["arrows", "Directions 2/8/4/6"], ["alternate", "Directions 5/8/7/9"]]},
+    {"key": "videoScale", "label": "Game picture", "type": "choice", "default": "fit",
+     "options": [["fit", "Fit screen"], ["integer", "Integer scale"]]},
+    {"key": "audioEnabled", "label": "Game audio (experimental)", "type": "bool", "default": false},
+    {"key": "audioVolume", "label": "Game volume", "type": "number", "min": 0, "max": 100, "step": 10, "default": 30},
     {"key": "theme", "label": "Colour theme", "type": "choice", "default": "ice",
      "options": [["ice", "Ice White"], ["m_tricolour", "M Tricolour"], ["amber", "Night Amber"]]},
     {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",

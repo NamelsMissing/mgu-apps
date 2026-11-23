@@ -47,7 +47,9 @@ async function checkFirewall() {
     nft.reload();
     assert.strictEqual(await fw.ensure(), 'added', 'recovers after a BMW firewall reload');
     await fw.close();
-    await assert.rejects(makeFirewall({run: async () => { throw Error('nft denied'); }}).ensure(), /nft denied/);
+    const blocked = await makeFirewall({run: async () => { throw Error('nft denied'); }}).ensure().then(
+        () => null, error => error);
+    assert.ok(blocked && /nft denied/.test(blocked.message));
 }
 
 const readStatus = port => new Promise((resolve, reject) => {
@@ -116,6 +118,15 @@ function checkManifest() {
         assert.ok(text.indexOf('/var/opt/' + tool.id + '/current/') >= 0);
     }
     assert.ok(fs.statSync(path.join(root, 'native/game-net/mgu-game-net')).mode & 0o100, 'launcher is executable');
+    const audioRoot = path.join(root, 'native/gamestation-audio');
+    const audio = JSON.parse(fs.readFileSync(path.join(audioRoot, 'component.json'), 'utf8'));
+    const audioEntry = catalog.components.find(c => c.id === audio.id);
+    assert.strictEqual(audioEntry.path, 'native/gamestation-audio');
+    assert.strictEqual(audioEntry.version, audio.version);
+    assert.strictEqual(appEntry.requires[audio.id], audio.version);
+    assert.ok(!audio.units && !audio.enable, 'PCM helper runs as a child only');
+    for (const f of audio.files) assert.ok(fs.statSync(path.join(audioRoot, f.path)).isFile());
+
 }
 
 checkFirewall().then(checkService).then(checkProbe).then(checkManifest).then(

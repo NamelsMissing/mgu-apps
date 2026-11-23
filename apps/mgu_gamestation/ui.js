@@ -6,21 +6,16 @@
 // the theme chosen in Settings. Targets are registered left to right, top to bottom:
 // that is the order the iDrive knob walks them where the kit runs the screen.
 const qrcode = require('./qr_vendor');
+const {platforms: PLATFORMS} = require('./core_registry');
 
 const W = 1600, H = 520;
-const TABS = ['Games', 'Playing', 'Controllers'];
-const PAGE = {GAMES: 0, PLAY: 1, PADS: 2};
+const TABS = ['Games', 'Playing', 'Controllers', 'Diagnostics'];
+const PAGE = {GAMES: 0, PLAY: 1, PADS: 2, DIAG: 3};
 const TOP = 52, EDGE = 24, FOOT_Y = 452, FOOT_H = 52;
 const LIST_COLS = 2, LIST_ROWS = 3, PAGE_SIZE = LIST_COLS * LIST_ROWS;
 const IMAGE = 71;
 // The game picture: between the two side panels, full page height.
 const SIDE = 300, STAGE = {x: EDGE + SIDE + 16, y: TOP, w: W - 2 * (EDGE + SIDE + 16), h: H - TOP - 12};
-const PLATFORMS = [
-    {id: 'nes', short: 'NES', title: 'Nintendo', tag: 'NES'},
-    {id: 'snes', short: 'SNES', title: 'Super Nintendo', tag: 'SNES'},
-    {id: 'gb', short: 'GAME BOY', title: 'Game Boy / Color', tag: 'GB'},
-    {id: 'arcade', short: 'ARCADE', title: 'Built-in games', tag: 'ARC'},
-];
 const MODES = {idrive: 'iDrive P1 · CPU P2', phone: 'Phone P1 · CPU P2', phones: 'Two phones', hybrid: 'iDrive P1 · Phone P2'};
 
 const FOLD = {'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss',
@@ -36,8 +31,10 @@ function megabytes(bytes) {
     return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
 }
 /** Largest rectangle of aspect w:h inside the box, centred. */
-function fitRect(box, w, h) {
-    const k = Math.min(box.w / w, box.h / h), rw = Math.floor(w * k), rh = Math.floor(h * k);
+function fitRect(box, w, h, scale) {
+    const fit = Math.min(box.w / w, box.h / h);
+    const k = scale === 'integer' && fit >= 1 ? Math.floor(fit) : fit;
+    const rw = Math.floor(w * k), rh = Math.floor(h * k);
     return {x: Math.round(box.x + (box.w - rw) / 2), y: Math.round(box.y + (box.h - rh) / 2), w: rw, h: rh};
 }
 
@@ -128,13 +125,13 @@ function makeUi(G, colors) {
 
     /* ---------------- Games ---------------- */
     function drawGames(cv, t, m, a) {
-        const S = t.sel || t.accent, gap = 12, chipW = (W - 2 * EDGE - 3 * gap) / 4, chipH = 66;
+        const S = t.sel || t.accent, gap = 12, chipW = (W - 2 * EDGE - (m.platforms.length - 1) * gap) / m.platforms.length, chipH = 66;
         m.platforms.forEach((p, i) => {
             const x = EDGE + i * (chipW + gap), on = i === m.platform;
             card(cv, x, TOP, chipW, chipH, on ? 0.15 : 0.06);
             if (on) cv.fillRect(x + 14, TOP + chipH - 5, chipW - 28, 4, S);
-            cv.text(p.short, x + 22, TOP + 32, 24, on ? t.text : t.dim, {font: 'bold', spacing: 1.5, literal: true});
-            label(cv, p.id === 'arcade' ? p.title : p.count + (p.count === 1 ? ' game' : ' games'), x + 22, TOP + 55, 16, t.dim, chipW - 40);
+            label(cv, p.short, x + 16, TOP + 30, 21, on ? t.text : t.dim, chipW - 32, {font: 'bold'});
+            label(cv, (p.id === 'arcade' ? '1 game' : p.count + (p.count === 1 ? ' game' : ' games')) + (p.experimental ? ' / Trial' : ''), x + 22, TOP + 55, 16, t.dim, chipW - 40);
             cv.target(x, TOP, chipW, chipH, () => a.platform(i), 'PLATFORM_' + i, 10);
         });
         const list = m.list, y0 = TOP + chipH + 14, rowH = 84, colW = (W - 2 * EDGE - 16) / LIST_COLS;
@@ -168,7 +165,7 @@ function makeUi(G, colors) {
             }
         });
         const paged = list.pages > 1, arcade = spec.id === 'arcade';
-        const hint = !m.allowed ? m.lockHint : m.deleting ? 'Delete removes the game and its save from the car. Press Delete twice.' :
+        const hint = !m.allowed ? m.lockHint : m.deleting ? 'Delete keeps battery saves and save states. Press Delete twice.' :
             list.total ? list.total + (list.total === 1 ? ' game' : ' games') + (paged ? '  ·  page ' + (list.page + 1) + ' of ' + list.pages : '') +
             (arcade ? '' : '  ·  in-game saves are kept automatically') : '';
         const last = !m.deleting && m.last && !m.running ? m.last : null;
@@ -177,6 +174,7 @@ function makeUi(G, colors) {
             paged && {text: 'Next', w: 130, key: 'NEXT', run: () => a.turn(1), off: list.page >= list.pages - 1},
             m.running && !m.deleting && {text: 'Back to game', w: 250, key: 'TO_GAME', run: () => a.open(PAGE.PLAY), primary: true},
             last && {text: 'Continue ' + last.title, w: 330, key: 'CONTINUE', run: a.resumeLast, primary: true, off: !m.allowed},
+            a.refresh && !arcade && !m.deleting && {text: 'Refresh', w: 125, key: 'REFRESH', run: a.refresh},
             !arcade && list.total && {text: m.deleting ? 'Done' : 'Delete games', w: m.deleting ? 130 : 220, key: 'DELETE_MODE', run: a.toggleDelete,
                 color: m.deleting ? null : t.crit},
         ]);
@@ -214,7 +212,7 @@ function makeUi(G, colors) {
         cv.roundRect(STAGE.x, STAGE.y, STAGE.w, STAGE.h, 10, '#000000');
         if (g.arcade) a.drawArcade(cv, STAGE.x, STAGE.y, STAGE.w, STAGE.h);
         else if (g.width) {
-            const r = fitRect(STAGE, g.width, g.height);
+            const r = fitRect(STAGE, g.width, g.height, g.scale);
             cv.image(IMAGE, r.x, r.y, r.w, r.h);
         }
         const held = !m.allowed || g.paused || !g.focus;
@@ -241,9 +239,9 @@ function makeUi(G, colors) {
         button(cv, t, bx, TOP + 104, bw, 56, 'Games', () => a.open(PAGE.GAMES), 'TO_GAMES');
         button(cv, t, bx, TOP + 172, bw, 56, 'Controllers', () => a.open(PAGE.PADS), 'TO_PADS');
         button(cv, t, bx, TOP + 240, bw, 56, 'Quit game', a.quit, 'QUIT', {color: t.crit});
-        cv.text(g.saved ? 'SAVES ARE KEPT' : g.arcade ? 'ARCADE' : 'NO BATTERY SAVE', bx + bw / 2, TOP + 336, 14, t.dim,
+        cv.text(g.states ? 'SAVE SLOTS IN DIAGNOSTICS' : g.saved ? 'SAVES ARE KEPT' : g.arcade ? 'ARCADE' : 'NO BATTERY SAVE', bx + bw / 2, TOP + 336, 14, t.dim,
             {align: 'center', font: 'bold', spacing: 2, literal: true});
-        if (g.fps !== undefined) cv.text(g.fps + ' FPS', bx + bw / 2, TOP + 364, 14, g.fps < 40 ? t.warn : t.dim,
+        if (g.fps !== undefined) cv.text(g.fps + ' FPS' + (g.audio === 'PCM' ? ' / PCM' : ''), bx + bw / 2, TOP + 364, 14, g.fps < 40 ? t.warn : t.dim,
             {align: 'center', font: 'num', literal: true});
         if (m.notice) paragraph(cv, m.notice.text, bx, TOP + 400, 16, m.notice.level === 'info' ? t.dim : t.warn, bw, 3);
     }
@@ -282,6 +280,29 @@ function makeUi(G, colors) {
     }
 
     /** Draw page m.page from view model m with actions a. */
+    function drawDiagnostics(cv, t, m, a) {
+        const d = m.diagnostics, rx = 830, right = W - rx - EDGE;
+        G.panel(cv, t, EDGE, TOP, rx - EDGE - 16, 383, '');
+        d.rows.forEach((row, i) => {
+            const y = TOP + 26 + i * 27;
+            label(cv, row[0], EDGE + 16, y, 16, t.dim, 175);
+            label(cv, row[1], EDGE + 190, y, 17, t.text, rx - EDGE - 215);
+        });
+        G.panel(cv, t, rx, TOP, right, 383, '');
+        cv.text(d.logPage ? 'Log / page ' + (d.logPage + 1) : 'Live log', rx + 16, TOP + 30, 20, t.text);
+        d.lines.forEach((line, i) => label(cv, line, rx + 16, TOP + 65 + i * 34, 16, t.dim, right - 32));
+        if (m.notice) label(cv, m.notice.text, rx + 16, TOP + 310, 17, t.warn, right - 32);
+        button(cv, t, rx + 16, TOP + 325, 135, 44, 'Older', () => a.logScroll(1), 'LOG_OLDER');
+        button(cv, t, rx + 162, TOP + 325, 135, 44, 'Newer', () => a.logScroll(-1), 'LOG_NEWER');
+        button(cv, t, rx + 308, TOP + 325, 135, 44, 'Clear', a.logClear, 'LOG_CLEAR');
+        footer(cv, t, m, 'Copy or download the log from the paired phone.', [
+            d.states && {text: 'Slot ' + d.slot, w: 120, key: 'STATE_SLOT', run: a.nextSlot},
+            d.states && {text: 'Save', w: 110, key: 'STATE_SAVE', run: a.storeState, off: !m.allowed},
+            d.states && {text: 'Load', w: 110, key: 'STATE_LOAD', run: a.loadState, off: !m.allowed},
+            {text: d.tone ? 'Stop test tone' : 'Play test tone', w: 195, key: 'TONE', run: a.tone, off: !m.allowed},
+        ]);
+    }
+
     function draw(cv, t, m, a) {
         cv.clear(t.bg);
         const badge = m.allowed ? {text: 'PARKED', color: t.ok || t.accent} :
@@ -290,6 +311,7 @@ function makeUi(G, colors) {
         G.frame(cv, t, TABS, m.page, badges);
         if (m.page === PAGE.PLAY) drawPlay(cv, t, m, a);
         else if (m.page === PAGE.PADS) drawPads(cv, t, m, a);
+        else if (m.page === PAGE.DIAG) drawDiagnostics(cv, t, m, a);
         else drawGames(cv, t, m, a);
         return cv;
     }

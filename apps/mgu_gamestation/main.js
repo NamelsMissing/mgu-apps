@@ -13,22 +13,28 @@ const {setImage} = require('./kit/record');
 const {ControllerServer} = require('./controller_server');
 const {Library, title} = require('./library');
 const {Session} = require('./session');
-const {Pong} = require('./arcade');
-const {NesGame} = require('./nes_core');
-const {GameBoyGame} = require('./gb_core');
-const {SnesGame} = require('./snes_core');
+const crypto = require('crypto');
+const {byId} = require('./core_registry');
+const {AudioOutput, readFrontSource} = require('./audio');
 const {IDrivePad, padsForMode} = require('./idrive_pad');
 const {makeUi, PAGE, PAGE_SIZE, PLATFORMS, IMAGE, W, H} = require('./ui');
 
 const NOTICE_MS = {info: 5000, warn: 8000, error: 10000};
 const MODE_ORDER = ['phones', 'phone', 'idrive', 'hybrid'];
-const CORES = {nes: NesGame, snes: SnesGame, gb: GameBoyGame};
 const SPEED_FRESH_MS = 5000, SPEED_MAX_KMH = 0.5;
-const KEY_NAMES = {a: 'A', b: 'B', x: 'X', y: 'Y', l: 'L', r: 'R', start: 'START', select: 'SELECT'};
+const KEY_NAMES = {a: 'A', b: 'B', c: 'C', x: 'X', y: 'Y', l: 'L', r: 'R', start: 'START', select: 'SELECT'};
 
 mgu.run({
     async start(ctx) {
-        const log = ctx.log;
+        let events = [], logPage = 0, slot = 1, tone = null, routeAt = 0, routePending = false;
+        function record(level, message) {
+            ctx.log[level](message);
+            if (events.length === 100) events.shift();
+            events.push(new Date().toISOString() + ' ' + level.toUpperCase() + ' ' + String(message).slice(0, 200));
+        }
+        const log = {info: text => record('info', text), warn: text => record('warn', text)};
+        const audio = new AudioOutput(ctx.dataDir, {onError: message => log.warn('[GameStation] audio: ' + message)});
+        const configureAudio = () => audio.configure(ctx.settings.get('audioEnabled'), ctx.settings.get('audioVolume'));
         const ui = makeUi(G, kitCanvas);
         const library = new Library(ctx.dataDir);
         const idrive = new IDrivePad();
@@ -50,19 +56,23 @@ mgu.run({
         }
 
         /* ---------------- safety: fresh speed <= 0.5 km/h, fail closed ---------------- */
-        let speed = null, speedAt = 0;
+        let speed = null, speedAt = 0, checkSafety = () => {};
         ctx.signals.watch('de.bmw.infotainment.vehicle.Vehicle2', '1', {
             statusCarSpeed2: v => {
                 const raw = v && v.speedVehicleCentreOfGravity;
                 if (typeof raw === 'number' && isFinite(raw) && raw >= 0 && raw !== 65535) {
                     speed = raw * 0.015625;
                     speedAt = Date.now();
-                }
+                } else speed = null;
+                checkSafety();
             },
         }, log, {pollMs: 2000}).then(s => {
             if (s && s.error) log.warn('[GameStation] speed subscription: ' + s.error);
         }).catch(e => log.warn('[GameStation] speed subscription: ' + e.message));
-        const fresh = () => speed !== null && Date.now() - speedAt < SPEED_FRESH_MS;
+        const fresh = () => {
+            const age = Date.now() - speedAt;
+            return speed !== null && age >= 0 && age < SPEED_FRESH_MS;
+        };
         const parked = () => fresh() && speed <= SPEED_MAX_KMH;
         const lock = () => !fresh() ? 'nosignal' : speed > SPEED_MAX_KMH ? 'moving' : 'parked';
         const lockHint = () => lock() === 'nosignal' ? 'Waiting for a valid vehicle-speed signal. Games stay paused.' :
@@ -74,8 +84,10 @@ mgu.run({
                 turnCounterclockwise: ctx.settings.get('idriveCounterclockwise')});
         }
         configureIDrive();
+        configureAudio();
         ctx.settings.onChange(key => {
             if (key === 'idriveClockwise' || key === 'idriveCounterclockwise' || key === null) configureIDrive();
+            if (key === 'audioEnabled' || key === 'audioVolume' || key === null) { stopTone(); configureAudio(); }
         });
         if (ctx.controller && ctx.controller.onInput) ctx.controller.onInput(v => {
             lastInputgateAt = Date.now();
@@ -101,29 +113,57 @@ mgu.run({
             if (ctx.controller) ctx.controller.grab(want);
             log.info('[GameStation] iDrive input ' + (want ? 'captured' : 'released') + ' mode=' + mode());
         }
+        function releasePlay() {
+            audio.stop();
+            if (session && session.game.releaseInput) session.game.releaseInput();
+            server.releasePads();
+            syncIDriveCapture();
+        }
+        function stopTone() {
+            if (!tone) return;
+            clearInterval(tone);
+            tone = null;
+            audio.stop();
+            configureAudio();
+        }
+        function toggleTone() {
+            if (tone) return stopTone();
+            if (!parked() || !inFront() || page !== PAGE.DIAG) return;
+            const started = Date.now(), samples = new Float32Array(960);
+            for (let i = 0; i < samples.length; i++) samples[i] = 0.1 * Math.sin(i * Math.PI / 48);
+            audio.configure(true, 15);
+            audio.setActive(true);
+            tone = setInterval(() => {
+                if (!parked() || !inFront() || page !== PAGE.DIAG || Date.now() - started >= 1000) return stopTone();
+                audio.write({rate: 48000, left: samples});
+            }, 20);
+        }
         function quit() {
+            stopTone();
             if (!session) return;
             session.stop();
             log.info('[GameStation] stopped ' + session.kind + '/' + session.name);
             session = null; running = false;
-            syncIDriveCapture();
+            releasePlay();
         }
         function start(kind, name) {
+            if (!inFront()) return;
             if (!parked()) { say(lockHint(), 'warn'); return; }
             if (session && session.kind === kind && session.name === name) { open(PAGE.PLAY); return; }
             quit();
             let game = null, next = null;
             try {
-                if (kind === 'arcade') {
-                    game = new Pong({cpuPlayer2: singlePlayer()});
-                    next = new Session(game, kind, name, {log});
-                } else if (CORES[kind]) {
-                    const bytes = library.read(kind, name), save = library.loadSave(kind, name), holder = {s: null};
-                    // the core paints into whichever session holds it (created right after the core)
-                    game = new CORES[kind](bytes, (px, w, h) => { if (holder.s) holder.s.paint(px, w, h); }, {save});
-                    next = holder.s = new Session(game, kind, name, {store: (k, n, b) => library.store(k, n, b), log});
-                    if (save) say('In-game save loaded.');
-                } else throw new Error('Unknown console');
+                const spec = byId[kind];
+                if (!spec) throw new Error('Unknown console');
+                const bytes = spec.extensions.length ? library.read(kind, name) : null;
+                const save = spec.battery ? library.loadSave(kind, name) : null;
+                game = spec.create(bytes, (px, w, h) => { if (next) next.paint(px, w, h); }, {
+                    name, save, cpuPlayer2: singlePlayer(), keymap: ctx.settings.get('chip8Mapping'),
+                });
+                next = new Session(game, kind, name, {store: (k, n, b) => library.store(k, n, b),
+                    audio: block => audio.write(block), log});
+                if (spec.states) next.romHash = crypto.createHash('sha256').update(bytes).digest('hex');
+                if (save) say('In-game save loaded.');
             } catch (e) {
                 if (game && game.stop) try { game.stop(); } catch (_) { /* half started */ }
                 say('Could not start this game: ' + e.message, 'error');
@@ -141,16 +181,21 @@ mgu.run({
         }
         function togglePause() {
             if (!session) return;
+            if (!inFront()) return;
             if (session.paused && !parked()) { say(lockHint(), 'warn'); return; }
             session.toggle();
+            if (session.paused) { running = false; releasePlay(); }
         }
 
         /* ---------------- pages ---------------- */
         function open(next) {
-            if (page === PAGE.PLAY && next !== PAGE.PLAY && session) session.save();
+            const leaving = page === PAGE.PLAY && next !== PAGE.PLAY && session;
+            if (next !== PAGE.DIAG) stopTone();
+            if (leaving) session.save();
             if (next !== page) notice = null;
             if (next !== PAGE.GAMES) { deleting = false; armed = null; }
             page = next;
+            if (leaving) { running = false; session.hold(); releasePlay(); }
             if (next === PAGE.GAMES) refreshCounts();
         }
         function refreshCounts() { counts = library.counts(); countsAt = Date.now(); }
@@ -182,6 +227,21 @@ mgu.run({
             refreshCounts();
             if (!counts[item.kind]) deleting = false;
         }
+        function changeState(store) {
+            if (!session || !session.romHash || !parked() || !inFront()) return;
+            try {
+                if (store) library.storeState(session.kind, session.romHash, slot, session.game.saveState());
+                else {
+                    session.game.loadState(library.loadState(session.kind, session.romHash, slot));
+                    session.pause('user');
+                    releasePlay();
+                }
+                say((store ? 'Saved slot ' : 'Loaded slot ') + slot + '.');
+            } catch (e) {
+                say('Save slot ' + slot + ': ' + e.message, 'warn');
+                log.warn('[GameStation] save state: ' + e.message);
+            }
+        }
         const actions = {
             open,
             platform: i => { platform = i; deleting = false; armed = null; open(PAGE.GAMES); },
@@ -191,6 +251,13 @@ mgu.run({
             toggleDelete: () => { deleting = !deleting; armed = null; },
             remove,
             togglePause,
+            tone: toggleTone,
+            nextSlot: () => { slot = slot % 3 + 1; },
+            storeState: () => changeState(true),
+            loadState: () => changeState(false),
+            logScroll: d => { logPage = Math.max(0, Math.min(Math.max(0, Math.ceil(events.length / 7) - 1), logPage + d)); },
+            logClear: () => { events = []; logPage = 0; },
+            refresh: refreshCounts,
             quit: () => { quit(); open(PAGE.GAMES); },
             nextMode: () => {
                 const next = MODE_ORDER[(MODE_ORDER.indexOf(mode()) + 1) % MODE_ORDER.length];
@@ -205,20 +272,27 @@ mgu.run({
         };
 
         /* ---------------- phones ---------------- */
+        function isPhonePlayer(player) {
+            if (player === 1) return !useIDrive();
+            return !!session && byId[session.kind].players > 1 && (mode() === 'phones' || mode() === 'hybrid');
+        }
         function phoneState() {
             return {title: session ? session.title : '', kind: session ? session.kind : '',
-                paused: !!(session && (session.paused || !mayRun())), moving: !parked()};
+                paused: !!(session && (session.paused || !mayRun())), moving: !parked(),
+                lock: lock(), controllerMode: mode(), players: session ? byId[session.kind].players : 2};
         }
         const server = new ControllerServer(ctx.dataDir, {
             upload: (kind, name) => { refreshCounts(); say('Game added from a phone: ' + name); },
             removing: (kind, name) => { if (session && session.kind === kind && session.name === name) quit(); },
             removed: (kind, name) => { refreshCounts(); say('Deleted from a phone: ' + name); },
             command: (player, msg) => {
-                if (!session) return;
-                if (msg.type === 'pause' && !session.paused) session.pause('user');
+                if (!session || !isPhonePlayer(player) || !mayRun()) return;
+                if (msg.type === 'pause' && !session.paused) togglePause();
                 else if (msg.type === 'resume' && session.paused) togglePause();
             },
             state: phoneState,
+            acceptsButtons: player => mayRun() && !session.paused && isPhonePlayer(player),
+            diagnosticLog: () => events.join('\n'),
         }, log, {library});
         try { server.start(); }
         catch (e) { server.error = e.message; log.warn('[GameStation] phone server: ' + e.message); }
@@ -235,18 +309,34 @@ mgu.run({
             say('No games yet. Open Controllers to add one from a phone.');
         });
         ctx.ui.onClick('BTN_PAIR', () => open(page === PAGE.PADS ? (session ? PAGE.PLAY : PAGE.GAMES) : PAGE.PADS));
+        ctx.ui.onClick('BTN_DIAG', () => open(page === PAGE.DIAG ? (session ? PAGE.PLAY : PAGE.GAMES) : PAGE.DIAG));
         if (typeof ctx.onTab === 'function') ctx.onTab(i => open(i));
-        if (ctx.ui.onFocus) ctx.ui.onFocus(syncIDriveCapture);
-        ctx.ui.onVisible((name, visible) => { if (name === 'MAIN' && !visible && session) session.save(); });
+        checkSafety = () => {
+            if (!parked() || !inFront()) stopTone();
+            if (running && !mayRun()) {
+                running = false;
+                session.hold();
+                releasePlay();
+                session.save();
+            }
+            syncIDriveCapture();
+        };
+        if (ctx.ui.onFocus) ctx.ui.onFocus(checkSafety);
+        ctx.ui.onVisible(name => { if (name === 'MAIN') checkSafety(); });
+        const safetyTimer = setInterval(checkSafety, 100);
+        safetyTimer.unref();
 
         let exited = false;
-        process.on('exit', () => {
+        function shutdown() {
             if (exited) return;
             exited = true;
-            if (grabbed && ctx.controller) ctx.controller.grab(false);
-            if (session) session.stop();
+            clearInterval(safetyTimer);
+            quit();
             server.stop();
-        });
+            process.removeListener('exit', shutdown);
+        }
+        process.on('exit', shutdown);
+        if (ctx.onShutdown) ctx.onShutdown(shutdown);
 
         /* ---------------- what the pages show ---------------- */
         function players() {
@@ -258,21 +348,28 @@ mgu.run({
             const cpu = session && session.arcade ? {label: 'The car (CPU)', ok: true, state: 'Plays the right paddle'} :
                 {label: 'Not used', ok: true, state: 'Single player setup'};
             const m = mode();
+            if (session && byId[session.kind].players === 1)
+                return [useIDrive() ? knob : phoneRow(0), {label: 'Not used', ok: true, state: 'One-player core'}];
             return [m === 'idrive' || m === 'hybrid' ? knob : phoneRow(0), m === 'phones' || m === 'hybrid' ? phoneRow(1) : cpu];
         }
         function help() {
             if (!useIDrive()) return session && session.arcade ? 'Phones: up / down move the paddle.' : '';
             const cw = KEY_NAMES[idrive.turnClockwise] || 'B', ccw = KEY_NAMES[idrive.turnCounterclockwise] || 'X';
+            if (session && session.kind === 'chip8') return 'iDrive keypad uses the selected mapping. A phone shows all 16 keys.';
+            if (session && (session.kind === 'sms' || session.kind === 'gg'))
+                return 'iDrive: push = D-pad, press = 1, turn mapped to B = 2, double press = ' +
+                    (session.kind === 'sms' ? 'PAUSE.' : 'START.');
             return session && session.arcade ? 'iDrive: turn or push up / down to move the paddle.' :
                 'iDrive: push = D-pad · press = A · hold = SELECT · double press = START · turn right = ' + cw + ' · turn left = ' + ccw + '.';
         }
         function pads() {
             const net = server.net, listening = !!server.listening, m = mode(), phone = server.status();
-            const ready = net.ready && listening;
+            const ready = net.ready && listening && !!server.address;
             const blocked = server.error ? 'Phone server: ' + server.error :
                 !listening ? 'The phone server is starting.' :
                 !net.known ? 'Install "GameStation Phone Port" (mgu-game-net) from MGU Store, or phones cannot reach the car.' :
-                !net.ready ? 'Opening the Wi-Fi port for the phones' + (net.error ? ': ' + net.error : '...') : '';
+                !net.ready ? 'Opening the Wi-Fi port for the phones' + (net.error ? ': ' + net.error : '...') :
+                !server.address ? 'Could not detect the address of BMW Wi-Fi.' : '';
             const link = i => listening ? server.url(i + 1) : null;
             const idriveP1 = m === 'idrive' || m === 'hybrid', p2Used = m === 'phones' || m === 'hybrid';
             const slots = [
@@ -289,7 +386,7 @@ mgu.run({
                 {name: 'Wi-Fi port', state: net.ready ? 'ok' : net.known ? 'wait' : 'bad',
                     value: net.ready ? 'Open (mgu-game-net)' : net.known ? (net.error || 'Opening...') : 'mgu-game-net not installed'},
                 {name: 'Phone server', state: listening ? 'ok' : server.error ? 'bad' : 'wait',
-                    value: listening ? server.address + ':' + server.port : server.error || 'Starting'},
+                    value: listening ? (server.address || 'No BMW Wi-Fi address') + ':' + server.port : server.error || 'Starting'},
                 {name: 'iDrive', state: !useIDrive() ? 'off' : idrive.live() ? 'ok' : 'wait',
                     value: !useIDrive() ? 'Not used in this setup' : idrive.live() ? 'Knob events received' : 'No knob events yet'},
                 {name: 'Vehicle', state: parked() ? 'ok' : lock() === 'moving' ? 'bad' : 'wait',
@@ -297,6 +394,37 @@ mgu.run({
                 {name: 'Game', state: session ? 'ok' : 'off', value: session ? session.title + (session.paused ? ' (paused)' : '') : 'None running'},
             ];
             return {mode: m, slots, rows, ready, blocked};
+        }
+        function diagnostics() {
+            const d = audio.diagnostics(), memory = process.memoryUsage(), phones = server.status();
+            if (!routePending && Date.now() - routeAt > 5000 && typeof ctx.signals.proxy === 'function') {
+                routeAt = Date.now();
+                routePending = true;
+                readFrontSource(ctx.signals).then(route => { audio.route = route; }, e => {
+                    audio.route = e.message;
+                }).then(() => { routePending = false; });
+            }
+            const rows = [
+                ['GameStation', ctx.spec.version],
+                ['Core / ROM', session ? session.kind + ' / ' + session.name : 'None'],
+                ['Emulation', session ? session.reason || 'Held / ' + session.average().toFixed(1) + ' ms per frame / ' + fps + ' FPS' : 'Idle'],
+                ['Memory', Math.round(memory.rss / 1048576) + ' MB RSS / ' + Math.round(memory.heapUsed / 1048576) + ' MB JS'],
+                ['Renderer', ctx.settings.get('renderer') || 'auto'],
+                ['Network', server.error || (server.address || 'Wi-Fi address unavailable') + ' / port ' +
+                    (server.net.ready ? 'open' : 'closed')],
+                ['Controllers', mode() + ' / ' + phones.filter(Boolean).length + ' phone(s) online'],
+                ['Storage', session && session.romHash ? 'Save states (3 slots)' : session && session.hasSave ? 'Battery RAM' : 'ROM library'],
+                ['PCM backend', d.backend + ' / ' + d.state + ' / ' + (d.device || 'no device selected')],
+                ['PCM format', d.rate + ' Hz ' + d.format + ' / ' + d.pending + ' B pending'],
+                ['ALSA delay / buffer', d.deviceMs === null ? d.targetMs + ' ms requested' :
+                    d.deviceMs.toFixed(1) + ' / ' + d.bufferMs.toFixed(1) + ' ms / period ' + d.periodMs.toFixed(1) + ' ms'],
+                ['PCM interruptions', d.underruns + ' underruns / ' + d.overflows + ' dropped blocks / ' + d.droppedFrames + ' dropped samples'],
+                ['BMW media source', d.route],
+                ['Last audio error', d.error || 'None'],
+            ];
+            const end = Math.max(0, events.length - logPage * 7);
+            return {rows, lines: events.slice(Math.max(0, end - 7), end), slot, states: !!(session && session.romHash),
+                tone: !!tone, logPage};
         }
         function viewModel() {
             if (notice && Date.now() > notice.until) notice = null;
@@ -307,31 +435,35 @@ mgu.run({
                 platform, deleting, armed: armed && armed.key,
                 running: session ? {kind: session.kind, name: session.name} : null,
                 last: last && !(session && session.kind === last.kind && session.name === last.name) ? last : null,
-                platforms: PLATFORMS.map(p => Object.assign({count: counts[p.id] || 0}, p)),
+                platforms: PLATFORMS.map(p => Object.assign({count: p.id === 'arcade' ? 1 : counts[p.id] || 0}, p)),
                 game: null};
             if (session) {
-                const f = session.frame, spec = PLATFORMS.find(p => p.id === session.kind) || PLATFORMS[3];
+                const f = session.frame, spec = byId[session.kind];
                 m.game = {title: session.title, platform: spec.title.toUpperCase(), paused: session.paused,
                     reason: session.reason, detail: session.detail || '', focus: inFront(), arcade: session.arcade,
                     width: f ? f.width : 0, height: f ? f.height : 0, players: players(), help: help(),
-                    saved: !!session.hasSave,
+                    saved: !!session.hasSave, states: !!session.romHash, audio: audio.diagnostics().state,
+                    scale: ctx.settings.get('videoScale'),
                     fps: running ? fps : undefined};
             }
             if (page === PAGE.GAMES) m.list = listOf();
             if (page === PAGE.PADS) m.pads = pads();
+            if (page === PAGE.DIAG) m.diagnostics = diagnostics();
             return m;
         }
 
         ctx.loop('MAIN', 30, () => {
+            if (exited) return;
             const now = Date.now();
             server.poll();
-            syncIDriveCapture();
+            checkSafety();
             const go = mayRun();
             if (session) {
-                if (running && !go) session.save();          // the car moved, the screen went away
                 running = go && !session.paused;
+                if (!tone) audio.setActive(running && !!byId[session.kind].audio);
                 if (session.arcade) session.game.cpuPlayer2 = singlePlayer();
                 const ran = session.step(padsForMode(mode(), idrive.buttons(), server.pads()), go);
+                if (session.paused && running) { running = false; releasePlay(); }
                 fpsFrames += ran;
                 const pic = session.take();
                 if (pic) setImage(IMAGE, pic.width, pic.height, pic.pixels);

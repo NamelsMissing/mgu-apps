@@ -24,7 +24,7 @@ def pack(modules, output, title, root_module, transform):
         if output == 'snes_vendor.js':
             dst.write('// Isolate upstream diagnostic globals; Node8 does not expose globalThis.\nvar globalThis = Object.create(null);\n')
             dst.write('// Upstream emits per-instruction debug logs; silence them in the game loop.\n')
-            dst.write('var console = {log:function(){},warn:function(){},error:function(){}};\n')
+            dst.write('var console = {log:function(){},warn:function(){},error:function(){},trace:function(){}};\n')
         dst.write('function load(id) { if (!registry[id]) throw Error("Missing core module: " + id);\n')
         dst.write('if (cache[id]) return cache[id].exports; var m={exports:{}}; cache[id]=m;\n')
         dst.write('registry[id](m,m.exports,function(p){var parts=id.split("/");parts.pop();\n')
@@ -46,15 +46,56 @@ def pack(modules, output, title, root_module, transform):
 
 boyfiles = [(file.relative_to(boy).with_suffix('').as_posix(), file)
             for file in sorted(boy.rglob('*.js')) if file.name != 'bundle.js']
+def game_boy_compat(source):
+    source = source.replace('loadRom : function (ROM) {', 'loadRom : function (ROM, frameCycles) {')
+    source = source.replace('_that.gameboy = new GameBoyCore(ROM);',
+                            '_that.gameboy = new GameBoyCore(ROM);\n'
+                            '        _that.gameboy.frameCycles = frameCycles;\n'
+                            '        if (frameCycles) _that.gameboy.initializeTiming();')
+    source = source.replace('this.baseCPUCyclesPerIteration = this.clocksPerSecond / 1000 * settings[6];',
+                            'this.baseCPUCyclesPerIteration = this.frameCycles || this.clocksPerSecond / 1000 * settings[6];')
+    source = source.replace('this.stopEmulator |= 1;         //End current loop.',
+                            'this.stopEmulator |= 1;         //End current loop.\n'
+                            '                this.frameDone = true;         //A stopped CPU still completes a silent host frame.')
+    source = source.replace(
+        '    this.audioBuffer[this.audioDestinationPosition++] = (this.downsampleInput >>> 16)',
+        '    if (this.onAudioSample) this.onAudioSample((this.downsampleInput >>> 16) * this.downSampleInputDivider - 1,\n'
+        '        (this.downsampleInput & 0xFFFF) * this.downSampleInputDivider - 1);\n'
+        '    this.audioBuffer[this.audioDestinationPosition++] = (this.downsampleInput >>> 16)')
+    return source.replace(
+        '        while(!_that.gameboy.frameDone) {',
+        '        // A halted or broken LCD/frame clock must return control to the OAP app.\n'
+        '        let iterations = 0;\n'
+        '        while(!_that.gameboy.frameDone) {\n'
+        "            if (iterations++ >= 6) throw new Error('Game Boy frame timed out');")
+
+
 pack(boyfiles, 'gb_vendor.js', 'serverboy.js Game Boy and Color / GPL-2.0',
-     'interface', lambda s: s)
+     'interface', game_boy_compat)
 
 needed = ['CPU', 'PPU', 'APU', 'MMU', 'DSP', 'DSP1', 'SNES']
 snfiles = [(name, snes / (name + '.js')) for name in needed]
 
 
 def compat(source):
-    # Original module-format conversion only. Keep upstream algorithms unchanged.
+    # The OAP console suppresses upstream debug output. Avoid allocating a trace
+    # record and formatting ROM-specific watchpoints on every CPU instruction.
+    if '    // Record this instruction in the ring buffer' in source:
+        start = source.index('    // Record this instruction in the ring buffer')
+        end = source.index('    this.cycles++;\n\n    this.execute(opcode, opPC, opPB);', start)
+        source = source[:start] + source[end:]
+    # Carry instruction cycles across scanline boundaries to keep the APU time
+    # from growing by up to one complete CPU instruction per scanline.
+    source = source.replace('    this.cpu.reset(); // Then CPU starts execution',
+                            '    this.cpu.reset(); // Then CPU starts execution\n'
+                            '    this.scanlineDebt = 0;\n'
+                            '    this.apuTargetCycles = this.apu.cycles;')
+    source = source.replace('        let lineCycles = 0;', '        let lineCycles = this.scanlineDebt;')
+    source = source.replace('        // Render visible lines\n        if (line < 224)',
+                            '        // Carry instruction cycles past the scanline boundary into the next line.\n'
+                            '        this.scanlineDebt = lineCycles - cyclesPerScanline;\n\n'
+                            '        // Render visible lines\n        if (line < 224)')
+    # Keep the upstream DSP clock continuous while its reset flag forces silence.
     deps = []
     def imported(match):
         deps.append((match.group(1), match.group(2)))
@@ -63,6 +104,15 @@ def compat(source):
                     imported, source, flags=re.M)
     exported = re.findall(r'^export class (\w+)', source, re.M)
     source = re.sub(r'^export class (\w+)', r'class \1', source, flags=re.M)
+    source = source.replace(
+        '        if (this.flg & 0x80) return;',
+        '        if (this.flg & 0x80) {\n'
+        '            if (this.samplePos < this.sampleBufferL.length) {\n'
+        '                this.sampleBufferL[this.samplePos] = 0;\n'
+        '                this.sampleBufferR[this.samplePos++] = 0;\n'
+        '            }\n'
+        '            return;\n'
+        '        }')
     source = source.replace('globalThis._snesMMU?.apu', '(globalThis._snesMMU && globalThis._snesMMU.apu)')
     # Upstream debug print assumes a particular commercial ROM is loaded.
     source = source.replace('data[0x2766D].toString(16)', '(data[0x2766D] || 0).toString(16)')
