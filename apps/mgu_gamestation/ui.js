@@ -173,7 +173,7 @@ function makeUi(G, colors) {
                 cv.target(x, y, colW, rowH, () => a.play(item), 'GAME_' + (list.start + k), 10);
             }
         });
-        const paged = list.pages > 1, arcade = spec.id === 'arcade';
+        const paged = list.pages > 1, arcade = spec.id === 'arcade' || spec.builtIn === true;
         const hint = !m.allowed ? m.lockHint : m.deleting ? 'Delete keeps battery saves and save states. Press Delete twice.' :
             list.total ? list.total + (list.total === 1 ? ' game' : ' games') + (paged ? '  ·  page ' + (list.page + 1) + ' of ' + list.pages : '') +
             (arcade ? '' : '  ·  in-game saves are kept automatically') : '';
