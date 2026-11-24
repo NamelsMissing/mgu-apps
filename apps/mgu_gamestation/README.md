@@ -1,6 +1,12 @@
-# MGU GameStation 0.8.0
+# MGU GameStation 0.8.1
 
-GameStation runs retro games offline on BMW iDrive 7 with the MGU Node.js 8 OAP runtime. The BMW screen renders the games. The app-menu icon uses 98 × 81 visible artwork centred in its 140 × 140 transparent canvas. Phones provide controls and ROM management over the car's local Wi-Fi. Bring your own legally obtained ROMs. Pong is built in.
+GameStation runs retro games offline on BMW iDrive 7 with the MGU Node.js 8 OAP runtime. The BMW screen renders the games. The app-menu icon uses 98 × 81 visible artwork centred in its 140 × 140 transparent canvas. Phones provide controls and ROM management over the car's local Wi-Fi. Bring your own legally obtained ROMs. Pong and the original Mineworks Tycoon mini-game are built in, requiring no ROM upload.
+
+## New in 0.8.1: Mineworks Tycoon
+
+GameStation now includes **Mineworks Tycoon**, an independent original offline mining-management mini-game, not a port or redistribution of the commercial iOS application Idle Miner Tycoon. Select **MINES** under Games, then **Mineworks Tycoon**; no ROM is necessary. Start with a copper shaft, earn money automatically, unlock silver/gold/crystal shafts, upgrade the elevator and warehouse, hire managers for a +50% shaft bonus, and activate a temporary 2x boost. The display uses inexpensive vector drawing, including animated miners and lift. Touch the shafts or surface lift/depot to select, then use the on-screen UPGRADE/MANAGER buttons. With iDrive or the phone pad, use UP/DOWN to select, A to upgrade, B to hire and START to boost. Set controller mode to **iDrive singleplayer** if the physical knob should be the player-one controller. GameStation saves Mineworks progress on pause/exit and periodically during active play; returning after time away grants 18% of base earning rate for at most 8 hours. All actions remain subject to the existing parked-only game guard. The game is locally tested but has not yet been validated on a BMW MGU.
+
+Run the targeted test with `node tests/gamestation_mine.test.js`.
 
 ## Compatibility
 
@@ -12,6 +18,7 @@ The PC column records synthetic-program tests with the host build of MGU Store's
 | SNES | jssnes, `.sfc`, `.smc` | 512 × 208 | Stereo, 32 kHz | 2 | Cartridge battery RAM | RGBA replay | Pending |
 | Game Boy / Color | serverboy.js, `.gb`, `.gbc` | 160 × 144 | Stereo, about 44.15 kHz | 1 | Cartridge battery RAM | RGBA replay | Pending |
 | Arcade | Original Pong | Vector graphics | Mono synthesized effects | 2 or CPU opponent | Last played | Vector replay | Pending |
+| Mineworks | Original idle mine-management mini-game | Vector graphics | Mono synthesized effects | 1 (iDrive, phone or touch) | Auto-save and up to 8 hours offline income | Node economy/drawing tests | Pending |
 | CHIP-8 / Super-CHIP | GameStation interpreter, `.ch8`, `.sc8` | 64 × 32 / 128 × 64 | Mono sound timer, 48 kHz | 1, 16-key phone keypad | 3 full-state slots | RGBA replay | Pending |
 | Master System | jsmoo, `.sms` | 256 × 192 in fixture | PSG mono, 48 kHz | 2, buttons 1/2 and console Pause | — | RGBA replay | Pending |
 | Game Gear | jsmoo, `.gg` | 160 × 144 | PSG stereo, 48 kHz | 1, buttons 1/2 and Start | — | RGBA replay | Pending |
@@ -29,7 +36,7 @@ The Sega 8-bit path uses NTSC, direct cartridge boot and the standard Sega mappe
 
 ## Installation and controls
 
-1. In MGU Store install or update **Renderer** to **mgu-render 0.6.25** and restart the head unit so the running daemon advertises native `pixmaps`. Then install or update **GameStation Retro Cores 0.3.0**, **GameStation PCM Output 0.2.0** and **MGU GameStation 0.8.0**. The catalog also declares `mgu-inputgate`, **GameStation Phone Port** and **GameStation PCM Output**. If another renderer is present, use Diagnostics to check the selected protocol and capability. A renderer provider accepted by the Store can still lack native pixmaps. [Renderer release](https://github.com/robertnisipeanu/mgu-store/tree/mgu-render%400.6.25/native/mgu-render)
+1. In MGU Store install or update **Renderer** to **mgu-render 0.6.25** and restart the head unit so the running daemon advertises native `pixmaps`. Then install or update **GameStation Retro Cores 0.3.0**, **GameStation PCM Output 0.2.0** and **MGU GameStation 0.8.1**. The catalog also declares `mgu-inputgate`, **GameStation Phone Port** and **GameStation PCM Output**. If another renderer is present, use Diagnostics to check the selected protocol and capability. A renderer provider accepted by the Store can still lack native pixmaps. [Renderer release](https://github.com/robertnisipeanu/mgu-store/tree/mgu-render%400.6.25/native/mgu-render)
 2. Open the app while parked. **Games** shows console counts, ROMs, refresh, delete and Continue. **Arcade** starts Pong without an upload. **Playing** offers Pause, Resume and Quit. Settings provide fit-to-stage and integer scaling in renderer coordinates.
 3. Open **Controllers** and choose iDrive alone, one phone, two phones, or iDrive P1 plus phone P2. One-player systems use P1. Pair each phone using its own QR code over BMW Wi-Fi. The app prefers the IPv4 address of `wlan_bridge` and can discover a unique BMW hotspot address. If no such address is visible to OAP, it reports that in Controllers. The firewall helper keeps the port scoped to its existing BMW interface.
 4. Open **Games** on a paired phone to upload, list, replace or delete games. Uploads run one at a time. Cartridge uploads expire after 60 seconds and are capped at 32 MiB for GBA and 8 MiB for the other cartridge systems. PlayStation disc uploads stream to disk, expire after 15 minutes and are capped at 800 MiB per image. The server checks the file header or size before publishing it.
