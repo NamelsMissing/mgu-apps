@@ -154,8 +154,10 @@ class Mineworks {
         rect(10,72,555,358,'#11202d',9);
         rect(19,81,538,46,'#18384b',8);
         line('SURFACE',32,111,16,'#c1d4e8',{font:'bold'});
-        rect(253,85,60,33,'#283c52',6);line('LIFT',262,106,13,'#def1ff');
-        rect(331,85,82,33,'#40506a',6);line('DEPOT',341,106,13,'#def1ff');
+        rect(253,85,60,33,this.selected===4?'#367d76':'#283c52',6);line('LIFT',262,106,13,'#def1ff');
+        rect(331,85,82,33,this.selected===5?'#367d76':'#40506a',6);line('DEPOT',341,106,13,'#def1ff');
+        target(253,85,60,33,()=>{this.selected=4;},'MINE_ELEVATOR');
+        target(331,85,82,33,()=>{this.selected=5;},'MINE_WAREHOUSE');
         bar(259,120,4,290,'#52758b');
         rect(245,150+(Math.sin(this.phase/28)+1)*106,27,22,'#f1c75a',3);
         rect(407+Math.sin(this.phase/55)*18,103,42,17,'#e0a565',3);
