@@ -1,4 +1,4 @@
-# Cluster Lyrics 0.1.4 — BMW G21 / MGU iDrive 7
+# Cluster Lyrics 0.1.5 — BMW G21 / MGU iDrive 7
 
 Shows the synchronised lyrics of the song that is playing on **your own Spotify account**:
 
@@ -52,12 +52,18 @@ inspect the renderer and lyric states as well. The **Log** page shows the sessio
 | What is playing, and the position in the song | Spotify Web API, `GET /v1/me/player/currently-playing` | Read-only. Asked every 4 s while a song plays, every 8 s otherwise, and only while the app's screen is open or cluster lyrics are switched on. |
 | Lyrics with time stamps | [LRCLIB](https://lrclib.net) | Spotify's API does not hand out lyrics. LRCLIB is a free community database: many songs have synchronised lyrics, some have none. Only title, artist, album and length are sent. |
 | Internet | MGU Store uplink (`"mguInternet": true`) | Same mechanism as MGU Video Hub. Only `accounts.spotify.com`, `api.spotify.com` and `lrclib.net` can be reached, on port 443, with certificate checks. |
-| Cluster display | `cluster-render`, target `map` (1088x480) | Four image layers of class `overlay`. In Lyrics only, the background is opaque and `exclusive`; in Lyrics + Waze, a small translucent footer has `exclusive: false` so Waze can remain visible. |
+| Cluster display | `cluster-render`, target `map` (1088x480) | Lyrics only uses an opaque exclusive background and separate text layers. Lyrics + Waze uses one non-exclusive image layer with a compact translucent footer. Its background follows the actual rendered glyphs, including accents and descenders. |
 
 When the lyrics are hidden (song paused, nothing playing, vehicle moving in standstill mode, switch off), the
 layers become invisible and the map window is released: the Waze map or BMW's map comes back by itself.
 This app never changes Waze's own setting and draws nothing on the speedometer/warning area (`panel`).
-BMW's turn box stays visible (`guide_hold` 0).
+In Lyrics only, `guide_hold=0` preserves the stock turn box. In Lyrics + Waze,
+`guide_hold=1` prevents the footer from vetoing Waze's request to hide the box.
+Waze can still opt out of suppression with its own `guide_hold=0`. On renderer
+versions that combine the flags with AND, if the footer remains active and
+retains the map slot by itself, the renderer can keep the box hidden until
+the footer also releases the slot. The map protocol has no passive
+guide-hold mode for an overlay.
 
 ## Setup
 
@@ -93,7 +99,7 @@ BMW's turn box stays visible (`guide_hold` 0).
 | Also replace BMW's own map (not only Waze) | Off | Applies to **Lyrics only**; ignored in **Lyrics + Waze** to avoid taking over BMW's map. |
 | KOMBI display: lyrics only or together with Waze | Lyrics only | **Lyrics only** replaces the map. **Lyrics + Waze** displays a compact translucent lyrics strip along the bottom while Waze continues underneath (Waze must already be running). |
 | KOMBI lyrics font size | 75% | Saved 50–120% scaling for the current and next lyric lines; the text is constrained to the cluster's central region. |
-| Show the next line | On | Second, dimmed line. |
+| Show the next line | On | Second line with a lighter colour than before, still visually distinct from the current line. |
 | Colour of the current line | White | White, green, amber or blue. |
 | Lyrics delay | 0 ms | Positive values show each line **later**, negative values **earlier** (−2000 … +3000 ms). On Now Playing the song clock and shifted lyric clock are shown separately. The progress bar continues to indicate the actual song position. |
 

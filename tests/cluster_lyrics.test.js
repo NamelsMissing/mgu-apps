@@ -376,23 +376,54 @@ function testKombi() {
     kw.show({ title: 'Demo', artist: 'Artist', current: 'One short line', next: 'Next one', gap: false });
     kw.cr.hello('map:1088x480,panel:1920x720');
     const wave = kw.cr.ops.filter(o => o[0] === 'image');
-    assert.strictEqual(wave.length, 4);
-    assert.strictEqual(wave[0][2].exclusive, false);
-    assert.strictEqual(wave[0][2].contend, false);
-    assert.ok(wave[0][2].y >= 250 && wave[0][2].h < K.MAP_H);
-    assert.ok(wave.every(o => o[2].x >= 0 && o[2].x + o[2].w <= K.MAP_W));
-    assert.ok(K.backgroundPixels(true)[3] < 255, 'alpha preserved');
+    assert.strictEqual(wave.length, 1);
+    const footer = wave[0][2];
+    assert.strictEqual(footer.exclusive, false);
+    assert.strictEqual(footer.contend, false);
+    assert.strictEqual(footer.guide_hold, true, 'lyrics are neutral in the map-wide AND');
+    assert.ok(footer.y >= 250 && footer.y + footer.h === K.MAP_H);
+    assert.ok(footer.x >= 0 && footer.x + footer.w <= K.MAP_W);
     assert.strictEqual(kw.status().fontSizePct, 75);
-    const originalRefs = wave.map(o => o[1]);
+
+    const ref = wave[0][1];
+    for (const wazeGuideHold of [true, false, true]) {
+        // Model cluster-render stack.cpp: AND across wanting map layers.
+        const waze = { guide_hold: wazeGuideHold, visible: true };
+        assert.strictEqual([waze, ...kw.cr.layers.values()].filter(l => l.visible)
+            .every(l => l.guide_hold), wazeGuideHold);
+    }
+    kw.configure({ fontSizePct: 50, showNext: false });
+    kw.show({ title: 'New song', current: 'Changed line', gap: false });
+    assert.strictEqual(kw.cr.layers.get(ref).guide_hold, true);
+    const markUpdate = kw.cr.ops.findIndex(op => op[0] === 'set' && op[2].visible);
+    assert.ok(kw.cr.ops.slice(markUpdate + 1).every(op => op[0] === 'pixels'));
+    kw.hide('off');
+    assert.strictEqual(kw.cr.layers.get(ref).visible, false);
+    kw.show({ noteOnly: true });
+    assert.strictEqual(kw.cr.layers.get(ref).visible, true);
     kw.configure({ layoutMode: 'exclusive' });
-    assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'drop').length, 4);
-    assert.ok(originalRefs.every(ref => !kw.cr.layers.has(ref)));
+    assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'drop').length, 1);
+    assert.ok(!kw.cr.layers.has(ref));
     assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'image').slice(-4)[0][2].exclusive, true);
-    kw.configure({ fontSizePct: 50 });
-    assert.strictEqual(kw.status().fontSizePct, 50);
-    kw.show({ title: '', artist: '', current: '', next: '', gap: true, noteOnly: true });
-    assert.ok(kw.status().visible);
     kw.close();
+
+    const sample = { title: 'Demo', artist: 'Artist', current: 'Àgyp ñ', next: 'Çÿg' };
+    const draw = (content, pct) => K.renderFooter(content, content.next || '', '#ffffff', pct);
+    const compact = draw(sample, 75);
+    assert.deepStrictEqual(compact.lines.map(l => l.size), [18, 38, 21]);
+    assert.ok(compact.rows[1] - compact.rows[0] < 150);
+    const note = draw({ noteOnly: true }, 75);
+    assert.ok(note.rows[0] > compact.rows[0]);
+    assert.strictEqual(note.surface.d[note.rows[0] * note.surface.w * 4 + 3], 0);
+    assert.strictEqual(note.surface.d[(note.rows[0] * note.surface.w + note.surface.w / 2) * 4 + 3], 198);
+    for (const pct of [50, 75, 120]) {
+        const long = draw({ title: 'Égj '.repeat(50), current: 'Égj '.repeat(100), next: 'Çÿg '.repeat(100) }, pct);
+        assert.ok(long.rows[0] >= 0);
+        assert.ok(long.lines.some(l => l.text.endsWith('…')));
+        assert.ok(long.lines.every(l => require(path.join(APP, 'lyric_font.js')).measure(l.face, l.text, l.size)
+            <= long.surface.w - 32));
+        assert.ok(draw(sample, pct).rows[0] >= 0);
+    }
 
     // Another map size (iDrive 8) is not drawn on.
     const k8 = new K.KombiLyrics(quiet, { ClusterRender: FakeRender });
@@ -404,7 +435,7 @@ function testKombi() {
 }
 
 /* ---------- KOMBI through the real client and a socket speaking the service's framing ---------- */
-function testKombiWire() {
+function testKombiWire(coexist) {
     const net = require('net');
     const dir = tmp(), sock = path.join(dir, 'render.sock');
     const messages = [], frames = [];
@@ -433,23 +464,30 @@ function testKombiWire() {
                     } else if (type === 0x46) frames.push({ ref: body.readUInt32LE(0), rects: body.readUInt16LE(12), bytes: body.length });
                 }
                 const visible = messages.filter(m => m.op === 'set' && m.visible === 1).length;
-                if (visible === 4 && frames.length >= 4) {
+                const expected = coexist ? 1 : 4;
+                if (visible === expected && frames.length >= expected) {
                     clearTimeout(timer);
                     try {
                         assert.deepStrictEqual(messages[0], { op: 'hello', app: 'cluster_lyrics', proto: 1 });
                         const layers = messages.filter(m => m.op === 'layer');
-                        assert.strictEqual(layers.length, 4);
+                        assert.strictEqual(layers.length, expected);
                         layers.forEach(l => {
                             assert.strictEqual(l.target, 'map');
                             assert.strictEqual(l.kind, 'image');
                             assert.strictEqual(l.class, 'overlay');
-                            assert.strictEqual(l.guide_hold, 0);
+                            assert.strictEqual(l.guide_hold, coexist ? 1 : 0);
                             assert.strictEqual(l.contend, 0);
                             assert.strictEqual(l.visible, 0, 'created hidden');
                         });
-                        assert.strictEqual(layers[0].exclusive, 1);
-                        assert.deepStrictEqual([layers[0].iw, layers[0].ih, layers[0].w, layers[0].h, layers[0].sampling], [16, 16, 1088, 480, 'bilinear']);
-                        assert.ok(layers.slice(1).every(l => l.exclusive === undefined && l.iw === l.w && l.ih === l.h));
+                        assert.strictEqual(layers[0].exclusive, coexist ? 0 : 1);
+                        if (coexist) {
+                            assert.deepStrictEqual([layers[0].x, layers[0].y, layers[0].iw, layers[0].ih],
+                                [152, 270, 784, 210]);
+                        } else {
+                            assert.deepStrictEqual([layers[0].iw, layers[0].ih, layers[0].w, layers[0].h, layers[0].sampling],
+                                [16, 16, 1088, 480, 'bilinear']);
+                            assert.ok(layers.slice(1).every(l => l.exclusive === undefined && l.iw === l.w && l.ih === l.h));
+                        }
                         // Every image got its pixels: a 14-byte frame header, no rects, the whole image.
                         layers.forEach(l => {
                             const f = frames.find(x => x.ref === l.ref);
@@ -462,6 +500,7 @@ function testKombiWire() {
             });
         });
         const k = new K.KombiLyrics(quiet, { socketPath: sock });
+        if (coexist) k.configure({ layoutMode: 'withWaze', takeOverBmwMap: true });
         server.listen(sock, () => {
             k.start();
             k.show({ title: 'Test Song', artist: 'Test Artist', current: 'First test line', next: 'Second', gap: false });
@@ -711,7 +750,8 @@ function testManifest() {
     await testSpotify();
     await testLrclib();
     testKombi();
-    await testKombiWire();
+    await testKombiWire(false);
+    await testKombiWire(true);
     await testEngine();
     testBootControl();
     testManifest();

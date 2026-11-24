@@ -215,7 +215,7 @@
       "id": "cluster_lyrics",
       "kind": "app",
       "title": "Cluster Lyrics",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "path": "apps/cluster_lyrics",
       "mguHmi": [
         "ID7"

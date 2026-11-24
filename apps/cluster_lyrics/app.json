@@ -1,8 +1,8 @@
 {
   "id": "cluster_lyrics",
   "title": "Cluster Lyrics",
-  "description": "Shows the synchronised lyrics of the song playing on your Spotify account, optionally in the instrument cluster's map window instead of the Waze map.",
-  "version": "0.1.4",
+  "description": "Shows the synchronised lyrics of the song playing on your Spotify account, optionally in the instrument cluster's map window with a compact overlay for Waze coexistence.",
+  "version": "0.1.5",
   "mguInternet": true,
   "vendor": "custom",
   "loggingId": "OCL1",

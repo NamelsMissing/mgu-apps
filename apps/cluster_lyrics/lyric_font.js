@@ -41,6 +41,19 @@ function measure(name, text, size) {
     for (const ch of String(text)) { const g = f.glyphs[ch.codePointAt(0)] || f.glyphs[63]; if (g) w += g[6]; }
     return w * scale;
 }
+/** Baseline-relative pixel bounds, including the glyphs' antialiasing margin. */
+function verticalBounds(name, text, size) {
+    const f = face(name), scale = size / f.size;
+    let top = Infinity, bottom = -Infinity;
+    for (const ch of text) {
+        const g = f.glyphs[ch.codePointAt(0)] || f.glyphs[63];
+        if (!g || !g[2] || !g[3]) continue;
+        top = Math.min(top, g[5] * scale);
+        bottom = Math.max(bottom, (g[5] + g[3]) * scale);
+    }
+    return top === Infinity ? { top: 0, bottom: 0 } :
+        { top: Math.floor(top) - 1, bottom: Math.ceil(bottom) + 1 };
+}
 function parseColor(c) {
     if (Array.isArray(c)) return c;
     const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(c));
@@ -96,4 +109,4 @@ function surface(w, h, color) {
     return { d, w, h };
 }
 
-module.exports = { draw, measure, supported, surface, face, parseColor };
+module.exports = { draw, measure, supported, surface, face, verticalBounds, parseColor };
