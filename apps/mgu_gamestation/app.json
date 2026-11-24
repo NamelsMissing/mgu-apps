@@ -1,8 +1,8 @@
 {
   "id": "mgu_gamestation",
   "title": "MGU GameStation",
-  "description": "Offline retro games with GPU fullscreen, routed game audio, native NES support, iDrive or phone controllers and in-game saves. Parked only.",
-  "version": "0.8.0",
+  "description": "Offline retro games and original Mineworks mining tycoon with GPU fullscreen, game audio, iDrive or phone controls and local saves. Parked only.",
+  "version": "0.8.1",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAG1",
   "iconGlyph": "GAME",
