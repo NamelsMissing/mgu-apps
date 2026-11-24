@@ -74,7 +74,7 @@
       "id": "mgu_gamestation",
       "kind": "app",
       "title": "MGU GameStation",
-      "version": "0.8.0",
+      "version": "0.8.1",
       "path": "apps/mgu_gamestation",
       "icon": "icon.png",
       "mguHmi": [
