@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Cluster Lyrics 0.1.0 - the lyrics of the song playing on the user's Spotify
+ * Cluster Lyrics 0.1.4 - the lyrics of the song playing on the user's Spotify
  * account, on the iDrive screen and optionally in the instrument cluster's
  * map window (instead of the Waze map).
  *
@@ -21,6 +21,7 @@ const { Lyrics } = require('./lrclib.js');
 const { KombiLyrics, COLORS } = require('./kombi.js');
 const { LyricsEngine } = require('./engine.js');
 const { BackgroundStatus } = require('./background_status.js');
+const { BootControl } = require('./boot_control.js');
 
 const PAGES = ['NOW', 'SETUP', 'LOG'];
 const LYRICS_TEXT = { idle: 'waiting for a song', loading: 'loading...', synced: 'synchronised (LRCLIB)',
@@ -54,26 +55,37 @@ mgu.run({
         // Autostart: the process (and with it the KOMBI lyrics) runs without the app window.
         const background = new BackgroundStatus({ dir: ctx.dataDir, file: 'cluster-lyrics-background.json',
             version: (ctx.spec && ctx.spec.version) || '', startReason: ctx.app && ctx.app.startReason });
+        const boot = new BootControl(settings);
+        note('process started: reason=' + background.startReason +
+            ', autostart=' + boot.autostartEnabled() +
+            ', cluster at startup=' + boot.startedAutomatically);
 
         let page = spotify.signedIn() ? 'NOW' : 'SETUP', notice = '', signOutArmedUntil = 0;
-        let lastState = '', lastDrawAt = 0;
+        let lastState = '', lastDrawAt = 0, lastDelayMs = null;
         // MAIN's draw loop only runs while the screen is shown: that is the visibility signal
         // (it does not depend on an RHMI visibility event arriving).
         const mainVisible = () => Date.now() - lastDrawAt < 3000;
 
         function syncSettings() {
-            const on = !!settings.get('kombiOn');
+            const on = boot.active();
+            const delayMs = Number(settings.get('offsetMs')) || 0;
             engine.configure({ kombiOn: on, kombiMode: settings.get('kombiMode') === 'always' ? 'always' : 'parked',
-                offsetMs: Number(settings.get('offsetMs')) || 0 });
+                offsetMs: delayMs });
+            if (lastDelayMs !== null && delayMs !== lastDelayMs)
+                note('Lyrics delay ' + lastDelayMs + ' -> ' + delayMs + ' ms (' +
+                    (delayMs > 0 ? 'later' : delayMs < 0 ? 'earlier' : 'original timing') + ')');
+            lastDelayMs = delayMs;
             kombi.configure({ accent: settings.get('accent'), showNext: settings.get('showNext') !== false,
-                takeOverBmwMap: !!settings.get('takeOverBmwMap') });
+                takeOverBmwMap: !!settings.get('takeOverBmwMap'),
+                layoutMode: settings.get('layoutMode') === 'withWaze' ? 'withWaze' : 'exclusive',
+                fontSizePct: Number(settings.get('kombiFontPct')) || 75 });
             // Without the switch the app does not even connect to the cluster renderer.
             if (on) kombi.start(); else kombi.close();
             engine.setActive(mainVisible() || on);
             updateButtons();
         }
         function updateButtons() {
-            ui.text('BTN_KOMBI', 'KOMBI lyrics: ' + (settings.get('kombiOn') ? 'On' : 'Off'));
+            ui.text('BTN_KOMBI', 'KOMBI lyrics: ' + (boot.active() ? 'On' : 'Off'));
             ui.text('BTN_PAGE', page === 'NOW' ? 'Setup' : page === 'SETUP' ? 'Log' : 'Now playing');
             ui.text('BTN_ACTION', page === 'NOW' ? 'Reload lyrics' : page === 'SETUP' ? 'Import from USB' :
                 signOutArmedUntil > Date.now() ? 'Confirm sign-out' : 'Sign out');
@@ -87,9 +99,8 @@ mgu.run({
             if (name === 'MAIN' && visible) { background.seen(); showPage(spotify.signedIn() ? 'NOW' : 'SETUP'); }
         });
         ui.onClick('BTN_KOMBI', () => {
-            const on = !settings.get('kombiOn');
-            settings.set('kombiOn', on);
-            note('KOMBI lyrics switched ' + (on ? 'on' : 'off') + ' (mode ' + settings.get('kombiMode') + ')');
+            const on = boot.toggle();
+            note('KOMBI lyrics switched ' + (on ? 'on' : 'off') + ' manually (mode ' + settings.get('kombiMode') + ')');
         });
         ui.onClick('BTN_PAGE', () => showPage(PAGES[(PAGES.indexOf(page) + 1) % PAGES.length]));
         ui.onClick('BTN_ACTION', () => {
@@ -112,7 +123,10 @@ mgu.run({
             }
             updateButtons();
         });
-        settings.onChange(() => syncSettings());
+        settings.onChange((key) => {
+            boot.onSettingsChanged(key);
+            syncSettings();
+        });
         syncSettings();
 
         const ticker = setInterval(() => {
@@ -121,15 +135,24 @@ mgu.run({
                 const at = d.receivedAt && d.receivedAt.speed;
                 engine.observeVehicle(typeof d.speed === 'number' ? d.speed : null,
                     typeof at === 'number' ? Date.now() - at : null, !!d.demo);
-                engine.setActive(mainVisible() || !!settings.get('kombiOn'));
+                engine.setActive(mainVisible() || boot.active());
                 engine.tick();
                 const state = (engine.track ? engine.track.title : '-') + ' | lyrics=' + engine.lyricsState +
                     ' | kombi=' + (engine.kombiReason || 'allowed') + (engine.pollError ? ' | error=' + engine.pollError : '');
                 if (state !== lastState) { lastState = state; note(state); }
-                background.update({ kombiOn: !!settings.get('kombiOn'), kombiMode: settings.get('kombiMode'),
+                // A 15 s heartbeat makes a running background process verifiable
+                // even when no music is playing and none of its status values change.
+                const renderStatus = kombi.status();
+                background.update({ kombiOn: boot.active(),
+                    configuredKombiOn: !!settings.get('kombiOn'),
+                    autoStartOnBoot: boot.autostartEnabled(),
+                    startedAutomatically: boot.startedAutomatically,
+                    kombiMode: settings.get('kombiMode'),
                     signedIn: spotify.signedIn(), track: engine.track ? engine.track.title : null,
                     lyrics: engine.lyricsState, kombi: engine.kombiReason || 'allowed',
-                    pollError: engine.pollError || '', demoSpeed: !!d.demo });
+                    rendererReady: renderStatus.ready, rendererMapState: renderStatus.map.state,
+                    pollError: engine.pollError || '', demoSpeed: !!d.demo,
+                    heartbeat15s: Math.floor(Date.now() / 15000) });
                 if (signOutArmedUntil && Date.now() >= signOutArmedUntil) { signOutArmedUntil = 0; updateButtons(); }
             } catch (e) { log.warn('lyrics tick: ' + (e && e.message || e)); }
         }, 250);
@@ -167,8 +190,13 @@ mgu.run({
                     font.draw(s, 'regular', sub.lines[0] || '', 0, 66, 24, t.dim);
                 });
                 cv.image(IMG_HEAD, 48, 66, HEAD_W, HEAD_H);
-                const pos = Math.max(0, engine.position() + (Number(settings.get('offsetMs')) || 0));
-                cv.text(clock(pos) + ' / ' + clock(track.durationMs), 1552, 100, 22, t.dim, { align: 'right', literal: true });
+                const timing = engine.timing();
+                const pos = Math.max(0, timing.trackMs);  // real song position, NOT delayed lyric time
+                cv.text('Song ' + clock(pos) + ' / ' + clock(track.durationMs),
+                    1552, 98, 22, t.dim, { align: 'right', literal: true });
+                const signedDelay = (timing.delayMs > 0 ? '+' : '') + timing.delayMs + ' ms';
+                cv.text('Lyrics ' + clock(Math.max(0, timing.lyricMs)) + '  |  Delay ' + signedDelay,
+                    1552, 131, 19, timing.delayMs ? t.text : t.dim, { align: 'right', literal: true });
                 cv.fillRect(48, 156, 1504, 3, t.track);
                 if (track.durationMs) cv.fillRect(48, 156, Math.round(1504 * Math.min(1, pos / track.durationMs)), 3, t.text);
                 // The same two lines the cluster shows.
@@ -197,7 +225,7 @@ mgu.run({
             const k = kombi.status();
             // "shown" only when the renderer itself reports the map window as shown.
             const shown = k.visible && k.map.state === 'shown';
-            const kombiText = !settings.get('kombiOn') ? 'off' : engine.kombiReason ? 'hidden - ' + engine.kombiReason :
+            const kombiText = !boot.active() ? 'off' : engine.kombiReason ? 'hidden - ' + engine.kombiReason :
                 !k.ready ? 'cluster-render not connected' : !k.supported ? 'map window not supported' :
                 shown ? 'shown in the map window' : 'requested - map window ' + (k.map.state || '?') +
                     (k.map.holder ? ' (held by ' + k.map.holder + ')' : '');
@@ -233,10 +261,14 @@ mgu.run({
             cv.text('Renderer: ' + (k.ready ? 'connected ' + k.backend : 'offline') + '  |  map: ' + (k.map.state || '-') +
                 (k.map.holder ? ' holder=' + k.map.holder : '') + '  |  uploaded: ' + k.uploadedKb + ' KB' +
                 (k.lastRefused ? '  |  refused: ' + k.lastRefused.slice(0, 40) : ''), 48, 84, 19, t.dim, { literal: true });
-            const lines = events.slice(-15);
-            if (!lines.length) cv.text('No events yet.', 48, 130, 21, t.dim, { literal: true });
+            cv.text('Autostart next boot: ' + (boot.autostartEnabled() ? 'On' : 'Off') +
+                '  |  This session: ' + (boot.active() ? 'On' : 'Off') +
+                '  |  Start reason: ' + ascii(background.startReason).slice(0, 28),
+                48, 114, 18, t.dim, { literal: true });
+            const lines = events.slice(-12);
+            if (!lines.length) cv.text('No events yet.', 48, 160, 21, t.dim, { literal: true });
             lines.forEach((line, i) => {
-                cv.text(ascii(line).slice(0, 130), 48, 118 + i * 25, 18,
+                cv.text(ascii(line).slice(0, 130), 48, 154 + i * 25, 18,
                     /refused|error|expired/i.test(line) ? t.warn : t.text, { literal: true });
             });
             if (notice) cv.text(notice.slice(0, 110), 48, 506, 19, t.warn, { literal: true });

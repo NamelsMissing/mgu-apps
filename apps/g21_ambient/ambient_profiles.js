@@ -3,78 +3,51 @@
 const KEY = 'ambientProfilesV1';
 const MODES = ['sport', 'comfort', 'eco', 'adaptive'];
 
-function boundedRgb(values) {
-    if (!Array.isArray(values) || values.length !== 3 ||
-        values.some(n => !Number.isInteger(n) || n < 0 || n > 254)) return null;
-    return values.slice();
-}
-function brightness(n) {
-    return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 50;
-}
-function cleanZone(value) {
-    if (!value || typeof value !== 'object') return null;
-    if (value.mode === 'car' || value.mode === 'main') return { mode: value.mode };
-    const rgb = boundedRgb(value.rgb);
-    return value.mode === 'own' && rgb ? { mode: 'own', rgb, brightness: brightness(value.brightness) } : null;
-}
 function cleanSnapshot(value) {
-    if (!value || typeof value !== 'object' || !value.main) return null;
-    const rgb = boundedRgb(value.main.rgb);
-    if (!rgb) return null;
-    const zones = {};
-    const source = value.zones && typeof value.zones === 'object' ? value.zones : {};
-    for (const key of Object.keys(source).slice(0, 52)) {
-        if (!/^[01]:(?:[1-9]|1\d|2[0-6])$/.test(key)) continue;
-        const zone = cleanZone(source[key]);
-        if (zone) zones[key] = zone;
-    }
-    return { main: { rgb, brightness: brightness(value.main.brightness) }, zones };
+    const main = value && value.main;
+    if (!main || !Array.isArray(main.rgb) || main.rgb.length !== 3) return null;
+    const rgb = Array.from(main.rgb);
+    if (rgb.some(n => !Number.isInteger(n) || n < 0 || n > 254)) return null;
+    const brightness = Number.isFinite(main.brightness)
+        ? Math.max(0, Math.min(100, Math.round(main.brightness))) : 50;
+    return { main: { rgb, brightness, on: main.on === 0 ? 0 : 1 } };
 }
+
 function modeFromSignal(value) {
     const raw = value && value.actualValueModeDrivingExperience;
-    if (raw === null || raw === undefined) return null;
-    const s = String(raw).toUpperCase();
-    if (s.indexOf('SPORT') >= 0 || s.indexOf('BOOST') >= 0 || [1, 2, 3, 15, 16, 23, 28].includes(Number(s))) return 'sport';
-    if (s.indexOf('ECO') >= 0 || [7, 8, 9].includes(Number(s))) return 'eco';
-    if (s.indexOf('ADAPT') >= 0 || Number(s) === 10) return 'adaptive';
-    if (s.indexOf('COMFORT') >= 0 || [4, 5, 6].includes(Number(s))) return 'comfort';
+    if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+    const name = String(raw).trim().toUpperCase(), code = Number(name);
+    if (name.indexOf('SPORT') >= 0 || name.indexOf('BOOST') >= 0 || [1, 2, 3, 15, 16, 23, 28].includes(code)) return 'sport';
+    if (name.indexOf('ECO') >= 0 || [7, 8, 9].includes(code)) return 'eco';
+    if (name.indexOf('ADAPT') >= 0 || code === 10) return 'adaptive';
+    if (name.indexOf('COMFORT') >= 0 || [4, 5, 6].includes(code)) return 'comfort';
     return null;
 }
 
 class AmbientProfiles {
     constructor(settings) {
         this.settings = settings;
-        this.data = { zones: {}, favorites: Array(6).fill(null), modes: {}, follow: false };
+        this.data = { favorites: Array(6).fill(null), modes: {}, follow: false };
         try {
             const old = JSON.parse(settings.get(KEY) || '{}');
-            if (old && typeof old === 'object' && !Array.isArray(old)) {
-                if (old.zones && typeof old.zones === 'object') {
-                    for (const key of Object.keys(old.zones).slice(0, 52)) {
-                        if (!/^[01]:(?:[1-9]|1\d|2[0-6])$/.test(key)) continue;
-                        const zone = cleanZone(old.zones[key]);
-                        if (zone) this.data.zones[key] = zone;
-                    }
-                }
-                if (Array.isArray(old.favorites)) this.data.favorites = Array.from({ length: 6 }, (_, i) => cleanSnapshot(old.favorites[i]));
-                if (old.modes && typeof old.modes === 'object') MODES.forEach(k => { const m = cleanSnapshot(old.modes[k]); if (m) this.data.modes[k] = m; });
-                this.data.follow = old.follow === true;
+            if (!old || typeof old !== 'object' || Array.isArray(old)) return;
+            if (Array.isArray(old.favorites)) {
+                this.data.favorites = this.data.favorites.map((_, i) => cleanSnapshot(old.favorites[i]));
             }
-        } catch (_) { /* corrupted older state: use empty saved profiles */ }
+            if (old.modes && typeof old.modes === 'object') {
+                MODES.forEach(mode => {
+                    const look = cleanSnapshot(old.modes[mode]);
+                    if (look) this.data.modes[mode] = look;
+                });
+            }
+            this.data.follow = old.follow === true;
+        } catch (_) { /* Use empty profiles if the saved JSON is unreadable. */ }
     }
     save() { this.settings.set(KEY, JSON.stringify(this.data)); }
-    snapshot(rgb, bright) {
-        const clean = cleanSnapshot({ main: { rgb, brightness: bright }, zones: this.data.zones });
+    snapshot(color, brightness) {
+        const clean = cleanSnapshot({ main: { rgb: color.rgb, on: color.on, brightness } });
         if (!clean) throw new TypeError('invalid active colours');
         return clean;
-    }
-    zone(module) { return this.data.zones[module.key] || { mode: 'main' }; }
-    setZone(module, mode, rgb, bright) {
-        if (!module || !/^[01]:(?:[1-9]|1\d|2[0-6])$/.test(module.key)) throw new TypeError('module missing');
-        const record = cleanZone({ mode, rgb, brightness: bright });
-        if (!record) throw new TypeError('invalid zone');
-        if (mode === 'main') delete this.data.zones[module.key];
-        else this.data.zones[module.key] = record;
-        this.save();
     }
     saveFavorite(index, snapshot) {
         if (!Number.isInteger(index) || index < 0 || index >= 6) throw new RangeError('favorite index');
@@ -88,13 +61,6 @@ class AmbientProfiles {
         if (!Number.isInteger(index) || index < 0 || index >= 6) throw new RangeError('favorite index');
         this.data.favorites[index] = null;
         this.save();
-    }
-    replaceZones(snapshot) {
-        const clean = cleanSnapshot(snapshot);
-        if (!clean) return false;
-        this.data.zones = clean.zones;
-        this.save();
-        return true;
     }
     saveMode(mode, snapshot) {
         if (!MODES.includes(mode)) throw new RangeError('unknown mode');

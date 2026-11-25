@@ -33,11 +33,19 @@ typedef struct {
     int enabled;
 } MguEqBank;
 
+typedef enum {
+    MGU_EQ_S16_LE = 2,
+    MGU_EQ_S24_LE = 6,      /* 24 significant bits in 32-bit storage */
+    MGU_EQ_S24_3LE = 32     /* packed 24 bit */
+} MguEqFormat;
+
 typedef struct {
     unsigned sample_rate;
     unsigned channels;
     MguEqBank current;
     MguEqBank previous;
+    MguEqConfig queued;
+    int has_queued;
     int fading;
     unsigned fade_frames;
     unsigned fade_remaining;
@@ -55,6 +63,8 @@ int mgu_eq_valid(const MguEqConfig *config, unsigned sample_rate);
 double mgu_eq_headroom_db(const MguEqConfig *config);
 int mgu_eq_init(MguEqDsp *dsp, unsigned sample_rate, unsigned channels, const MguEqConfig *config);
 int mgu_eq_configure(MguEqDsp *dsp, const MguEqConfig *config);
+unsigned mgu_eq_sample_bytes(int format);
+int mgu_eq_process(MguEqDsp *dsp, int format, const void *in, void *out, size_t frames);
 int mgu_eq_process_s16le(MguEqDsp *dsp, const int16_t *in, int16_t *out, size_t frames);
 
 #endif

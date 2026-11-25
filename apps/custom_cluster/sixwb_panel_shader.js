@@ -9,7 +9,7 @@ precision highp float;
 varying vec2 v_uv;
 uniform vec4 u_values;   // measured speed, engine rpm, oil, coolant
 uniform vec4 u_accent;   // Comfort/Sport/ECO theme or Color Studio RGB
-uniform vec4 u_options;  // map aperture, gear, phone badge, subtheme 0/1/2
+uniform vec4 u_options;  // map aperture, gear, spare, subtheme 0/1/2
 
 float box(vec2 p,vec2 c,vec2 halfSize){
   vec2 d=abs(p-c)-halfSize;
@@ -117,11 +117,5 @@ void main(){
   color=mix(color,tint,clamp(border,0.,1.)*.28);
   alpha=max(alpha,clamp(border,0.,1.));
 
-  // A harmless green dot for an iPhone Shortcut event; never an alarm.
-  if(u_options.z>.5){
-    float b=1.-smoothstep(18.,21.,length(p-vec2(1850.,79.)));
-    color=mix(color,vec3(.13,.94,.48),b);
-    alpha=max(alpha,b);
-  }
   gl_FragColor=vec4(color,clamp(alpha,0.,1.));
 }`;

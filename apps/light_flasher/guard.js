@@ -49,6 +49,9 @@ class Guard {
         //if (!this.gearSub || !this.gearSub.available || this.stage !== 'P') return 'Select P (Park)';
         return null;
     }
+    recoveryReason() {
+        return this.reason();
+    }
     snapshot() {
         return { speedKmh: this.speed, speedAgeMs: this.speedAt ? this.now() - this.speedAt : null,
             stage: this.stage, speedProvider: !!(this.speedSub && this.speedSub.available),

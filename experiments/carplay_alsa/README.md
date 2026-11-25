@@ -1,14 +1,6 @@
 # CarPlay DSP – native PCM filter experiment
 
-This is an **offline-only source prototype**, not an installable MGU component.
-It contains a low-latency C implementation of the existing Equalizer 0.2.0
-seven-band peaking DSP. There is deliberately no ALSA interception, service
-modification, CarPlay restart, `LD_PRELOAD`, PCM redirect, or vehicle installer.
-
-The current production DSP remains the existing Node.js component 0.2.0.
-The C implementation uses the same filter equations, supported sample rates,
-gain/Q limits, 25 ms crossfade, and conservative automatic headroom.
-Its initial configuration is bypass (enabled=false).
+This source tree contains the native seven-band peaking DSP and an isolated ALSA interposer for synthetic PCM tests. It builds on a development PC without BMW binaries. The managed MGU DSP component is the separate Node.js service 0.2.2. The prototype starts in bypass and ships without a vehicle installer. [Live DSP experiment](CARPLAY_LIVE_DSP.md)
 
 The separate [ALSA_ROUTE_PROBE.md](ALSA_ROUTE_PROBE.md) describes an additional
 **offline-only pass-through ALSA route detector**. Its mock test verifies that

@@ -154,13 +154,25 @@ class LyricsEngine {
         // Between the two thresholds the last decision stands.
     }
 
-    position() {
-        return this.track ? positionAt(this.track, this.now()) - (Number(this.options.offsetMs) || 0) : 0;
+    /** Spotify playback position before lyric offset (used for the song progress bar). */
+    rawPosition() { return this.track ? positionAt(this.track, this.now()) : 0; }
+    /** Inspect the exact lyric clock without accidentally cancelling the delay. */
+    timing() {
+        const trackMs = this.rawPosition();
+        const delayMs = Number(this.options.offsetMs) || 0;
+        return { trackMs, lyricMs: trackMs - delayMs, delayMs };
     }
+    /** Positive delay = display a lyric later; negative delay = earlier. */
+    position() { return this.timing().lyricMs; }
     /** { index, current, next, gap } for now, or null without synced lyrics. */
     frame() {
         if (!this.track || this.lyricsState !== 'synced' || this.lyricsFor !== this._key(this.track)) return null;
         return lrc.frame(this.lines, this.position());
+    }
+    /** No usable timed lyrics: show a note instead of unsynchronised text. */
+    _noteOnly() {
+        return this.lyricsState === 'none' || this.lyricsState === 'plain' ||
+            this.lyricsState === 'instrumental' || this.lyricsState === 'unreadable';
     }
     /** Why the cluster shows nothing, or '' when it may show the lyrics. */
     kombiBlock() {
@@ -171,7 +183,7 @@ class LyricsEngine {
         if (!this.track.playing && this.pausedSince && now - this.pausedSince >= PAUSE_HIDE_MS) return 'paused';
         if (now - this.lastPollOkAt > STALE_MS) return 'Spotify state too old';
         if (this.lyricsFor !== this._key(this.track) || this.lyricsState === 'loading') return 'lyrics loading';
-        if (this.lyricsState !== 'synced') return 'no synchronised lyrics (' + this.lyricsState + ')';
+        if (this.lyricsState !== 'synced' && !this._noteOnly()) return 'no synchronised lyrics (' + this.lyricsState + ')';
         if (this.options.kombiMode !== 'always') {
             if (this.vehicle.demo) return 'no live vehicle data';
             if (this.vehicle.speed === null || now - this.vehicle.at > SPEED_FRESH_MS) return 'no fresh speed signal';
@@ -186,6 +198,10 @@ class LyricsEngine {
         if (block) {
             if (block === 'switched off') this.kombi.release(block);
             else this.kombi.hide(block);
+            return;
+        }
+        if (this._noteOnly()) {
+            this.kombi.show({ title: '', artist: '', current: '', next: '', gap: true, noteOnly: true });
             return;
         }
         const f = this.frame();

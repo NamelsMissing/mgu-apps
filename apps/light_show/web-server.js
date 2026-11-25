@@ -7,7 +7,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const os = require('os');
-const url = require('url');
+const { URL } = require('url');
 const page = require('./web-page');
 
 const PORT = 18880;
@@ -98,31 +98,43 @@ class WebServer {
         req.on('error', () => finish({ known: false, ready: false, error: 'mgu-light-net is not running' }));
     }
     request(req, res) {
-        const q = url.parse(req.url, true);
+        let q;
+        try { q = new URL(req.url, 'http://localhost'); }
+        catch (_) { return reply(res, 400, 'Invalid request URL'); }
         if (q.pathname === '/.mgu-light-show-health' && req.method === 'GET' && loopback(req.socket.remoteAddress)) {
             res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-MGU-Light-Show': '1' });
             return res.end('{"ok":true}');
         }
         if (!privateAddress(req.socket.remoteAddress)) return reply(res, 403, 'Local network only');
-        if (q.query.t !== this.token) return reply(res, 403, 'Invalid link. Scan the QR code on the BMW screen again.');
+        const tokens = q.searchParams.getAll('t');
+        if (tokens.length !== 1 || tokens[0] !== this.token) return reply(res, 403, 'Invalid link. Scan the QR code on the BMW screen again.');
         this.lastSeen = Date.now();
         if (req.method === 'GET' && q.pathname === '/') return reply(res, 200, page, 'text/html; charset=utf-8');
         if (req.method === 'GET' && q.pathname === '/api/state') return this.answer(res, () => this.actions.state());
-        const routes = { '/api/show': 'show', '/api/save': 'save', '/api/test': 'test', '/api/observe': 'observe',
+        if (req.method === 'GET' && q.pathname === '/api/diagnostics' && typeof this.actions.diagnostics === 'function') {
+            const result = this.actions.diagnostics();
+            if (q.searchParams.get('download') === '1') {
+                res.setHeader('Content-Disposition', 'attachment; filename="light-show-diagnostics.txt"');
+                return reply(res, 200, result.text, 'text/plain; charset=utf-8');
+            }
+            return json(res, 200, result);
+        }
+        const routes = { '/api/show': 'show', '/api/save': 'save', '/api/test': 'test', '/api/toggle': 'toggle', '/api/observe': 'observe',
             '/api/name': 'name', '/api/stop': 'stop', '/api/scan': 'scan', '/api/experimental': 'experimental', '/api/commoff': 'commoff' };
         const action = routes[q.pathname];
         if (req.method !== 'POST' || !action || typeof this.actions[action] !== 'function') return reply(res, 404, 'Not found');
-        let body = '', size = 0, over = false;
+        const chunks = [];
+        let size = 0, over = false;
         req.on('data', (part) => {
             if (over) return;
             size += part.length;
-            if (size > MAX_BODY) { over = true; reply(res, 413, 'Request too large'); req.destroy(); return; }
-            body += part.toString('utf8');
+            if (size > MAX_BODY) { over = true; res.setHeader('Connection', 'close'); reply(res, 413, 'Request too large'); return; }
+            chunks.push(part);
         });
         req.on('end', () => {
             if (over) return;
             let value = {};
-            if (body) { try { value = JSON.parse(body); } catch (_) { return json(res, 400, { ok: false, error: 'Invalid JSON' }); } }
+            if (size) { try { value = JSON.parse(Buffer.concat(chunks, size).toString('utf8')); } catch (_) { return json(res, 400, { ok: false, error: 'Invalid JSON' }); } }
             if (!value || typeof value !== 'object' || Array.isArray(value)) return json(res, 400, { ok: false, error: 'Invalid request' });
             this.answer(res, () => this.actions[action](value));
         });

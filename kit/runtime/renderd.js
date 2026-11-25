@@ -14,8 +14,7 @@
  * opts.native: ask for mgu-render's own dialect (mgu-render/1, the Store's renderer). There touch
  * claims and the controller grab work on one connection, and X_STATE says when the renderer has
  * the app on screen. A renderer that does not speak it answers READY alone and the connection
- * stays in the upstream dialect. Pixel images (op 18) are upstream only: an app that draws them
- * (Doom) connects without opts.native.
+ * stays in the upstream dialect. Native images use the advertised pixmap capability.
  */
 const net = require('net');
 const fs = require('fs');
@@ -27,12 +26,12 @@ const rec = require('./record');
 const SOCKETS = process.env.MGU_RENDERD_SOCKET ? [process.env.MGU_RENDERD_SOCKET] : ['/run/mgu-renderd/renderd.sock', '/run/mgu-render/render.sock'];
 const SOCKET = SOCKETS[0];
 const isSocket = (p) => { try { return fs.statSync(p).isSocket(); } catch (e) { return false; } };
-const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10 };
+const M = { HELLO: 1, PLACE: 2, SHOW: 3, ATLAS: 4, RAMP: 5, LAYER: 6, FRAME: 7, DROP_LAYER: 8, IMAGE: 9, GRAB: 10, DROP_IMAGE: 11 };
 const E = { READY: 101, TICK: 102, ERROR: 103, STATS: 104, CCU: 105 };
 // touch (mgu-render, IterioDev's mgu-renderd): message 9 is CLAIM there; 105 and 106 come back as TOUCH and CLOSED
 const CLAIM = 9, TOUCH = 105, CLOSED = 106;
 // mgu-render/1 (mgu-store native/mgu-render/PROTOCOL.md)
-const X = { MODE: 0x4d520001, GRAB: 0x4d520002, READY: 0x4d520101, STATE: 0x4d520102, CCU: 0x4d520103 };
+const X = { MODE: 0x4d520001, GRAB: 0x4d520002, PIXMAP: 0x4d520003, PIXELS: 0x4d520004, READY: 0x4d520101, STATE: 0x4d520102, CCU: 0x4d520103 };
 const X_MODE_LAYER = 1;
 
 function msg(type, payload) {
@@ -60,6 +59,8 @@ class RenderClient extends EventEmitter {
         this.inbuf = Buffer.alloc(0);
         this.sent = { atlas: new Set(), ramp: new Set(), layer: new Set(), image: new Map() };
         this.stats = null;
+        this.imageStats = {submitted: 0, registered: 0, deferred: 0, enqueueMs: 0, error: ''};
+        this.protocolVersion = 0;
         this.waiting = false;        // a frame was sent, no tick back yet
         this.retry = null;
         this.closed = false;
@@ -67,7 +68,7 @@ class RenderClient extends EventEmitter {
         this.claimed = null;         // the claims sent on this connection (JSON), null: none yet
         this.native = false;         // this connection speaks mgu-render/1 (X_READY came)
         this.info = null;            // X_READY: { touch, controller, frontGate }
-        this.onScreen = null;        // X_STATE: the renderer shows us (null: not told)
+        this.onScreen = this.front = null;        // X_STATE: the renderer shows us (null: not told)
     }
 
     /** Socket exists (the renderer is installed and running)? */
@@ -92,8 +93,10 @@ class RenderClient extends EventEmitter {
         s.on('connect', () => {
             this.connected = true;
             this._reset();
+            this.inbuf = Buffer.alloc(0);
+            this.stats = null;
             s.setNoDelay && s.setNoDelay(true);
-            this.native = false; this.info = null; this.onScreen = null;
+            this.native = false; this.info = null; this.onScreen = this.front = null;
             this.claimed = null;
             this._write(msg(M.HELLO, this._hello()));
             // upstream renderers take these before READY; they are sent again once READY came
@@ -108,7 +111,7 @@ class RenderClient extends EventEmitter {
         });
         s.on('close', () => {
             const was = this.ready;
-            this.connected = this.ready = this.native = false; this.sock = null; this.waiting = false; this.onScreen = null;
+            this.connected = this.ready = this.native = false; this.sock = null; this.waiting = false; this.onScreen = this.front = null;
             if (was) { this.log.warn('renderd: connection closed'); this.emit('close'); }
             if (!this.closed) this.retry = setTimeout(() => { this.retry = null; this.connect(); }, 3000);
         });
@@ -161,10 +164,11 @@ class RenderClient extends EventEmitter {
         if (this.sock) this.sock.destroy();
         if (this.fd !== null) { fs.closeSync(this.fd); this.fd = null; }
     }
-    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.waiting = false; }
+    _reset() { this.sent.atlas.clear(); this.sent.ramp.clear(); this.sent.layer.clear(); this.sent.image.clear(); this.imageStats.error = ''; this.waiting = false; }
     _write(b) {
         if (this.fd !== null) { fs.writeSync(this.fd, b); return true; }
-        return this.sock && this.connected ? this.sock.write(b) : false;
+        if (!this.sock || !this.connected || this.sock.destroyed) return false;
+        return this.sock.write(b);
     }
     _u32msg(type, arr) { const u = new Uint32Array(arr); return msg(type, words(u)); }
 
@@ -179,9 +183,11 @@ class RenderClient extends EventEmitter {
                 const caps = p.readUInt32LE(8);
                 this.native = true;
                 this.info = { touch: !!(caps & 1), controller: !!(caps & 2), frontGate: !!(caps & 4),
-                    video: !!(caps & 16) };
+                    pixmaps: !!(caps & 8), video: !!(caps & 16),
+                    maxPixmap: p.length >= 48 ? p.readUInt32LE(44) : 2048 };
             } else if (type === E.READY) {
                 this.ready = true; this.errLogged = false;
+                this.protocolVersion = p.readUInt32LE(0);
                 this.screen = { w: p.readUInt32LE(4), h: p.readUInt32LE(8) };
                 this.touch = p.length >= 16 && p.readUInt32LE(12) !== 0;
                 this.log.info('renderd: connected, screen ' + this.screen.w + 'x' + this.screen.h +
@@ -197,7 +203,7 @@ class RenderClient extends EventEmitter {
             } else if (this.native && type === X.STATE && p.length >= 12) {
                 const on = !!p.readUInt32LE(4), front = !!p.readUInt32LE(8);
                 if (on !== this.onScreen) this.log.info('renderd: ' + (on ? 'on screen' : 'not on screen') + (front ? '' : ' (not in front)'));
-                this.onScreen = on;
+                this.onScreen = on; this.front = front;
                 this.emit('state', { onScreen: on, front });
             } else if (this.native && type === X.CCU && p.length >= 5) {
                 this.emit('ccu', {
@@ -222,7 +228,9 @@ class RenderClient extends EventEmitter {
                 this.stats = { fps: p.readUInt32LE(0), avgUs: p.readUInt32LE(4), maxUs: p.readUInt32LE(8) };
                 this.emit('stats', this.stats);
             } else if (type === E.ERROR) {
-                this.log.warn('renderd error: ' + p.toString());
+                const error = p.toString().replace(/\0.*$/, '');
+                if (/^(pixmap|pixels|image)\b/i.test(error)) this.imageStats.error = error;
+                this.log.warn('renderd error: ' + error);
             }
         }
     }
@@ -277,17 +285,66 @@ class RenderClient extends EventEmitter {
         if (r.layersUsed || r.sublayers) (r.layersUsed || r.sublayers).forEach((id) => this._ensureLayer(id));
         if (r.images) r.images.forEach((id) => this._ensureImage(id));
     }
-    /** upload a pixel image when this connection hasn't got its current version */
+    /** Empty when the negotiated connection can transport images without a claim collision. */
+    imageUnavailable() {
+        if (!this.ready) return 'VIDEO OUTPUT UNAVAILABLE';
+        if (this.native ? !this.info || !this.info.pixmaps : this.touch)
+            return 'RENDERER DOES NOT SUPPORT PIXEL FRAMES';
+        return '';
+    }
+
+    /** Send the current pixel version once, using the existing native texture when possible. */
     _ensureImage(id) {
-        if (this.native) { if (!this.imgWarned) { this.imgWarned = true; this.log.warn('renderd: pixel images need the upstream dialect'); } return; }
+        if (this.imageUnavailable() || this.imageStats.error) return;
         const im = rec.imageById.get(id);
-        if (!im || !im.data) return;
-        if (this.sent.image.get(id) === im.ver) return;
-        const head = Buffer.alloc(12);
-        head.writeUInt32LE(id, 0); head.writeUInt32LE(im.w, 4); head.writeUInt32LE(im.h, 8);
-        const px = Buffer.from(im.data.buffer, im.data.byteOffset, im.w * im.h * 4);
-        this._write(msg(M.IMAGE, Buffer.concat([head, px])));
-        this.sent.image.set(id, im.ver);
+        if (!im) return;
+        const previous = this.sent.image.get(id);
+        if (previous && previous.ver === im.ver) return;
+        const max = this.native ? this.info.maxPixmap : 4096;
+        if (im.w > max || im.h > max) {
+            this.imageStats.error = 'Image exceeds renderer size limit (' + max + ')';
+            return;
+        }
+
+        const t0 = process.hrtime();
+        const pixels = im.data.byteLength, header = this.native ? 32 : 20;
+        const packet = Buffer.allocUnsafe(header + pixels);
+        packet.writeUInt32LE(this.native ? X.PIXELS : M.IMAGE, 0);
+        packet.writeUInt32LE(packet.length - 8, 4);
+        packet.writeUInt32LE(id, 8);
+        if (this.native) {
+            packet.writeUInt32LE(1, 12);
+            packet.fill(0, 16, 24);
+            packet.writeUInt32LE(im.w, 24);
+            packet.writeUInt32LE(im.h, 28);
+            if (!previous || previous.w !== im.w || previous.h !== im.h) {
+                this._write(this._u32msg(X.PIXMAP, [id, im.w, im.h, 1, 0]));
+                this.imageStats.registered++;
+            }
+        } else {
+            packet.writeUInt32LE(im.w, 12);
+            packet.writeUInt32LE(im.h, 16);
+        }
+        Buffer.from(im.data.buffer, im.data.byteOffset, pixels).copy(packet, header);
+        if (this.native && im.alpha) {
+            // Recorder data is straight RGBA. The native texture expects premultiplied RGBA.
+            for (let i = header; i < packet.length; i += 4) {
+                const alpha = packet[i + 3];
+                if (alpha === 255) continue;
+                for (let c = 0; c < 3; c++) packet[i + c] = Math.round(packet[i + c] * alpha / 255);
+            }
+        }
+        this._write(packet);
+        this.sent.image.set(id, {ver: im.ver, w: im.w, h: im.h});
+        this.imageStats.submitted++;
+        const dt = process.hrtime(t0);
+        this.imageStats.enqueueMs = dt[0] * 1000 + dt[1] / 1e6;
+    }
+
+    dropImage(id) {
+        if (this.sent.image.delete(id) && this.ready && this.native)
+            this._write(this._u32msg(M.DROP_IMAGE, [id]));
+        this.imageStats.error = '';
     }
     _ensureLayer(id) {
         if (this.sent.layer.has(id)) return;
@@ -305,10 +362,26 @@ class RenderClient extends EventEmitter {
 
     /** Send a recorded frame (record.js Recorder). Returns false if not connected. */
     frame(r) {
-        if (!this.ready || !this.placement) return false;
+        if (!this.ready || !this.placement || (this.fd === null && (!this.sock || this.sock.destroyed))) return false;
+        // A slow socket can retain one large update. Retry the newest recorded frame after it drains.
+        if (r.images && r.images.size && this.sock && this.sock.bufferSize > 0) {
+            this.imageStats.deferred++;
+            return false;
+        }
         this._ensureRes(r);
+        let commands = r.words();
+        if (this.native && r.imageOffsets && r.imageOffsets.length) {
+            commands = new Uint32Array(commands);
+            r.imageOffsets.forEach(i => {
+                const id = commands[i + 1];
+                commands.copyWithin(i + 1, i + 3, i + 7);
+                commands[i + 5] = 0; // corner radius
+                commands[i + 6] = id;
+            });
+        }
         this.waiting = true;
-        return this._write(msg(M.FRAME, words(r.words())));
+        this._write(msg(M.FRAME, words(commands)));
+        return true;
     }
 }
 

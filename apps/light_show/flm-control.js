@@ -7,8 +7,8 @@ const MODULES = Object.freeze({
 });
 // Headlamp module variants at 0x43 / 0x44 (SGBD index from 22 F1 50, names from
 // idrive7-apps sgbd_index.json). Only FLM02 has been driven in a car (G21, basic LED).
-// FLM02X / FLM2_1 belong to the same family (adaptive LED / laser hardware); their PRGs
-// were not checked, so FLM_KANAL there is experimental and needs an explicit opt-in.
+// FLM02X / FLM2_1 use the same FLM_KANAL routine according to the supplied BMW data.
+// The physical channel mapping on adaptive LED and laser headlights still needs vehicle testing.
 const VARIANTS = Object.freeze({
     left: Object.freeze({
         '0F26C0': Object.freeze({ name: 'FLM02_L', support: 'verified', channels: 15 }),

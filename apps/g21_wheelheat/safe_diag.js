@@ -3,6 +3,7 @@
 // WheelHeat BDC diagnostic gate. Automatic comfort commands may be sent
 // while moving only with a recent speed signal and a positive BDC readback.
 const { Diag, hex, NRC, replyTo } = require('./kit/diag');
+const E = require('./ecu_profile');
 class SafeDiag {
     constructor(ctx, target, probeDid) {
         this.ctx = ctx;
@@ -67,7 +68,7 @@ class SafeDiag {
         return '';
     }
     cancel() { this.pending = null; }
-    async read(did) {
+    async read(did, options) {
         this.cancel();
         this.lastReadNrc = null;
         if (this.busy) { this.info = 'Diagnostics busy'; return false; }
@@ -76,7 +77,8 @@ class SafeDiag {
         this.busy = true;
         const data = [did >> 8, did & 255];
         try {
-            const u = await this.diag.physical(this.target, 0x22, data, 2300, replyTo(0x22, data), { maxRetries: 0 });
+            const u = await this.diag.physical(this.target, 0x22, data, 2300, replyTo(0x22, data),
+                Object.assign({}, options, { maxRetries: 0 }));
             if (u && u.length > 3 && u[0] === 0x62 && u[1] === data[0] && u[2] === data[1]) {
                 this.verifiedAt[did] = Date.now();
                 this.readText = bytes(u);
@@ -168,6 +170,63 @@ class SafeDiag {
         } catch (e) { this.info = label + ': ' + String(e.message || e); }
         finally { this.busy = false; }
         return false;
+    }
+
+    /** Use the documented seat-module heating levels and OFF. Keep the live
+     * identity, readback and write in one diagnostic operation. */
+    async autoWriteSeatModule(side, action, expectedLevel, allowed) {
+        const module = E.SEAT_MODULES[side];
+        const valid = action === 0 ? E.isModuleHeatLevel(expectedLevel) :
+            E.isModuleHeatLevel(action) && (expectedLevel === 0 || expectedLevel === action);
+        if (!module || !valid) throw new RangeError('Unsupported seat module, action or readback level');
+        const starting = action !== 0 && expectedLevel === 0;
+        const ready = () => this.online && this.motionKnown && allowed() &&
+            (action === 0 || this.ctx.settings.get(module.enableSetting) === true &&
+                this.ctx.settings.get('autoEnabled') === true) &&
+            Date.now() - this.lastWriteAt >= 3000;
+        if (this.busy || !ready()) return { state: 'blocked', detail: 'Diagnostic guards not ready' };
+
+        this.busy = true;
+        const options = { maxRetries: 0, callTimeoutMs: 2300, hardTimeoutMs: 3000 };
+        const request = (sid, data) =>
+            this.diag.physical(module.addr, sid, data, 1500, replyTo(sid, data), options);
+        const did = [E.MODULE_DID.seat >> 8, E.MODULE_DID.seat & 255];
+        let sentAt = null;
+        try {
+            const id = E.classify(E.ID_DID, await request(0x22, [E.ID_DID >> 8, E.ID_DID & 255]));
+            if (id.state !== 'ok' || bytes(id.payload.slice(0, 3)).replace(/ /g, '') !== module.index)
+                return { state: 'unreadable', detail: 'Live ' + module.sgbd + ' identification unavailable' };
+            if (starting) {
+                const codedDid = E.MODULE_DID.coded;
+                const coded = E.classify(codedDid, await request(0x22, [codedDid >> 8, codedDid & 255]));
+                if (coded.state !== 'ok' || E.codedSeatHeating(coded.payload) !== '2-circuit')
+                    return { state: 'unreadable', detail: 'D701 does not confirm 2-circuit seat heating' };
+            }
+            if (!ready()) return { state: 'blocked', detail: 'Conditions changed during identification' };
+            const reply = await request(0x22, did);
+            const read = E.classify(E.MODULE_DID.seat, reply);
+            const decoded = read.state === 'ok' ? E.decodeModuleSeat(read.payload) : null;
+            if (!decoded || !decoded.complete || read.length !== E.D714_LENGTH)
+                return { state: 'unreadable', detail: 'D714 ' + (read.state === 'ok' ?
+                    'invalid seat readback ' + bytes(reply) : errorFor(reply)) };
+            if (decoded.level !== expectedLevel)
+                return { state: 'different', detail: 'D714 reports level ' + decoded.level };
+            if (!ready()) return { state: 'blocked', detail: 'Conditions changed during seat readback' };
+
+            // Action byte and six zeros. The level-2 and OFF frames were
+            // confirmed on the vehicle in #2.
+            sentAt = this.lastWriteAt = Date.now();
+            const ack = await request(0x2E, [...did, action, 0, 0, 0, 0, 0, 0]);
+            if (ack && ack[0] === 0x6E && ack[1] === did[0] && ack[2] === did[1])
+                return { state: 'acknowledged', detail: bytes(ack), sentAt };
+            const rejected = ack && ack[0] === 0x7F && ack[1] === 0x2E && ack.length >= 3;
+            return { state: rejected ? 'rejected' : 'unconfirmed', detail: errorFor(ack), sentAt };
+        } catch (e) {
+            return { state: sentAt === null ? 'unreadable' : 'unconfirmed',
+                detail: String(e.message || e), sentAt };
+        } finally {
+            this.busy = false;
+        }
     }
 }
 function bytes(b) { return Array.from(b || []).map(n => hex(n)).join(' '); }

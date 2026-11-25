@@ -1,0 +1,46 @@
+name: G21 Ambient checks
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/g21_ambient/**'
+      - 'tests/ambient*.test.js'
+      - 'tests/g21_car_ui_smoke.test.js'
+      - 'tests/controls.test.js'
+      - 'kit/runtime/**'
+      - '.github/workflows/g21_ambient.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ambient tests
+        run: node --test tests/ambient*.test.js tests/controls.test.js tests/g21_car_ui_smoke.test.js
+      - name: Node syntax check
+        run: |
+          for f in apps/g21_ambient/*.js; do node --check "$f"; done
+      - name: Validate BMW SOME/IP manifest and package sources (SDK-independent)
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          sys.path.insert(0, 'kit/tools')
+          from build import manifest_for
+          source = pathlib.Path('apps/g21_ambient')
+          spec = json.loads((source / 'app.json').read_text())
+          manifest = manifest_for(json.loads(json.dumps(spec)))
+          iuk = manifest['proxies']['de.bmw.infotainment.misc.ComfortFunctionIuK']['attributes']
+          assert iuk == {'ambientLightInteriorColour': 'w', 'statusAmbientLightInteriorColour': 'rs'}
+          profile = manifest['proxies']['de.bmw.body.interiorillumination.AmbientLight']['attributes']
+          assert profile['currentInteriorLightProfile'] == 'rs'
+          assert profile['brightnessAmbientLight'] == 'rs'
+          assert spec['version'] == '0.4.7'
+          assert (source / 'bmw_colors.js').is_file()
+          catalog = json.loads(pathlib.Path('mgu-repo.json').read_text())
+          assert next(c for c in catalog['components'] if c['id'] == 'g21_ambient')['version'] == spec['version']
+          print('Original BMW color setter, optional status and version validated')
+          print('Full .mgu/.tgz build intentionally requires non-repository BMW oap-sdk/index.js')
+          PY

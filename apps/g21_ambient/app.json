@@ -1,8 +1,8 @@
 {
   "id": "g21_ambient",
   "title": "G21 Ambient Lighting",
-  "description": "Choose ambient-light colors, configure zones, and save presets. Vehicle color control is experimental.",
-  "version": "0.4.0",
+  "description": "Choose an ambient-light color and brightness, save looks, and check vehicle compatibility.",
+  "version": "0.4.7",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB1",
   "iconGlyph": "RGB",
@@ -22,6 +22,15 @@
     "de.bmw.infotainment.drivingexcitement.FES": {
       "_optional": "Read the driving mode to preview saved RGB profiles; no automatic ECU writes",
       "statusFESVehicleDynamicSwitchHMI": "rs"
+    },
+    "de.bmw.infotainment.misc.ComfortFunctionIuK": {
+      "ambientLightInteriorColour": "w",
+      "statusAmbientLightInteriorColour": "rs"
+    },
+    "de.bmw.body.interiorillumination.AmbientLight": {
+      "_optional": "Read-only ambient profile and brightness, availability may vary by vehicle",
+      "currentInteriorLightProfile": "rs",
+      "brightnessAmbientLight": "rs"
     }
   },
   "screens": [
@@ -32,95 +41,23 @@
       "buttons": [
         [
           "BTN_PAGE",
-          "Next tab"
+          "Next page"
         ],
         [
-          "BTN_MODE",
-          "Mode / Select"
+          "BTN_PREV",
+          "Previous"
         ],
         [
-          "BTN_COLOR",
-          "Color / Hue"
-        ],
-        [
-          "BTN_SAT",
-          "Saturation / Value"
-        ],
-        [
-          "BTN_RGB_NEXT",
-          "Select RGB channel"
-        ],
-        [
-          "BTN_RGB_DOWN",
-          "RGB -1"
-        ],
-        [
-          "BTN_RGB_UP",
-          "RGB +1"
-        ],
-        [
-          "BTN_BRIGHT",
-          "Brightness preset"
-        ],
-        [
-          "BTN_BRIGHT_DOWN",
-          "Brightness -1%"
-        ],
-        [
-          "BTN_BRIGHT_UP",
-          "Brightness +1%"
-        ],
-        [
-          "BTN_TARGET",
-          "Temporary / Slot 11"
+          "BTN_NEXT",
+          "Next"
         ],
         [
           "BTN_ACTION",
-          "Apply / Diagnostics"
-        ],
-        [
-          "BTN_RESTORE",
-          "Slot 11 factory plan"
+          "Select"
         ],
         [
           "BTN_SETTINGS",
-          "All settings"
-        ],
-        [
-          "BTN_BDC_SCAN",
-          "Scan BDC LIN modules"
-        ],
-        [
-          "BTN_ZONE_NEXT",
-          "Next discovered zone"
-        ],
-        [
-          "BTN_ZONE_POLICY",
-          "Zone follows main / own / car"
-        ],
-        [
-          "BTN_FAV_NEXT",
-          "Next favorite"
-        ],
-        [
-          "BTN_FAV_SAVE",
-          "Save favorite"
-        ],
-        [
-          "BTN_FAV_LOAD",
-          "Load favorite"
-        ],
-        [
-          "BTN_MODE_NEXT",
-          "Next driving mode"
-        ],
-        [
-          "BTN_MODE_SAVE",
-          "Save driving-mode colour"
-        ],
-        [
-          "BTN_BDC_RESET",
-          "Return detected BDC lights to BMW control"
+          "Settings"
         ]
       ]
     }
@@ -310,27 +247,6 @@
       ]
     },
     {
-      "key": "applyTarget",
-      "label": "Apply mode",
-      "hidden": true,
-      "type": "choice",
-      "default": "temporary",
-      "options": [
-        [
-          "temporary",
-          "RAM01 temporary test"
-        ],
-        [
-          "bdc",
-          "BDC LIN discovered zones (temporary)"
-        ],
-        [
-          "slot11",
-          "iDrive menu slot 11 (FDL plan)"
-        ]
-      ]
-    },
-    {
       "key": "brightness",
       "label": "Brightness",
       "hidden": true,
@@ -352,29 +268,8 @@
       ]
     },
     {
-      "key": "linId",
-      "label": "LED module target (0 = all)",
-      "type": "number",
-      "default": 0,
-      "steps": [
-        0,
-        1,
-        2,
-        3,
-        4,
-        5,
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
-        12
-      ]
-    },
-    {
       "key": "duration",
-      "label": "Control duration",
+      "label": "BDC LIN test duration (maximum 10 s)",
       "type": "number",
       "unit": "s",
       "default": 5,
@@ -382,12 +277,23 @@
         1,
         2,
         5,
-        10,
-        20,
-        30,
-        60,
-        120,
-        254
+        10
+      ]
+    },
+    {
+      "key": "experimentalLin",
+      "label": "Experimental single-NAD BDC test (unverified lighting hardware)",
+      "type": "choice",
+      "default": "off",
+      "options": [
+        [
+          "off",
+          "Off (verified targets only)"
+        ],
+        [
+          "on",
+          "On (allow observed BDC LIN records)"
+        ]
       ]
     }
   ]

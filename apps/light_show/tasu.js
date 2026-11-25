@@ -32,7 +32,7 @@ const hex = (n, w) => n.toString(16).toUpperCase().padStart(w || 2, '0');
 const NRC = {
     0x10: 'general reject', 0x11: 'service not supported', 0x12: 'sub-function not supported', 0x13: 'bad length',
     0x21: 'busy', 0x22: 'conditions not correct', 0x31: 'out of range', 0x33: 'security access denied',
-    0x72: 'programming failure', 0x78: 'pending', 0x7E: 'not supported in session', 0x7F: 'not supported in session',
+    0x35: 'invalid key (invalidKey)', 0x72: 'programming failure', 0x78: 'pending', 0x7E: 'not supported in session', 0x7F: 'not supported in session',
 };
 
 class Diag extends EventEmitter {
@@ -105,27 +105,40 @@ class Diag extends EventEmitter {
      */
     async functional(sid, data, opts) {
         const idleMs = (opts && opts.idleMs) || 4000, maxMs = (opts && opts.maxMs) || 25000;
-        const replies = new Map();
-        let idle, hard, onFrame, onErr, finish, kick;
+        const replies = new Map(), pending = new Set();
+        const matches = replyTo(sid, data);
+        let idle, hard, onFrame, onErr, finish, kick, finished = false;
         const done = new Promise((resolve) => {
-            finish = () => { clearTimeout(idle); clearTimeout(hard); this.removeListener('frame', onFrame); this.removeListener('tasError', onErr); resolve(replies); };
+            finish = () => {
+                finished = true;
+                clearTimeout(idle); clearTimeout(hard);
+                this.removeListener('frame', onFrame); this.removeListener('tasError', onErr);
+                resolve(replies);
+            };
             kick = (ms) => { clearTimeout(idle); idle = setTimeout(finish, ms); };
             onFrame = (f) => {
                 // every app gets every frame: only this service's answer (or refusal) is a reply
-                if (f.uds[0] !== sid + 0x40 && !(f.uds[0] === 0x7F && f.uds[1] === sid)) return;
+                if (!matches(f.uds)) return;
                 if (sid === 0x19 && f.uds[0] === 0x59 && f.uds[1] !== (data || [])[0]) return;   // 0x19 echoes its sub-function
-                const pending = f.uds[0] === 0x7F && f.uds[2] === 0x78;
-                if (!pending || !replies.has(f.ecu)) replies.set(f.ecu, f.uds);
-                if (opts && opts.onReply && !pending) opts.onReply(f.ecu, replies.size);
-                kick(pending ? 10000 : idleMs);
+                if (f.uds[0] === 0x7F && f.uds[2] === 0x78) {
+                    if (!replies.has(f.ecu)) pending.add(f.ecu);
+                } else {
+                    pending.delete(f.ecu);
+                    const previous = replies.get(f.ecu);
+                    if (!previous || previous[0] === 0x7F || f.uds[0] !== 0x7F) replies.set(f.ecu, f.uds);
+                    if (opts && opts.onReply) opts.onReply(f.ecu, replies.size);
+                }
+                kick(pending.size ? ((opts && opts.pendingMs) || 10000) : idleMs);
             };
             onErr = (e) => this.log.warn('TASU error during scan: ' + e);
             this.on('frame', onFrame); this.on('tasError', onErr);
         });
-        try { this._check(await this.send(ALL, sid, data)); } catch (e) { finish(); throw e; }
+        try { this._check(await this.send(ALL, sid, data, opts && opts.sendOptions)); } catch (e) { finish(); throw e; }
         // timers from when the transport took the request (send() may have waited for it)
-        if (!idle) kick(idleMs + 2000);          // first replies can take a moment
-        hard = setTimeout(finish, maxMs);
+        if (!finished) {
+            if (!idle) kick(idleMs + 2000);      // first replies can take a moment
+            hard = setTimeout(finish, maxMs);
+        }
         return done;
     }
 
@@ -135,13 +148,16 @@ class Diag extends EventEmitter {
      * talking to the same ECU at the same time.
      */
     async physical(target, sid, data, timeoutMs, accept, opts) {
-        let t, hardTimer, onFrame, finish, done = false;
+        let t, hardTimer, onFrame, finish, done = false, transportError;
+        const onError = (code) => { transportError = 'TASU broadcast error ' + code; };
+        const onReject = (code) => { transportError = 'TASU header rejection 0x' + hex(code); };
         const got = new Promise((resolve) => {
             finish = (v) => {
                 if (done) return;
                 done = true;
                 clearTimeout(t); clearTimeout(hardTimer);
-                this.removeListener('frame', onFrame); resolve(v);
+                this.removeListener('frame', onFrame);
+                this.removeListener('tasError', onError); this.removeListener('tasReject', onReject); resolve(v);
             };
             onFrame = (f) => {
                 if (f.ecu !== target) return;
@@ -155,22 +171,25 @@ class Diag extends EventEmitter {
                 finish(f.uds);
             };
             this.on('frame', onFrame);
+            this.on('tasError', onError); this.on('tasReject', onReject);
             if (opts && opts.hardTimeoutMs) hardTimer = setTimeout(() => finish(null), opts.hardTimeoutMs);
         });
         try { this._check(await this.send(target, sid, data, opts)); } catch (e) { finish(null); throw e; }
         if (!done && !t) t = setTimeout(() => finish(null), timeoutMs || 4000); // from when the transport took it
-        return got;
+        const result = await got;
+        if (!result && transportError) throw new Error('Reply timed out (' + transportError + ' observed; source not correlated)');
+        return result;
     }
 }
 
 // Request bytes a positive reply echoes after sid + 0x40: sub-function (10 / 11 / 27), DID (22 / 2E), DID + control
 // parameter (2F: 6F 60FD 03 .. is OPEN's answer, not OEM's 6F 60FD 00), sub-function + RID (31).
-const ECHO = { 0x10: 1, 0x11: 1, 0x27: 1, 0x22: 2, 0x2E: 2, 0x2F: 3, 0x31: 3 };
+const ECHO = { 0x10: 1, 0x11: 1, 0x27: 1, 0x28: 1, 0x22: 2, 0x2E: 2, 0x2F: 3, 0x31: 3, 0x3E: 1 };
 /** accept(uds) for physical(): every app gets every frame from the ECU (car_vitals polls the DME), so
  * only this request's positive reply with its echo, or a refusal of this service, is the answer. */
 function replyTo(sid, data) {
     const echo = (data || []).slice(0, ECHO[sid] || 0);
-    return (u) => (u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) || (u[0] === 0x7F && u[1] === sid);
+    return (u) => (u[0] === sid + 0x40 && echo.every((b, i) => u[i + 1] === b)) || (u.length === 3 && u[0] === 0x7F && u[1] === sid && Number.isInteger(u[2]));
 }
 
 /**

@@ -1,13 +1,25 @@
-# Light Show 0.4.5
+# Light Show 0.4.8
 
 Exterior light shows for BMW G-series cars with the iDrive 7 head unit (MGU), in the spirit of
 Bimmerlight: pick lights, pick an effect, start, from the BMW screen or from your phone.
 Unofficial, not from BMW. Use only parked in P, standing still, on private ground, with nobody
 in front of the car. Don't look into the headlights.
 
-## What's new compared to 0.3.4 (mgu-apps)
+## Getting started
 
-| | 0.3.4 | 0.4.0 beta |
+Add `namelsmissing/mgu-apps` to MGU Store, select `main`, then install Light Show. There is a
+lowercase L after `name`. The public repository is available without GitHub sign-in. See the
+[installation guide](../../README.md#add-this-repository-to-mgu-store).
+
+In P, open **Vehicle** and wait for the scan. Then open **Lights**, test one light at a time and
+confirm what you saw when the test finishes. A module listed in **Vehicle** has returned its
+identity. Whether an individual light turns on depends on the hardware. Add a confirmed light to
+the show and start with **Chase**, which works with a single light. **Wig-Wag** needs a confirmed
+light on each side. There are no preselected channels.
+
+## From Light Show 0.3.4 to 0.4.7
+
+| | 0.3.4 | 0.4.7 |
 |---|---|---|
 | Lights | Headlamp LED channels (FLM02) | Headlamp LED channels (FLM02, FLM02X, FLM2_1), all exterior BDC light functions, every BDC exterior output, rear light modules (RLM2 functions, RLM_1 channels) |
 | Which car | Fixed addresses and FLM02 only | **Vehicle scan** reads the identity of every control unit and offers only what this car has |
@@ -24,10 +36,40 @@ Names and test results from 0.3.x are taken over (same app id, same data folder)
   *Lit, quiet* / *Nothing* / *Noise*. Only lights confirmed "lit, quiet" (and whose release was
   acknowledged) can be added to a show. *Rename* cycles through preset names; any name can be
   typed on the phone.
-- **Vehicle** - the scan (read-only, `22 F1 50` to all control units), the support level of the
+- **Vehicle** - the scan (read-only), the support level of the
   body controller and both headlamp modules, the list of all units, the switch for experimental
-  headlamp modules, and the manual "lights checked" confirmation if a recovery file is unreadable.
+  headlamp modules, and a link to Diagnostics.
 - **Phone** - QR code, status of the firewall helper, the server and the phone connection.
+
+## Finding and browsing lights
+
+**Lights** has three independent filters. Open each filter to choose one value. The button
+shows the active value, and the count shows matching lights out of all entries in the catalog.
+
+| Filter | Options |
+|---|---|
+| Position | All, Front, Side, Rear |
+| Availability | All, Controllable, Unavailable |
+| Test status | All, Visible, Not tested, No visible effect, Noise |
+
+The initial view shows controllable lights in every position and with every test status.
+**Controllable** describes the control route available on the scanned vehicle. **Visible**
+requires a stored, confirmed test with visible light and no unusual noise. The list shows both
+values separately. The catalog includes only the channels it can describe for each module.
+
+Changing a filter moves to the top and keeps the selected light when it still matches. Otherwise
+the first match becomes selected. **Reset filters** in the empty view sets all three filters to
+**All**. Filtering and browsing do not send diagnostic commands.
+
+- **Touchscreen** - Swipe vertically inside the Lights list or the **All control units** list
+  on Vehicle. Tap a light to select it. The detail panel and action buttons stay in place.
+- **iDrive in the full layout** - Turn through the filters and lights. The list follows the
+  focused light, and pressing selects it. Tilt to move between the list, adjacent controls and
+  tabs. On Vehicle, focus the scroll bar and turn the knob to browse control units. Continue
+  turning past either end to leave the list.
+- **Standard or software layout** - Use **Previous focus**, **Next focus** and **Activate focus**
+  in the native HMI bar. **Next page** switches tabs. Swiping and tapping the drawn lists require
+  a renderer with touch routing.
 
 ## Vehicle scan (modelled on BimmerLight)
 
@@ -37,10 +79,15 @@ result is saved; after that the app scans again only when you press *Scan again*
 (e.g. after a control unit was replaced).
 
 1. One functional `22 F1 50` to all control units.
-2. Every light address that did not answer is asked once more on its own: gateway 0x10,
+2. Every light address that did not answer is checked on its own: gateway 0x10,
    rear light modules 0x17 / 0x1A / 0x1C / 0x1E, body 0x40, headlamps 0x43 / 0x44, 0x72.
+   If the BDC or a previously identified module still has no reply, it is checked a second time.
 3. The vehicle order (`22 3F 06`) is read from the gateway; option codes such as 5AZ (Laserlight)
    or 552 (Adaptive LED) are shown as a hint.
+
+**Last seen** means the module did not answer in this scan. Light Show keeps the last identity
+and checks it again before any test or show. A scan without any light module identity fails and
+keeps the previous result. If there is no previously saved result, the automatic scan retries.
 
 At the gateway only identity and the vehicle order are read. Rear light modules get control
 telegrams only after they identified as one of the RLM variants below.
@@ -109,17 +156,39 @@ standstill, identities, tested lights). No Internet is needed.
 - Before every request: P and a current speed signal of 0 km/h. Losing either stops the show.
 - Before anything is switched: BDC_G05 and every used headlamp module are identified.
 - A recovery file is written before the first session or lamp request. It is removed only after
-  every touched unit acknowledged its STOP / OFF and the default session; otherwise STOP (or the
-  next app start) releases them again.
+  the required release steps are verified. An interrupted release retains its confirmed steps
+  in the marker. The next STOP retries the pending steps. An unreadable marker keeps control locked.
 - Every lamp has a finite time in the control unit (FLM seconds, D542 duration) and an explicit OFF.
 - One FLM module plays one LED channel at a time; effects split steps accordingly.
 - Requests go one by one through BMW's diagnostic transport (about 100-500 ms each in the car),
   so shows are slower and less exact than with an OBD adapter.
 
-Acknowledgements are protocol answers, not light measurements.
+An acknowledgement confirms the control unit received the command. Report **Nothing** if you
+didn't see light. A more recent **Nothing** overrides a previous visible result for that light.
+If the test fails, the error points to the ECU address and diagnostic response when available.
+Use those details and the result of the test when reporting a problem.
+
+## STOP and diagnostics
+
+STOP waits for the release result. While parked, startup makes one recovery attempt for a saved
+run after the diagnostic link and vehicle signals are ready. Open **Diagnostics** on the MGU or
+phone to read the complete status, last STOP result and recent UDS trace. The MGU exports
+`light-show-diagnostics.txt` in the app data directory. The paired phone can download the same
+report. The report omits vehicle-order payloads and the extra bytes in identity replies.
+
+The BDC_G05 locator uses D542 function 0x15 with a duration in 10 ms units. OFF uses zero duration
+(`2E D5 42 00 15 00 00`). A matching `7F 2E 35` from address 0x40 is UDS invalidKey.
+The negative reply identifies the service. It carries no DID or function identifier.
+BMW's locator write definition provides a finite timer. Its read layout has no dedicated locator
+status entry. The app waits the full 2-second command bound after a positive `50 01` when a locator
+OFF receives this refusal. It records the refusal separately from the release result. For an
+older BDC_G05 marker with locator as the only outstanding BDC output, STOP uses the same bounded
+path without opening an extended session or sending another locator OFF. New markers distinguish
+a matched locator refusal from a timeout. The cause of the vehicle's refusal and behavior of
+its locator timer still require confirmation on the affected BDC software version.
 
 ## Tests
 
 ```sh
-node tests/light_show.test.js
+node --test tests/light_show.test.js tests/light_show_ui.test.js
 ```

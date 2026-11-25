@@ -33,7 +33,7 @@ const settings = (more) => Object.assign({
     layout: 'g80', panelTestMode: 'probe', panelTarget: 'panel',
     accent: 'm', sixwbTheme: 'comfort', sixwbColorSource: 'original',
     colorMode: 'palette', colorBrightness: 100,
-    wazeMap: 'auto', phoneBadge: false,
+    wazeMap: 'auto',
 }, more || {});
 
 function parked(c) { c.sample({ speed: 0, rpm: 790, stage: 'P', gear: 0 }); }
@@ -153,7 +153,7 @@ const nextJournal = QR.startJournal(ctx);
 assert.ok(!fs.existsSync(previousJournal),'old automatic session removed on start');
 assert.ok(fs.existsSync(nextJournal.path),'new session exists');
 const oldJournal = nextJournal.path;
-const testReport = QR.report(ctx, cluster, 'auto', 'none');
+const testReport = QR.report(ctx, cluster, 'auto');
 assert.ok(testReport.pages.length > 0);
 const payloads = testReport.pages.map((page, idx) => {
     const m = /^CCLOG1 ([a-f0-9]{10}) (\d+)\/(\d+) ([A-Za-z0-9+/=]+)$/.exec(page);

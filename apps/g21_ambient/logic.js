@@ -6,7 +6,7 @@ const DID = 0xE311;
 // The car rejects both E310 and E311 reads with NRC 31. Standard 22 F150
 // identifies an ECU by numeric SGBD index; it does not return "RAM01" text.
 // The owner-observed 0F2590 index matches RAM01 at 0x37. SafeDiag
-// allows only this identity with fresh speed, parked status and two presses.
+// allows only this identity with a fresh standstill reading and two presses.
 // Physical output of 2E E311 remains unverified until a vehicle test.
 const PROBE_DID = 0xF150;
 const COLORS = Object.freeze([
@@ -17,7 +17,6 @@ const COLORS = Object.freeze([
     { name: 'Violet', rgb: [145, 0, 254], on: 1 },
     { name: 'Off', rgb: [0, 0, 0], on: 0 },
 ]);
-const BRIGHTNESS = [10, 25, 50, 75, 100];
 const HUES = Array.from({ length: 24 }, (_, i) => i * 15);
 const SATURATIONS = Array.from({ length: 11 }, (_, i) => i * 10);
 const SLOT11_PROFILE_OFFSET = 20;
@@ -35,18 +34,10 @@ function hsvToRgb(hue, saturation) {
         : h < 4 ? [0, x, s] : h < 5 ? [x, 0, s] : [s, 0, x];
     return rgb.map(v => Math.max(0, Math.min(254, Math.round((v + lo) * 254))));
 }
-/** Presets remain accessible; tapping a hue/saturation square selects the custom mode. */
-function chooseColor(mode, presetIndex, hue, saturation) {
-    if (mode === 'custom') return { name: 'Custom color', rgb: hsvToRgb(hue, saturation), on: 1 };
-    if (mode !== 'preset' || !Number.isInteger(presetIndex) || !COLORS[presetIndex]) {
-        throw new RangeError('Unknown color selection');
-    }
-    return COLORS[presetIndex];
-}
 /** The RGB sliders are an alternative input to the existing hue/saturation grid. */
 function exactColor(rgb) {
     if (!Array.isArray(rgb) || rgb.length !== 3) throw new RangeError('RGB requires three channels');
-    rgb.forEach((v, i) => uint('RGB ' + i, v, 254));
+    for (let i = 0; i < rgb.length; i++) uint('RGB ' + i, rgb[i], 254);
     return { name: 'Custom color', rgb: rgb.slice(), on: 1 };
 }
 /** True nearest color from *all 24 x 11 displayed swatches* by RGB distance.
@@ -122,18 +113,19 @@ function uint(name, value, max) {
     }
     return value;
 }
-/** 2E DATA: DID high, DID low, 7 unsigned char arguments in PRG order. */
-function encode({ id, on, brightness, red, green, blue, seconds }) {
-    return [DID >> 8, DID & 255, uint('ID', id, 254), uint('ON_OFF', on, 1),
+/** 2E DATA: DID then PRG arguments, with RAM01 module ID 0 for all modules. */
+function encode({ on, brightness, red, green, blue, seconds }) {
+    return [DID >> 8, DID & 255, 0, uint('ON_OFF', on, 1),
         uint('BRIGHTNESS', brightness, 100), uint('RED', red, 254),
         uint('GREEN', green, 254), uint('BLUE', blue, 254), uint('SECONDS', seconds, 254)];
 }
-function fromPreset(preset, id, brightness, seconds) {
-    if (!preset || !Array.isArray(preset.rgb) || preset.rgb.length !== 3) throw new Error('Unknown color');
-    return encode({ id, on: preset.on, brightness: preset.on ? brightness : 0,
-        red: preset.rgb[0], green: preset.rgb[1], blue: preset.rgb[2], seconds });
+function fromPreset(color, brightness, seconds) {
+    const { rgb } = exactColor(color.rgb);
+    if (seconds === 0) throw new RangeError('A temporary test requires a positive duration');
+    return encode({ on: color.on, brightness: color.on ? brightness : 0,
+        red: rgb[0], green: rgb[1], blue: rgb[2], seconds });
 }
-module.exports = { ECU, DID, PROBE_DID, COLORS, BRIGHTNESS, HUES, SATURATIONS, hsvToRgb,
-    chooseColor, pickerCell, exactColor, rgbToGrid, slot11Plan, slot11RestorePlan,
+module.exports = { ECU, DID, PROBE_DID, COLORS, HUES, SATURATIONS, hsvToRgb,
+    pickerCell, exactColor, rgbToGrid, slot11Plan, slot11RestorePlan,
     ORIGINAL_PROFILES, ORIGINAL_LILAC_RGB, SLOT11_PROFILE_OFFSET, SLOT11_PROFILE_ADDRESSES,
     encode, fromPreset };

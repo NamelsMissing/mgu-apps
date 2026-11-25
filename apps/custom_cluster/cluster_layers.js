@@ -5,7 +5,6 @@ const { ClusterRender } = require('./cluster_render_client.js');
 const probeShader = require('./panel_probe_shader.js');
 const { PALETTE, resolveColor, resolve6WBColor, colorHex } = require('./cluster_colors.js');
 const COLORS = Object.keys(PALETTE).reduce((m, k) => { m[k] = PALETTE[k].concat([1]); return m; }, {});
-const StatusLine = require('./status_line.js');
 const { gearText } = require('./layout_panels.js');
 // Independent tiny effects: inspired by the architecture (not the code) of
 // Cluster Layouts and Cluster Themes. No full-screen fragment shader here.
@@ -61,9 +60,6 @@ class ClusterLayers {
         this.dialNeedles = [];
         this.layoutParts = [];
         this.layoutAccent = null;
-        this.badgeRef = 0;
-        this.badgeTarget = null;
-        this.badgeState = '';
         this.ready = false;
         this.layerState = 'inactive';
         this.targetState = 'unknown';
@@ -91,11 +87,10 @@ class ClusterLayers {
         this.releaseConfirmed = false;
         this.lastRecoveryReport = '';
         this.lastTestStatusReport = '';
-        this.options = { layout: 'stock', accent: 'm', phoneBadge: false, wazeMap: 'auto',
+        this.options = { layout: 'stock', accent: 'm', wazeMap: 'auto',
             sixwbTheme: 'comfort', sixwbColorSource: 'original',
             colorMode: 'palette', colorBrightness: 100,
             panelTestMode: 'probe', panelTarget: 'panel', coverOriginal: true };
-        this.phoneState = 'unknown';
         // Automatic KOMBI display (setting kombiAuto): only while parked, never after a failure.
         this.autoRun = false;
         this.autoSuppressed = false;
@@ -147,7 +142,7 @@ class ClusterLayers {
                     this.disarm('Panel layer error: ' + (reason || 'unknown'));
                     return;
                 }
-            } else if (ref === this.effectRef || ref === this.badgeRef) {
+            } else if (ref === this.effectRef) {
                 this.layerState = state;
             }
             if (state === 'error') this.log.warn('cluster layer: ' + reason);
@@ -237,7 +232,6 @@ class ClusterLayers {
         this.layoutParts = []; this.layoutAccent = null;
         owned.forEach(ref => this.cr.drop(ref));
         if (this.effectRef) { this.cr.drop(this.effectRef); this.effectRef = 0; }
-        this.dropStatusLine();
         this.recoveryRequestedAt = Date.now();
         this.recoveryStatusAt = 0;
         this.recoveryTarget = this.activePanelTarget;
@@ -334,17 +328,6 @@ class ClusterLayers {
     viewData() { return Object.assign({}, this.data, { gearMode: this.options.gearDisplay }); }
     /** Text for the selector position: P R N D, or D1..D8 depending on the setting. */
     gearLabel() { return gearText(this.viewData()); }
-    /** Last event of the phone link: 'opened', 'closed' or 'unknown'. */
-    phone(state) {
-        state = StatusLine.valid(state) ? state : 'unknown';
-        if (state === this.phoneState) return;
-        this.phoneState = state;
-        this.apply();
-    }
-    dropStatusLine() {
-        if (this.badgeRef) this.cr.drop(this.badgeRef);
-        this.badgeRef = 0; this.badgeTarget = null; this.badgeState = '';
-    }
     live() {
         if (!this.lastSample || Date.now()-this.lastSample>=30000) return false;
         const t=this.latestSignalTimes;
@@ -611,26 +594,6 @@ class ClusterLayers {
         // automatically inject sport/classic/minimal artwork into the map
         // target when selected in settings. Keep independent Waze control.
         if(this.effectRef) { this.cr.drop(this.effectRef); this.effectRef=0; }
-        // Phone status line. During a parked panel test it belongs to the
-        // tested layout; otherwise it sits in the map window. Never both.
-        const state = this.options.phoneBadge ? this.phoneState : 'unknown';
-        const where = !StatusLine.valid(state) ? null :
-            panelActive ? (this.panelRef ? this.activePanelTarget : null) : 'map';
-        if (this.badgeRef && where !== this.badgeTarget) this.dropStatusLine();
-        if (where && !this.badgeRef) {
-            const r = where === 'map' ? StatusLine.MAP_RECT : StatusLine.panelRect(this.options.layout);
-            // No contend: the centre slot is never taken from BMW. guide_hold 0:
-            // BMW's turn box stays visible. Where Waze has the map window, the
-            // line floats over its bottom edge (same compositor).
-            this.badgeRef = this.cr.effect({ target: where, klass: 'overlay', z: StatusLine.Z,
-                contend: false, guide_hold: false, x: r.x, y: r.y, w: r.w, h: r.h, fs: StatusLine.LINE_FS });
-            this.badgeTarget = this.badgeRef ? where : null;
-            this.badgeState = '';
-        }
-        if (this.badgeRef && this.badgeState !== state) {
-            this.cr.uniform(this.badgeRef, 'u_color', StatusLine.color(state));
-            this.badgeState = state;
-        }
     }
     status() {
         // The last *reported* selector position is independent from the

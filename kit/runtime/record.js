@@ -62,9 +62,13 @@ function atlasById(id) { const a = atlasList.find((x) => x.id === id); return a 
 // pixel images (e.g. a game's frame): id -> { w, h, data (RGBA bytes), ver }. setImage() bumps ver;
 // a frame records id + ver, so a changed picture is a changed frame, and the transport uploads it
 const imageById = new Map();
-function setImage(id, w, h, data) {
+function setImage(id, w, h, data, alpha = true) {
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w < 1 || h < 1 || w > 2048 || h > 2048 ||
+        !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) || data.byteLength !== w * h * 4)
+        throw new RangeError('Invalid RGBA image');
+
     const im = imageById.get(id) || { ver: 0 };
-    im.w = w | 0; im.h = h | 0; im.data = data; im.ver = (im.ver + 1) >>> 0;
+    im.w = w | 0; im.h = h | 0; im.data = data; im.alpha = !!alpha; im.ver = (im.ver + 1) >>> 0;
     imageById.set(id, im);
     return im;
 }
@@ -88,7 +92,7 @@ class Recorder {
         this.layersUsed = null;      // Set of layer ids this recording draws
         this.atlases = new Set();    // glyph atlases and colour ramps it uses (uploaded once by the transport)
         this.ramps = new Set();
-        this.images = new Set();     // pixel images it draws (setImage)
+        this.images = new Set(); this.imageOffsets = [];     // pixel images it draws (setImage)
         this.targets = [];           // what a tap or the controller can press on the page: { x, y, w, h, run, key } (target)
         this._extra = 0;
         this.extraUsed = false;      // the drawing read extra (it reaches below the page: display.js places it so)
@@ -97,7 +101,7 @@ class Recorder {
     /** logical px the screen has below the app's page (display.js), 0 if none */
     get extra() { if (this._extra) this.extraUsed = true; return this._extra; }
     set extra(v) { this._extra = v || 0; }
-    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); return this; }
+    reset() { this.n = 0; this._cnStamped = false; this.targets = []; this.scroll = false; this.extraUsed = false; if (this.layersUsed) this.layersUsed.clear(); this.atlases.clear(); this.ramps.clear(); this.images.clear(); this.imageOffsets.length = 0; return this; }
     _grow(k) {
         if (this.n + k <= this.u.length) return;
         let len = this.u.length * 2;
@@ -122,7 +126,7 @@ class Recorder {
         if (!im || !(w > 0 && h > 0)) return this;
         this._grow(7); const f = this.f, i = this.n;
         this.u[i] = OP.IMAGE; this.u[i + 1] = id; this.u[i + 2] = im.ver; f[i + 3] = x; f[i + 4] = y; f[i + 5] = w; f[i + 6] = h;
-        this.images.add(id);
+        this.images.add(id); this.imageOffsets.push(i);
         this.n += 7; return this;
     }
     clear(c) { this._grow(2); this.u[this.n++] = OP.CLEAR; this.u[this.n++] = pack(c || [0, 0, 0, 0]); return this; }
@@ -218,6 +222,7 @@ class Recorder {
     /** Append another recording (its fonts, ramps and layers come along). */
     append(r) {
         const w = r.words();
+        if (r.imageOffsets) r.imageOffsets.forEach(i => this.imageOffsets.push(this.n + i));
         this._grow(w.length); this.u.set(w, this.n); this.n += w.length;
         r.atlases.forEach((a) => this.atlases.add(a)); r.ramps.forEach((a) => this.ramps.add(a));
         if (r.images) r.images.forEach((id) => this.images.add(id));
@@ -233,8 +238,8 @@ class Recorder {
         const s = opts.literal ? String(str) : t(str), family = opts.font || 'label';
         const f = fonts.get(family, size * this.textScale, s);
         if (!f) return 0;
-        const sc = size / f.size, sp = opts.spacing || 0;
-        const w = fonts.measure(f, s) * sc + sp * Math.max(0, s.length - 1);
+        const sc = size / f.size, sp = opts.spacing || 0, cell = opts.cellWidth || 0;
+        const w = cell ? [...s].length * cell : fonts.measure(f, s) * sc + sp * Math.max(0, s.length - 1);
         let pen = opts.align === 'center' ? x - w / 2 : opts.align === 'right' ? x - w : x;
         let cnt = 0;
         const head = this.n;
@@ -246,11 +251,13 @@ class Recorder {
             if (!g) continue;
             const gx = g[0], gy = g[1], gw = g[2], gh = g[3];
             if (gw && gh) {
-                fl[i++] = pen + g[4] * sc; fl[i++] = y + g[5] * sc; fl[i++] = gw * sc; fl[i++] = gh * sc;
+                const sx = cell ? Math.min(sc, cell / Math.max(g[6], gw)) : sc;
+                const inset = cell ? (cell - g[6] * sx) / 2 : 0;
+                fl[i++] = pen + inset + g[4] * sx; fl[i++] = y + g[5] * sc; fl[i++] = gw * sx; fl[i++] = gh * sc;
                 fl[i++] = gx; fl[i++] = gy; fl[i++] = gx + gw; fl[i++] = gy + gh;
                 cnt++;
             }
-            pen += g[6] * sc + sp;
+            pen += cell || g[6] * sc + sp;
         }
         if (cnt) {
             const aid = atlasId(f, f.family || family); this.atlases.add(aid);
@@ -261,6 +268,7 @@ class Recorder {
     }
     textWidth(str, size, opts) {
         const s = opts && opts.literal ? String(str) : t(str), f = fonts.get((opts && opts.font) || 'label', size * this.textScale, s);
+        if (opts && opts.cellWidth) return [...s].length * opts.cellWidth;
         return f ? fonts.measure(f, s) * (size / f.size) + ((opts && opts.spacing) || 0) * Math.max(0, s.length - 1) : 0;
     }
 
@@ -307,7 +315,6 @@ function play(words, real) {
     const f = new Float32Array(u.buffer, u.byteOffset, u.length);
     let alpha = 1;
     const col = (v) => { const a = unpack(v); if (alpha < 1) a[3] = Math.round(a[3] * alpha); return a; };
-    let clip = null;
     let i = 0;
     const n = u.length;
     while (i < n) {
@@ -354,15 +361,14 @@ function play(words, real) {
         }
         case OP.LAYER: { const L = layerById.get(u[i]); if (L) cv.blit(softLayer(L), f[i + 1], f[i + 2]); i += 3; break; }
         case OP.IMAGE: { const im = imageById.get(u[i]); if (im && cv.drawImage) cv.drawImage(im.data, im.w, im.h, f[i + 2], f[i + 3], f[i + 4], f[i + 5]); i += 6; break; }
-        case OP.CLIP: clip = [f[i], f[i + 1], f[i + 2], f[i + 3]]; i += 4; break;     // (software path: ignored)
-        case OP.NOCLIP: clip = null; break;
+        case OP.CLIP: cv.clip(f[i], f[i + 1], f[i + 2], f[i + 3]); i += 4; break;
+        case OP.NOCLIP: cv.noclip(); break;
         case OP.ALPHA: alpha = f[i]; i += 1; break;
         case OP.XF: cv = f[i] > 0 ? NOP : real; i += 3; break;
-        default: return real;
+        default: return real.noclip();
         }
     }
-    void clip;
-    return real;
+    return real.noclip();
 }
 
 module.exports = { Recorder, OP, pack, unpack, rampId, rampList, atlasId, atlasList, atlasById, makeLayer, dropLayer, layerById, play, softLayer, setImage, imageById };

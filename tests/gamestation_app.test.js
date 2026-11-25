@@ -1,6 +1,6 @@
 'use strict';
 
-// node tests/gamestation_app.test.js - GameStation 0.3: library and saves, the game session
+// node tests/gamestation_app.test.js - GameStation 0.4: library and saves, the game session
 // (pacing, pause, overload), battery RAM of all three cores, the phone server's new endpoints,
 // every page of the car UI, and main.js against a stand-in for the kit (parked-only gate,
 // tabs, start / quit / delete). No car, SDK, network or copyrighted ROMs needed.
@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const EventEmitter = require('events');
+const {PassThrough} = require('stream');
 const Module = require('module');
 
 const APP = path.join(__dirname, '..', 'apps', 'mgu_gamestation');
@@ -78,7 +79,7 @@ function testLibrary() {
         fs.writeFileSync(path.join(dir, 'roms', 'nes', ' old.nes'), nesRom());
         assert.deepStrictEqual(lib.list('nes').map(g => g.name), ['alpha game.nes', ' old.nes', 'Zeta.nes'].sort((a, b) =>
             title(a).toLowerCase().localeCompare(title(b).toLowerCase())));
-        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0});
+        assert.deepStrictEqual(lib.counts(), {nes: 3, snes: 0, gb: 0, chip8: 0, sms: 0, gg: 0, genesis: 0, gba: 0, a26: 0, a78: 0, pce: 0, vb: 0, ws: 0, ngp: 0, ps1: 0});
         // saves: written only when changed, atomically
         assert.strictEqual(lib.loadSave('nes', 'Zeta.nes'), null);
         assert.strictEqual(lib.store('nes', 'Zeta.nes', Buffer.from([1, 2, 3])), true);
@@ -91,8 +92,21 @@ function testLibrary() {
         assert.deepStrictEqual(new Library(dir).last(), {kind: 'nes', name: 'Zeta.nes', title: 'Zeta'});
         assert.strictEqual(lib.remove('nes', 'Zeta.nes'), true);
         assert.strictEqual(lib.remove('nes', 'Zeta.nes'), false);
-        assert.strictEqual(lib.loadSave('nes', 'Zeta.nes'), null, 'the save goes with the game');
+        assert.deepStrictEqual(Array.from(lib.loadSave('nes', 'Zeta.nes')), [1, 2, 3], 'deleting a ROM keeps its save');
         assert.strictEqual(new Library(dir).last(), null);
+        const hash = 'ab'.repeat(32);
+        lib.storeState('chip8', hash, 1, {pc: 512});
+        lib.storeState('chip8', hash, 2, {pc: 514});
+        assert.deepStrictEqual(new Library(dir).loadState('chip8', hash, 2), {pc: 514});
+        assert.throws(() => lib.statePath('chip8', '../' + hash, 1), /Invalid/);
+        const stateFile = lib.statePath('chip8', hash, 1);
+        const data = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        data.state.pc = 516;
+        fs.writeFileSync(stateFile, JSON.stringify(data));
+        assert.throws(() => lib.loadState('chip8', hash, 1), /checksum/);
+        data.version = 2;
+        fs.writeFileSync(stateFile, JSON.stringify(data));
+        assert.throws(() => lib.loadState('chip8', hash, 1), /Incompatible/);
         lib.remember('arcade', 'pong');
         assert.strictEqual(lib.last().title, 'Pong');
     } finally { rmrf(dir); }
@@ -127,6 +141,14 @@ function testSession() {
     assert.ok(s.game, 'the game is kept');
     work = 0; s.resume(); clock += 17;
     assert.strictEqual(s.step([{}, {}], true), 1, 'resume after overload');
+    // Isolated stalls after warmup do not look like sustained overload.
+    for (let i = 0; i < OVERLOAD_WINDOW + 10; i++) {
+        work = i % 20 === 0 ? 500 : 1;
+        clock += 17;
+        s.step([{}, {}], true);
+    }
+    assert.strictEqual(s.paused, false);
+    assert.strictEqual(s.maximum(), 500);
     // an exception pauses with the reason
     game.tick = () => { throw new Error('bad opcode'); };
     clock += 17; s.step([{}, {}], true);
@@ -136,14 +158,33 @@ function testSession() {
     assert.strictEqual(s.step([{}, {}], true), 0);
     // pictures: only the newest, once
     const t = new Session({tick() {}, stop() {}}, 'gb', 'g.gb', {});
-    t.paint('a', 1, 1); t.paint('b', 1, 1);
-    assert.strictEqual(t.take().pixels, 'b');
+    assert.throws(() => t.paint(Buffer.alloc(1), 1, 1), /Invalid emulator RGBA frame/);
+    const a = Buffer.from([255, 0, 0, 255]), b = Buffer.from([0, 0, 255, 255]);
+    t.paint(a, 1, 1); t.paint(b, 1, 1);
+    assert.strictEqual(t.take().pixels, b);
+    assert.strictEqual(t.discarded, 1);
     assert.strictEqual(t.take(), null);
     // arcade: one time-scaled tick per screen frame
     let delta = 0;
     const pong = new Session({tick(p, d) { delta = d; }, draw() {}, stop() {}}, 'arcade', 'pong', {now: () => clock});
     pong.step([{}, {}], true); clock += 33; pong.step([{}, {}], true);
     assert.ok(delta > 1.9 && delta <= 2, 'Pong moves by elapsed time');
+    let at = 100, played = 0, coreTicks = 0;
+    const timed = new Session({
+        tick() { coreTicks++; },
+        getAudioSamples() { return {rate: 48000, left: new Float32Array(800)}; },
+    }, 'nes', 'timed.nes', {now: () => at, audio: block => { played += block.left.length; }});
+    for (let i = 0; i < 60; i++) {
+        at = 100 + i * (1000 / 60);
+        timed.step([{}, {}], true);
+        if (i % 3 === 0) timed.take(); // 20 Hz image consumption, with a renderer drop.
+    }
+    assert.strictEqual(coreTicks, 60);
+    assert.strictEqual(played, 48000, 'PCM follows core steps even when video consumes every third frame');
+    timed.pause();
+    at += 200;
+    timed.step([{}, {}], true);
+    assert.strictEqual(played, 48000, 'paused time does not enqueue PCM');
     console.log('ok: session pacing, catch-up cap, pause / resume, autosave, overload and error pause');
 }
 
@@ -187,8 +228,8 @@ function testSaves() {
 
 /* ---------------- phone server ---------------- */
 function response() {
-    return {status: null, body: null, headers: null,
-        writeHead(n, h) { this.status = n; this.headers = h; }, end(b) { this.body = b; }};
+    return Object.assign(new EventEmitter(), {status: null, body: null, headers: null,
+        writeHead(n, h) { this.status = n; this.headers = h; }, end(b) { this.body = b; }});
 }
 function call(server, method, url, remote, body) {
     const req = new EventEmitter();
@@ -198,6 +239,21 @@ function call(server, method, url, remote, body) {
     server.request(req, res);
     if (method === 'POST') { if (body) req.emit('data', body); req.emit('end'); }
     return res;
+}
+function uploadDisc(server, name, body, replace) {
+    return new Promise(resolve => {
+        const req = new PassThrough();
+        req.socket = {remoteAddress: '172.16.222.20'};
+        req.method = 'POST';
+        req.url = '/rom?t=' + server.token + '&platform=ps1&name=' + encodeURIComponent(name) +
+            (replace ? '&replace=1' : '');
+        req.headers = {};
+        const res = response();
+        res.end = () => resolve(res.status);
+        server.request(req, res);
+        req.write(body.slice(0, 11));
+        req.end(body.slice(11));
+    });
 }
 function maskedFrame(obj) {
     const payload = Buffer.from(JSON.stringify(obj)), key = Buffer.from([9, 8, 7, 6]);
@@ -235,6 +291,15 @@ async function testServer() {
         assert.strictEqual(call(server, 'POST', '/delete?t=' + t + '&platform=nes&name=nope.nes').status, 404);
         assert.strictEqual(call(server, 'POST', '/delete?t=' + t + '&platform=nes&name=My%20Game.nes').status, 200);
         assert.deepStrictEqual(seen.filter(s => !/^removing/.test(s)), ['up:My Game.nes', 'up:My Game.nes', 'rm:My Game.nes']);
+        const iso = Buffer.alloc(17 * 2048);
+        iso.write('\x01CD001\x01', 16 * 2048, 'binary');
+        assert.strictEqual(await uploadDisc(server, 'Disc.iso', iso), 201);
+        assert.strictEqual(await uploadDisc(server, 'Disc.iso', iso), 409);
+        assert.strictEqual(await uploadDisc(server, 'Disc.iso', Buffer.alloc(32), true), 400);
+        const disc = server.library.read('ps1', 'Disc.iso');
+        assert.strictEqual(disc, path.join(dir, 'roms', 'ps1', 'Disc.iso'));
+        assert.ok(fs.readFileSync(disc).equals(iso), 'a rejected replacement leaves the disc intact');
+        assert.deepStrictEqual(fs.readdirSync(path.dirname(disc)), ['Disc.iso'], 'temporary upload files are removed');
         assert.ok(server.url(2).indexOf('http://172.16.222.1:') === 0);
 
         // pads: a pause command, state pushed to the phone, slot takeover after silence
@@ -244,6 +309,8 @@ async function testServer() {
         server.players[0] = p;
         server.onData(p, maskedFrame({type: 'pause'}));
         assert.ok(seen.indexOf('cmd:1:pause') >= 0);
+        server.onData(p, maskedFrame({type: 'gameMenu'}));
+        assert.ok(seen.indexOf('cmd:1:gameMenu') >= 0);
         server.broadcast({title: 'Zelda-like', paused: true});
         const out = written[written.length - 1];
         assert.strictEqual(out[0], 0x81);
@@ -307,7 +374,7 @@ function testUi() {
     uiActions = a;
     const keys = cv => cv.targets.map(t => t.key);
     const press = (cv, key) => cv.targets.find(t => t.key === key).run();
-    const platforms = PLATFORMS.map((p, i) => Object.assign({count: [9, 0, 2, 0][i]}, p));
+    const platforms = PLATFORMS.map((p, i) => Object.assign({count: [9, 0, 2, 1][i] || 0}, p));
     const games = n => Array.from({length: n}, (_, i) => ({kind: 'nes', name: 'g' + i + '.nes',
         title: i === 1 ? 'An extremely long game title that will never fit into a single card of the list' : 'Game ' + (i + 1),
         detail: '40 KB' + (i % 2 ? '  ·  save kept' : '')}));
@@ -317,7 +384,7 @@ function testUi() {
         pages: Math.max(1, Math.ceil(n / PAGE_SIZE)), start: page * PAGE_SIZE, total: n});
 
     let cv = render('games', base({list: list(9, 0), last: {kind: 'nes', name: 'g3.nes', title: 'Game 4'}}));
-    assert.deepStrictEqual(keys(cv), ['PLATFORM_0', 'PLATFORM_1', 'PLATFORM_2', 'PLATFORM_3',
+    assert.deepStrictEqual(keys(cv), [...PLATFORMS.map((_, i) => 'PLATFORM_' + i),
         'GAME_0', 'GAME_1', 'GAME_2', 'GAME_3', 'GAME_4', 'GAME_5', 'NEXT', 'CONTINUE', 'DELETE_MODE'],
         'platforms, then the games, then the footer (the knob walks them in this order)');
     press(cv, 'GAME_2'); press(cv, 'NEXT'); press(cv, 'PLATFORM_2'); press(cv, 'CONTINUE');
@@ -360,6 +427,27 @@ function testUi() {
 
     assert.strictEqual(ascii('Pokémon – Gelbe Edition'), 'Pokemon - Gelbe Edition');
     assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 900, h: 450}, 256, 240), {x: 210, y: 0, w: 480, h: 450});
+    assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 900, h: 450}, 256, 240, 'integer'), {x: 322, y: 105, w: 256, h: 240});
+    const physical = fitRect({x: 0, y: 0, w: 1600, h: 520}, 256, 240, 'integer', 1.1);
+    assert.strictEqual(Math.round(physical.w * 1.1), 512, 'integer scaling uses physical pixels');
+    const crop = fitRect({x: 0, y: 0, w: 1600, h: 520}, 256, 240, 'crop');
+    assert.strictEqual(crop.w, 1600);
+    assert.ok(crop.y < 0 && crop.h > 520);
+    assert.deepStrictEqual(fitRect({x: 0, y: 0, w: 1600, h: 520}, 256, 240, 'stretch'), {x:0, y:0, w:1600, h:520});
+    const immersed = new Recorder(W, H);
+    immersed.chrome = {};
+    immersed.own = true;
+    immersed.extra = 48;
+    a.gameMenu = () => {};
+    makeUi(G, kitCanvas).draw(immersed, THEMES.ice, base({page: PAGE.PLAY, game: game({displayMode:'immersive'})}), a);
+    assert.strictEqual(immersed.extraUsed, true);
+    assert.deepStrictEqual(immersed.chrome.tabs.tabs, []);
+    assert.deepStrictEqual(keys(immersed), ['GAME_MENU']);
+    const icon = fs.readFileSync(path.join(APP, 'icon.png'));
+    assert.strictEqual(icon.readUInt32BE(16), 140);
+    assert.strictEqual(icon.readUInt32BE(20), 140);
+    assert.strictEqual(icon[25], 6, 'BMW app icon retains its RGBA canvas');
+
     console.log('ok: car UI pages (games, delete mode, playing, paused, Pong, controllers) and knob order');
 }
 
@@ -384,10 +472,10 @@ async function testApp() {
     lib.add('nes', 'Plain.nes', nesRom(false));
 
     const clicks = {}, hooks = {}, settings = {controllerMode: 'phones', theme: 'ice'}, grabs = [];
-    let frame = null, tick = null, speed = null, visible = true, focus = true;
+    let frame = null, tick = null, speed = null, visible = true, focus = true, settingChange = () => {};
     const ctx = {
-        log: quiet, dataDir: dir, spec: {version: '0.3.0'},
-        settings: {get: k => settings[k], set: (k, v) => { settings[k] = v; }, onChange: () => {}},
+        log: quiet, dataDir: dir, spec: {version: '0.5.0'},
+        settings: {get: k => settings[k], set: (k, v) => { settings[k] = v; settingChange(k); }, onChange: fn => { settingChange = fn; }},
         theme: () => THEMES.ice,
         signals: {watch: (iface, inst, handlers) => {
             if (handlers.statusCarSpeed2) speed = handlers.statusCarSpeed2;
@@ -398,12 +486,24 @@ async function testApp() {
         ui: {onClick: (id, fn) => { clicks[id] = fn; }, onVisible: fn => { hooks.visible = fn; }, onFocus: fn => { hooks.focus = fn; },
             isVisible: () => visible, hasFocus: () => focus, image: (n, cv) => { frame = cv; return Promise.resolve(); }},
         onTab: fn => { hooks.tab = fn; },
+        onTap: fn => { hooks.tap = fn; },
         canvas: (w, h) => { const r = new Recorder(w, h, {textScale: 1}); r.reset(); return r; },
         loop: (name, fps, fn) => { tick = fn; },
     };
     const keys = () => { tick(); return frame.targets.map(t => t.key); };
     const press = key => { tick(); const t = frame.targets.find(x => x.key === key); assert.ok(t, 'no target ' + key); t.run(); };
     const parked = () => speed({speedVehicleCentreOfGravity: 0});
+    const native = require(path.join(APP, 'retro_core'));
+    const original = native.RetroGame;
+    let nativeFrames = 0;
+    native.RetroGame = class extends original {
+        constructor(id, bytes, output, options) {
+            super(id, bytes, output, Object.assign({}, options, {
+                helper: path.join(APP, '../../native/gamestation-retro/mgu-gamestation-retro'),
+                onFrame(block, duration) { nativeFrames++; options.onFrame(block, duration); },
+            }));
+        }
+    };
     try {
         await spec.start(ctx);
         const manifest = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
@@ -430,6 +530,26 @@ async function testApp() {
         tick();
         assert.strictEqual(grabs[grabs.length - 1], false, 'knob released when the car moves');
         assert.ok(keys().indexOf('PAUSE') < 0, 'no resume while moving');
+        parked();
+        tick();
+        assert.strictEqual(grabs[grabs.length - 1], true);
+        focus = false; hooks.focus('MAIN', false);
+        assert.strictEqual(grabs[grabs.length - 1], false, 'focus loss releases immediately');
+        focus = true; hooks.focus('MAIN', true);
+        tick();
+        speed({speedVehicleCentreOfGravity: 65535});
+        assert.strictEqual(grabs[grabs.length - 1], false, 'invalid speed invalidates the previous speed');
+        const realNow = Date.now;
+        const parkedAt = realNow();
+        try {
+            Date.now = () => parkedAt;
+            parked();
+            tick();
+            assert.strictEqual(grabs[grabs.length - 1], true);
+            Date.now = () => parkedAt + 5000;
+            tick();
+            assert.strictEqual(grabs[grabs.length - 1], false, 'five-second signal expiry');
+        } finally { Date.now = realNow; }
         parked();
         // tabs keep the game; the Games page offers to go back
         hooks.tab(PAGE.GAMES);
@@ -462,9 +582,72 @@ async function testApp() {
         hooks.tab(PAGE.GAMES); press('PLATFORM_3'); press('GAME_0');
         tick(); await new Promise(r => setTimeout(r, 20)); tick();
         assert.deepStrictEqual(keys(), ['PAUSE', 'TO_GAMES', 'TO_PADS', 'QUIT'], 'Pong runs');
+        ctx.settings.set('gameDisplayMode', 'fullscreen');
+        assert.deepStrictEqual(keys(), ['GAME_MENU']);
+        assert.strictEqual(grabs[grabs.length - 1], true, 'the running game still accepts iDrive');
+        hooks.tap(1000, 250);
+        assert.ok(keys().includes('EXIT_FULLSCREEN') && keys().includes('AUDIO_TOGGLE'));
+        assert.strictEqual(grabs[grabs.length - 1], false, 'menu hands iDrive back to the app');
+        press('VOLUME_UP');
+        assert.strictEqual(settings.audioVolume, 10);
+        press('PAUSE');
+        assert.deepStrictEqual(keys(), ['GAME_MENU']);
+        clicks.BTN_ACTION();
+        assert.ok(keys().includes('EXIT_FULLSCREEN'), 'BMW action opens menu');
+        press('EXIT_FULLSCREEN');
+        assert.deepStrictEqual(keys(), ['PAUSE', 'TO_GAMES', 'TO_PADS', 'QUIT']);
+        ctx.settings.set('gameDisplayMode', 'immersive');
+        speed({speedVehicleCentreOfGravity: 65535});
+        assert.ok(!keys().includes('PAUSE') && keys().includes('QUIT'), 'safety overlay preserves exit while preventing resume');
+        parked(); tick();
+        focus = false; hooks.focus('MAIN', false); focus = true; hooks.focus('MAIN', true);
+        assert.ok(keys().includes('EXIT_FULLSCREEN'));
+        press('QUIT');
+        assert.ok(keys().includes('GAME_0'), 'quit returns straight to library');
+        ctx.settings.set('gameDisplayMode', 'standard');
+        lib.add('chip8', 'Key.ch8', Buffer.from('1200', 'hex'));
+        hooks.tab(PAGE.GAMES); press('PLATFORM_4'); press('GAME_0');
+        clicks.BTN_DIAG();
+        assert.ok(keys().includes('STATE_SAVE'), 'state slots are available for the CHIP-8 core');
+        press('STATE_SLOT'); press('STATE_SAVE'); press('STATE_LOAD');
+        assert.ok(keys().includes('GPU_TEST'), 'GPU test is accessible from Diagnostics');
+        press('GPU_TEST');
+        assert.ok(keys().includes('GPU_SIZE'));
+        press('GPU_MOTION');
+        press('GPU_SIZE');
+        press('GPU_TEST');
+        assert.ok(!keys().includes('GPU_SIZE'));
+        assert.ok(keys().includes('TONE'), 'diagnostics is accessible from the BMW button bar');
+        press('AUDIO_DIAG');
+        press('TONE');
+        speed({speedVehicleCentreOfGravity: 65535});
+        assert.ok(!keys().includes('TONE'), 'speaker test cannot run without fresh standstill');
+        parked();
         // screen hidden: held
         visible = false; tick(); visible = true; focus = false; tick(); focus = true;
+
+        if (process.platform === 'linux' && process.arch === 'x64') {
+            const {fixtures} = require('./gamestation_retro.test');
+            lib.add('gba', 'Native.gba', fixtures().gba);
+            parked();
+            hooks.tab(PAGE.GAMES);
+            press('PLATFORM_' + PLATFORMS.findIndex(p => p.id === 'gba'));
+            press('GAME_0');
+            tick();
+            for (let i = 0; i < 100 && nativeFrames < 3; i++) await new Promise(r => setTimeout(r, 15));
+            assert.ok(nativeFrames >= 3, 'native emulator starts through the normal GameStation UI');
+            speed({speedVehicleCentreOfGravity: 640});
+            const held = nativeFrames;
+            await new Promise(r => setTimeout(r, 80));
+            assert.strictEqual(nativeFrames, held, 'native frame commands and delivery stop on vehicle motion');
+            assert.ok(lib.loadSave('gba', 'Native.gba'), 'battery cache saved when the car moves');
+            parked(); tick();
+            for (let i = 0; i < 100 && nativeFrames === held; i++) await new Promise(r => setTimeout(r, 15));
+            assert.ok(nativeFrames > held, 'native emulator resumes after verified standstill');
+            press('QUIT');
+        }
     } finally {
+        native.RetroGame = original;
         process.listeners('exit').filter(l => before.indexOf(l) < 0).forEach(l => { l(); process.removeListener('exit', l); });
         rmrf(dir);
     }

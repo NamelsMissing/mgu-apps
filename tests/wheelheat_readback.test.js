@@ -10,6 +10,8 @@ test('BDC_G05 D074 steering-wheel state uses ECU readback payload', () => {
     assert.equal(B.decodeWheelReadback([0, 0]).on, false);
     assert.equal(B.decodeWheelReadback([0xff, 0xff]), null);
     assert.equal(B.decodeWheelReadback([]), null);
+    assert.equal(B.decodeWheelReadback([1, 3, 0, 2, 1]).led, null);
+    assert.equal(B.decodeWheelReadback([1, 0, 255, 2, 1]).currentAmps, null);
 });
 
 test('BDC_G05 E432/E430 seat state and level use ECU result fields', () => {
@@ -31,7 +33,8 @@ test('G05 manual steering wheel OFF/ON transitions display the latest BDC state'
     ];
     assert.deepEqual(replies.map(raw =>
         B.readbackLabel(B.decodeWheelReadback(raw.slice(3)), false)), [
-        'OFF (BDC report)', 'ON  |  LED OFF', 'ON  |  LED OFF', 'OFF (BDC report)',
+        'BDC OFF  |  0.0 A  |  LED OFF', 'BDC ON  |  6.8 A  |  LED OFF',
+        'BDC ON  |  6.7 A  |  LED OFF', 'BDC OFF  |  0.0 A  |  LED OFF',
     ]);
     assert.equal(B.readbackLabel({ on: true, level: 3 }, true), 'ON  |  Level 3');
     assert.equal(B.readbackLabel(null, false), null);

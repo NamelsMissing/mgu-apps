@@ -61,12 +61,17 @@ class Processor {
     constructor(rate, channels, config) {
         if ([44100, 48000, 88200, 96000].indexOf(rate) < 0 || [1, 2].indexOf(channels) < 0) throw new Error('Unsupported PCM format');
         this.rate = rate; this.channels = channels; this.current = new Bank(validate(config || defaults()), rate, channels);
-        this.previous = null; this.fade = 0; this.fadeFrames = Math.round(rate * 0.025);
+        this.previous = null; this.queued = null; this.fade = 0; this.fadeFrames = Math.round(rate * 0.025);
         this.history = new Float64Array(2048 * channels); this.historyFrames = 0; this.historyPos = 0;
-        this.frames = 0; this.clipped = 0; this.peakIn = 0; this.peakOut = 0;
+        this.frames = 0; this.filteredFrames = 0; this.clipped = 0; this.peakIn = 0; this.peakOut = 0;
     }
     configure(config) {
-        const next = new Bank(validate(config), this.rate, this.channels);
+        const next = validate(config);
+        if (this.previous) { this.queued = next; return; }
+        this.beginTransition(next);
+    }
+    beginTransition(config) {
+        const next = new Bank(config, this.rate, this.channels);
         // Warm the new filters with the actual recent input before a 25 ms crossfade.
         const used = Math.min(2048, this.historyFrames), start = (this.historyPos - used + 2048) % 2048;
         for (let i = 0; i < used; i++) for (let ch = 0; ch < this.channels; ch++) next.sample(this.history[((start + i) % 2048) * this.channels + ch], ch);
@@ -76,6 +81,7 @@ class Processor {
         if (!Buffer.isBuffer(input) || input.length % (this.channels * 2) || input.length > 16384) throw new Error('Unaligned or oversized PCM block');
         const output = Buffer.allocUnsafe(input.length), frames = input.length / (this.channels * 2);
         for (let frame = 0; frame < frames; frame++) {
+            if (this.current.enabled || (this.previous && this.previous.enabled)) this.filteredFrames++;
             const mix = this.previous ? 1 - this.fade / this.fadeFrames : 1;
             for (let ch = 0; ch < this.channels; ch++) {
                 const offset = (frame * this.channels + ch) * 2, x = input.readInt16LE(offset) / 32768;
@@ -90,11 +96,17 @@ class Processor {
                 output.writeInt16LE(raw, offset);
             }
             this.historyPos = (this.historyPos + 1) % 2048; this.historyFrames++;
-            if (this.previous && --this.fade <= 0) this.previous = null;
+            if (this.previous && --this.fade <= 0) {
+                this.previous = null;
+                if (this.queued) {
+                    const config = this.queued; this.queued = null;
+                    this.beginTransition(config);
+                }
+            }
         }
         this.frames += frames; return output;
     }
-    stats() { return { sampleRate: this.rate, channels: this.channels, frames: this.frames, clippedSamples: this.clipped,
+    stats() { return { sampleRate: this.rate, channels: this.channels, format: 's16le', frames: this.frames, filteredFrames: this.filteredFrames, clippedSamples: this.clipped,
         peakIn: this.peakIn, peakOut: this.peakOut, enabled: this.current.enabled, effectivePreampDb: headroom(this.current.config) }; }
 }
 module.exports = { FREQUENCIES, clone, defaults, validate, peaking, magnitude, headroom, Processor };

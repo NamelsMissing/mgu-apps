@@ -1,5 +1,5 @@
 'use strict';
-// Autostart of Custom Cluster and Cluster Lyrics: manifest, safe defaults, status file.
+// Autostart of dashboard apps: manifest, safe defaults, status file.
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
@@ -19,9 +19,12 @@ const cc = app('custom_cluster'), cl = app('cluster_lyrics');
 assert.strictEqual(setting(cc, 'kombiAuto').default, 'off');
 assert.strictEqual(setting(cc, 'layout').default, 'stock');
 assert.strictEqual(setting(cc, 'enablePanelTests').default, false);
-assert.strictEqual(setting(cc, 'phoneBridge').default, false);
-assert.strictEqual(setting(cc, 'phoneBadge').default, false);
+for (const key of ['phoneBridge', 'phoneBadge']) {
+    assert.strictEqual(setting(cc, key), undefined, key + ' moved out of Custom Cluster');
+}
 assert.strictEqual(setting(cl, 'kombiOn').default, false);
+assert.strictEqual(setting(cl, 'autoStartOnBoot').default, true,
+    'Cluster Lyrics automatically resumes previously enabled KOMBI mode');
 assert.deepStrictEqual(setting(cc, 'kombiAuto').options.map((o) => o[0]), ['off', 'parked']);
 assert.strictEqual(setting(cc, 'gearDisplay').default, 'gear');
 assert.deepStrictEqual(setting(cc, 'gearDisplay').options.map((o) => o[0]), ['selector', 'gear', 'gear_estimate']);

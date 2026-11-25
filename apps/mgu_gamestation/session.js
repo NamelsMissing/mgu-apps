@@ -5,8 +5,9 @@
 const FRAME_MS = 1000 / 60;          // NES, SNES and Game Boy all run about 60 video frames a second
 const MAX_CATCH_UP = 2;              // emulated frames per screen frame when the renderer falls behind
 const AUTOSAVE_MS = 20000;
-const OVERLOAD_MS = 45;              // average JS time per emulated frame that the MGU cannot sustain
-const OVERLOAD_WINDOW = 90;          // emulated frames the average is taken over
+const OVERLOAD_RATIO = 2.5;          // sustained work relative to the core’s own frame budget
+const OVERLOAD_WINDOW = 60;          // recent completed frames
+const WARMUP_MS = 1500;
 const STALL_MS = 1500;               // a single frame this slow pauses at once
 
 class Session {
@@ -18,15 +19,23 @@ class Session {
         const o = options || {};
         this.game = game; this.kind = kind; this.name = name;
         this.now = o.now || Date.now; this.storeSave = o.store || null; this.log = o.log || null;
+        this.audio = o.audio || null;
+        this.canAudio = o.canAudio || (() => true);
+        this.frameMs = game.frameMs || FRAME_MS;
         this.paused = false; this.reason = '';
         this.last = 0; this.carry = 0;
         this.samples = []; this.frames = 0;
+        this.warmupAt = this.now() + WARMUP_MS;
         this.lastSaveAt = this.now();
-        this.frame = null; this.fresh = false;
+        this.frame = null; this.fresh = false; this.discarded = 0;
         this.stopped = false;
     }
     /** Cores call this with each finished picture; the newest one is shown. */
     paint(pixels, width, height) {
+        if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+            width > 2048 || height > 2048 || !(pixels instanceof Uint8Array || pixels instanceof Uint8ClampedArray) ||
+            pixels.byteLength !== width * height * 4) throw new RangeError('Invalid emulator RGBA frame');
+        if (this.fresh) this.discarded++;
         this.frame = {pixels, width, height};
         this.fresh = true;
     }
@@ -48,8 +57,9 @@ class Session {
     resume() {
         if (this.stopped) return;
         this.paused = false; this.reason = ''; this.detail = '';
-        this.samples = []; this.last = 0; this.carry = 0;
+        this.samples = []; this.warmupAt = this.now() + WARMUP_MS; this.last = 0; this.carry = 0;
     }
+    hold() { this.last = 0; this.carry = 0; }
     toggle() { if (this.paused) this.resume(); else this.pause('user'); }
 
     /**
@@ -57,22 +67,44 @@ class Session {
      * of emulated frames run (0 while paused, held or not yet due).
      */
     step(pads, allowed) {
-        if (this.stopped || this.paused || !allowed) { this.last = 0; this.carry = 0; return 0; }
+        if (this.stopped || this.paused || !allowed) { this.hold(); return 0; }
         const now = this.now();
-        if (!this.last) { this.last = now - FRAME_MS; }
+        if (this.game.frameMs) this.frameMs = this.game.frameMs;
+        if (this.game.asynchronous) {
+            this.game.tick();
+            if (now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
+            return 0;
+        }
+        if (!this.last) { this.last = now - this.frameMs; }
         const elapsed = now - this.last;
         this.last = now;
         if (this.arcade) {
             // Pong moves by time: one tick per screen frame, scaled to 60 Hz steps.
-            this.run(() => this.game.tick(pads, Math.max(0.5, Math.min(2, elapsed / FRAME_MS))));
+            this.run(() => {
+                this.game.tick(pads, Math.max(0.5, Math.min(2, elapsed / FRAME_MS)));
+                this.sendAudio();
+            });
+            if (!this.paused && now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
             return 1;
         }
-        const due = elapsed / FRAME_MS + this.carry + 1e-6;     // (float rounding of 1000 / 60)
+        const due = Math.max(0, elapsed) / this.frameMs + this.carry + 1e-6;
         const count = Math.min(MAX_CATCH_UP, Math.floor(due));
-        this.carry = count === MAX_CATCH_UP ? 0 : due - count;      // too far behind: drop the rest
-        for (let i = 0; i < count && !this.paused; i++) this.run(() => this.game.tick(pads, 1));
+        this.carry = due >= MAX_CATCH_UP + 1 ? 0 : due - count;      // too far behind: drop the rest
+        let advanced = 0;
+        for (let i = 0; i < count && !this.paused; i++) {
+            this.run(() => {
+                this.game.tick(pads, 1);
+                this.sendAudio();
+            });
+            if (!this.paused) advanced++;
+        }
         if (!this.paused && now - this.lastSaveAt >= AUTOSAVE_MS) this.save();
-        return count;
+        return advanced;
+    }
+    sendAudio() {
+        if (!this.audio || !this.game.getAudioSamples || !this.canAudio()) return;
+        const block = this.game.getAudioSamples();
+        if (block) this.audio(block);
     }
     run(fn) {
         const t0 = this.now();
@@ -82,18 +114,25 @@ class Session {
             if (this.log) this.log.warn('[GameStation] emulator error: ' + this.detail);
             return;
         }
-        const spent = this.now() - t0;
+        this.recordFrame(this.now() - t0);
+    }
+    recordFrame(spent) {
         this.frames++;
         if (spent >= STALL_MS) { this.pause('overload', 'one frame took ' + Math.round(spent) + ' ms'); return; }
         this.samples.push(spent);
         if (this.samples.length > OVERLOAD_WINDOW) this.samples.shift();
-        if (this.samples.length === OVERLOAD_WINDOW && this.average() > OVERLOAD_MS)
-            this.pause('overload', Math.round(this.average()) + ' ms per frame');
+        if (this.samples.length === OVERLOAD_WINDOW && this.now() >= this.warmupAt) {
+            const budget = this.frameMs * OVERLOAD_RATIO;
+            const slow = this.samples.reduce((n, ms) => n + (ms > budget ? 1 : 0), 0);
+            if (slow >= OVERLOAD_WINDOW * 0.8 && this.average() > budget)
+                this.pause('overload', Math.round(this.average()) + ' ms per frame');
+        }
     }
     average() {
         if (!this.samples.length) return 0;
         return this.samples.reduce((a, b) => a + b, 0) / this.samples.length;
     }
+    maximum() { return this.samples.length ? Math.max.apply(null, this.samples) : 0; }
     /** Write the battery RAM if the game has one and it changed. Returns true when written. */
     save() {
         this.lastSaveAt = this.now();
@@ -116,4 +155,4 @@ class Session {
     }
 }
 
-module.exports = {Session, FRAME_MS, MAX_CATCH_UP, AUTOSAVE_MS, OVERLOAD_MS, OVERLOAD_WINDOW};
+module.exports = {Session, FRAME_MS, MAX_CATCH_UP, AUTOSAVE_MS, OVERLOAD_WINDOW};

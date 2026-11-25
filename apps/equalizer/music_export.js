@@ -69,6 +69,18 @@ function activeProfile(config) {
     return !!config && config.enabled && (config.preampDb < 0 ||
         config.bands && config.bands.some((b) => b.gainDb !== 0));
 }
+async function exportOriginal(dir) {
+    const original = path.join(dir, ORIGINAL);
+    const part = original + '.part';
+    try {
+        await toWav(part, null, null);
+        fs.renameSync(part, original);
+        return { original };
+    } catch (e) {
+        try { remove(part); } catch (_) {}
+        throw e;
+    }
+}
 async function exportComparison(dir, opts) {
     opts = opts || {};
     const request = opts.request || Client.request;
@@ -90,7 +102,7 @@ async function exportComparison(dir, opts) {
         fs.renameSync(partOriginal, outOriginal);
         let failure = '';
         const filter = new (opts.PcmFilter || Client.PcmFilter)({
-            runtime, sampleRate: RATE, channels: 2, source: 'equalizer_wav_export', timeout: 2400,
+            runtime, sampleRate: RATE, channels: 2, source: opts.source || 'equalizer_wav_export', timeout: 2400,
             onFallback: (e) => { failure = String(e || 'unknown'); }
         });
         notify('Der native DSP verarbeitet jetzt Night Drive ...');
@@ -113,4 +125,4 @@ async function exportComparison(dir, opts) {
         throw e;
     }
 }
-module.exports = { exportComparison, header, activeProfile, ORIGINAL, PROCESSED, FRAMES_BYTES };
+module.exports = { exportOriginal, exportComparison, header, activeProfile, ORIGINAL, PROCESSED, FRAMES_BYTES };

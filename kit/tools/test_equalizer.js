@@ -17,10 +17,12 @@ function binding(id, key, lo, center, hi) {
 function provider() {
     const state = { system: { 30: 0, 31: 0 }, sink: { 8: -2 }, car: { 9: 0 }, writes: [], failOn: null, clampOn: null, timeoutAfterWrite: null };
     const sig = {
-        proxy: async (iface, instance) => ({ iface, instance }), on: async () => {},
+        proxy: async (iface, instance) => ({ iface, instance }), on: async () => {}, watch: async () => ({}),
         call: async (p, method, args) => {
             const ok = (extra) => Object.assign({ amError: 0 }, extra);
             if (method === 'getListSystemProperties') return ok({ listSystemProperties: Object.keys(state.system).map((k) => ({ type: Number(k), value: state.system[k] })) });
+            if (method === 'getListMainConnections') return ok({ listConnections: [] });
+            if (method === 'getListMainSources') return ok({ listMainSources: [] });
             if (method === 'getListMainSinks') return ok({ listMainSinks: [{ sinkID: 7, name: 'Entertainment' }] });
             if (method === 'getListMainSinkSoundProperties') return ok({ listSoundProperties: Object.keys(state.sink).map((k) => ({ type: Number(k), value: state.sink[k] })) });
             if (method === 'getAllEQData') return Number(p.instance) === 1 ? ok({ eqDataSetArray: Object.keys(state.car).map((k) => ({ key: Number(k), data: state.car[k] })) }) : { amError: 8 };

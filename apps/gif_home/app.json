@@ -1,8 +1,9 @@
 {
   "id": "gif_home",
   "title": "GIF Home",
-  "description": "Animated home-screen GIF widget with built-in animations and phone uploads via QR code.",
-  "version": "0.3.1",
+  "description": "Animated BMW home widget with a local phone GIF library, groups and playlists.",
+  "version": "0.4.0",
+  "maxDiskUsage": 125829120,
   "vendor": "custom",
   "loggingId": "GFI1",
   "iconGlyph": "GIF",
@@ -30,11 +31,11 @@
       "kind": "canvas",
       "title": "GIF Home",
       "buttons": [
-        ["BTN_SOURCE", "Switch GIF"],
-        ["BTN_PHONE", "Phone upload"],
-        ["BTN_NEXT", "Next IP"],
-        ["BTN_RELOAD", "Reload GIF"],
-        ["BTN_HELP", "Widget setup"],
+        ["BTN_PAGE", "Page"],
+        ["BTN_NEXT", "Next item / IP"],
+        ["BTN_SELECT", "Select"],
+        ["BTN_PHONE", "Phone"],
+        ["BTN_DIAG", "Diagnostics"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }
@@ -52,6 +53,7 @@
     },
     {
       "key": "source",
+      "hidden": true,
       "label": "Animation",
       "type": "choice",
       "default": "auto",
@@ -104,15 +106,17 @@
       "key": "widgetTone",
       "label": "Home widget brightness",
       "type": "choice",
-      "default": "balanced",
+      "default": "neutral",
       "options": [
         ["original", "Original GIF colours"],
-        ["balanced", "Brighter, compensate edges"],
-        ["strong", "Strong edge compensation"]
+        ["balanced", "Legacy brightness compensation"],
+        ["strong", "Extended edge compensation"],
+        ["neutral", "Original colours, native background off"]
       ]
     },
     {
       "key": "pause",
+      "hidden": true,
       "label": "Pause animation",
       "type": "bool",
       "default": false

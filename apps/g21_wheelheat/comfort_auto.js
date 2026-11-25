@@ -13,6 +13,10 @@ const SENSOR_AGE_MS = 120000;
 const SEGMENT_SECONDS = 240;
 const RENEW_EARLY_MS = 12000;
 const RENEW_RETRY_MS = 12000;
+const SEAT_MODULE_RENEW_MS = 60000;
+// Renew only while the previous command should still be active. The SMFA
+// observed timeout is about 120 s. D714 has no duration field.
+const SEAT_MODULE_MAX_RENEW_AGE_MS = 90000;
 const START_WINDOW_MS = 120000;
 const START_RETRY_MS = 8000;
 const START_MAX_ATTEMPTS = 8;
@@ -47,7 +51,7 @@ class ComfortAuto {
                     Number.isFinite(tempC) && Number.isFinite(tempAt) &&
                     tempAt <= now && now - tempAt <= SENSOR_AGE_MS &&
                     tempC <= Number(cfg.belowTemp)) {
-                    this.issueStart(device, s, now, out);
+                    this.issueStart(device, s, now, out, cfg);
                 }
                 continue;
             }
@@ -84,8 +88,10 @@ class ComfortAuto {
         };
         if (cfg.wheelAuto) plan.push(['Steering wheel', secs(cfg.wheelMins), { seconds: secs(cfg.wheelMins) }, { seconds: 0 }]);
         const level = Number(cfg.seatLevel);
-        if (cfg.seatDriver) plan.push(['Driver seat', secs(cfg.seatMins), { side: 'driver', level }, { side: 'driver', level: 0 }]);
-        if (cfg.seatPassenger) plan.push(['Passenger seat', secs(cfg.seatMins), { side: 'passenger', level }, { side: 'passenger', level: 0 }]);
+        if (cfg.seatDriver) plan.push(['Driver seat', secs(cfg.seatMins),
+            { side: 'driver', level }, { side: 'driver', level: 0 }]);
+        if (cfg.seatPassenger) plan.push(['Passenger seat', secs(cfg.seatMins),
+            { side: 'passenger', level }, { side: 'passenger', level: 0 }]);
         // Validate all parameter values before emitting any action.
         for (const [device, sec, value] of plan) {
             if (sec < 1 || sec > 1200 || ((device !== 'Steering wheel') && (!Number.isInteger(value.level) || value.level < 1 || value.level > 3))) {
@@ -99,12 +105,15 @@ class ComfortAuto {
                 pending: true, startUntil, attempts: 0, nextAttemptAt: now,
                 inFlight: null, nextRenewAt: Infinity };
             this.active.set(device, s);
-            this.issueStart(device, s, now, out);
+            this.issueStart(device, s, now, out, cfg);
         }
         if (!plan.length) this.lastEvent = 'No heating selected';
         return out;
     }
-    issueStart(device, s, now, out) {
+    issueStart(device, s, now, out, cfg) {
+        const side = s.on.side;
+        if (side && cfg.pendingSeatRoutes && cfg.pendingSeatRoutes[side]) return;
+        if (side) s.on.viaSeatModule = !!(cfg.seatModuleRoutes && cfg.seatModuleRoutes[side]);
         const intent = { type: 'ON', device, data: Object.assign({}, s.on,
             { seconds: Math.min(s.duration, SEGMENT_SECONDS) }), at: now,
             startUntil: s.startUntil, attempt: ++s.attempts };
@@ -142,8 +151,9 @@ class ComfortAuto {
             if (ok) {
                 s.pending = false;
                 s.deadline = now + s.duration * 1000;
-                s.nextRenewAt = s.duration > SEGMENT_SECONDS ?
-                    now + intent.data.seconds * 1000 - RENEW_EARLY_MS : Infinity;
+                s.nextRenewAt = s.on.viaSeatModule ?
+                    (s.deadline > now + SEAT_MODULE_MAX_RENEW_AGE_MS ? now + SEAT_MODULE_RENEW_MS : Infinity) :
+                    (s.duration > SEGMENT_SECONDS ? now + intent.data.seconds * 1000 - RENEW_EARLY_MS : Infinity);
             } else if (retryable && s.attempts < START_MAX_ATTEMPTS &&
                 now + START_RETRY_MS < s.startUntil) {
                 s.nextAttemptAt = now + START_RETRY_MS;
@@ -153,10 +163,16 @@ class ComfortAuto {
             return;
         }
         if (intent.type === 'EXTEND') {
+            if (s.on.viaSeatModule) {
+                if (!ok) this.active.delete(intent.device);
+                else s.nextRenewAt = s.deadline > now + SEAT_MODULE_MAX_RENEW_AGE_MS ? now + SEAT_MODULE_RENEW_MS : Infinity;
+                return;
+            }
             s.nextRenewAt = ok
                 ? now + intent.data.seconds * 1000 - RENEW_EARLY_MS
                 : now + RENEW_RETRY_MS;
         }
     }
 }
-module.exports = { ComfortAuto, COLD_DWELL_MS, SENSOR_AGE_MS, SEGMENT_SECONDS, START_WINDOW_MS, START_MAX_ATTEMPTS };
+module.exports = { ComfortAuto, COLD_DWELL_MS, SENSOR_AGE_MS, SEGMENT_SECONDS, START_WINDOW_MS,
+    START_MAX_ATTEMPTS, SEAT_MODULE_MAX_RENEW_AGE_MS };

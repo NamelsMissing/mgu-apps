@@ -1,0 +1,18 @@
+[Unit]
+Description=MGU GIF Home private Wi-Fi firewall helper
+After=oapcontroller.service
+RequiresMountsFor=/var/opt
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/var/opt/mgu-gif-net/current/mgu-gif-net
+ExecStopPost=-/usr/bin/node /var/opt/mgu-gif-net/current/firewall.js close
+User=root
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

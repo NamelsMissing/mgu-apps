@@ -99,3 +99,73 @@ test('fast setting defaults OFF', () => {
     const app = require('../apps/light_flasher/app.json');
     assert.equal(app.settings.find((x) => x.key === 'fastTest').default, false);
 });
+
+const {config}=require('../apps/light_flasher/flash-config');
+test('sub-100 intervals are available only with fast enabled',()=>{
+ for(const ms of [20,40,60,80]){
+  assert.equal(config('alternate',ms,2000,true).intervalMs,ms);
+  assert.throws(()=>config('alternate',ms,2000),/require fast mode/);
+ }
+ assert.throws(()=>config('alternate',1,2000,true),/Invalid flash timing/);
+});
+test('standard sub-100 rejects before any diagnostic request',async()=>{
+ const r=rig();await assert.rejects(r.lf.run(req(false,{intervalMs:40}),()=>true),/require fast mode/);
+ assert.equal(r.log.length,0);
+});
+test('sub-100 fast mode executes with positive replies and final STOP/default',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(true,{intervalMs:40}),()=>true);
+ assert.equal(r.lf.config.intervalMs,40);
+ assert.deepEqual(r.log.slice(-4),['433102A54B','443102A54B','431001','441001']);
+ assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('transport-bound fast mode does not promise shorter physical timing',async()=>{
+ const gap=async ms=>{const r=rig({rttMs:120});await r.lf.run(req(true,{intervalMs:ms}),()=>true);return Timing.summarize(r.lf.trace).startDispatchGaps.meanMs};
+ assert.equal(await gap(20),await gap(100));
+});
+test('sub-100 fast mode skips PWM restart on guard loss and performs STOP',async()=>{
+ const r=rig({rttMs:10});
+ await assert.rejects(r.lf.run(req(true,{intervalMs:40}),()=>!r.log.some(x=>x.includes('3101A54B083C01'))),/guard changed/);
+ assert.ok(!r.log.some(x=>x.includes('3101A54B080001')));
+ assert.ok(r.log.includes('433102A54B'));
+ assert.equal(r.state[0x43].running,false);
+});
+test('button and lever use the same fast-mode requirement for sub-100 intervals',()=>{
+ const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
+ const expr=src.match(/const fastIntervalAllowed=\(\)=>([^;]+);/)[1];
+ const allowed=new Function('sub100','runSub100','settings','lightProviderAvailable','return '+expr);
+ for(const [selectedShort,runningShort,fast,provider,expected] of [
+  [true,false,false,true,false], [true,false,true,false,false], [true,false,true,true,true],
+  [false,true,false,true,false], [false,false,false,true,true],
+ ]){
+  assert.equal(allowed(()=>selectedShort,runningShort,{get:()=>fast},()=>provider),expected);
+ }
+ for(const name of ['flashReady','leverAllowed']){
+  assert.match(src.match(new RegExp('const '+name+'=([^;]+);'))[1],/fastIntervalAllowed\(\)/);
+ }
+ assert.doesNotMatch(src,/cfg\.intervalMs<100&&source/);
+ assert.match(src,/runSub100=cfg\.intervalMs<100/);
+});
+
+test('cycle configuration supports 20 while preserving old time selections',()=>{
+ const a=config('alternate',100,'cycles:20',true);assert.equal(a.cycleCount,20);assert.equal(a.durationMs,30000);
+ assert.equal(config('alternate',100,3000).cycleCount,null);
+ assert.throws(()=>config('alternate',100,'cycles:21',true),/Invalid flash timing/);
+});
+test('20 alternate cycles complete exactly 40 steps in fast mode',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(true,{cycleCount:20}),()=>true);assert.equal(r.lf.stepsCompleted,40);assert.equal(r.log.filter(x=>x.includes('3101A54B083C01')).length,40);
+ assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('20 triple cycles complete 120 steps when transport permits',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(true,{pattern:'triple',cycleCount:20}),()=>true);assert.equal(r.lf.stepsCompleted,120);assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('standard cycles stop at exact count',async()=>{
+ const r=rig({rttMs:10});await r.lf.run(req(false,{pattern:'double',cycleCount:3}),()=>true);assert.equal(r.lf.stepsCompleted,12);assert.equal(r.state[0x43].running||r.state[0x44].running,false);
+});
+test('cycle deadline ends a slow pattern with cleanup and partial count',async()=>{
+ const r=rig({rttMs:120});await r.lf.run(req(false,{pattern:'triple',intervalMs:1000,cycleCount:20}),()=>true);assert.ok(r.lf.stepsCompleted<120);assert.match(r.lf.status,/Time limit/);assert.equal(r.lf.cleanupUnconfirmed,false);
+});
+test('cycle guard stays active for entire selected run',()=>{
+ const src=require('fs').readFileSync(require('path').join(__dirname,'../apps/light_flasher/main.js'),'utf8');
+ assert.match(src,/!\(cycleSelected\(\)\|\|runCycles\)\|\|lightProviderAvailable\(\)/);
+ assert.match(src,/runCycles=cfg\.cycleCount!==null/);
+});

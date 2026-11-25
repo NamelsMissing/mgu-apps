@@ -1,6 +1,6 @@
 # Live CarPlay DSP – isolated offline prototype
 
-**Status: implemented and tested only with fake ALSA. NOT installed in the car.** The Equalizer 0.2.4 app is unchanged; the DSP daemon 0.2.1 only additionally publishes a snapshot file (see below) that no installed process reads. This prototype does not modify `carplay.service`, inject into `/usr/bin/carplay`, change the BMW AudioManager, or register an audio stream. It does not yet provide audible live EQ on the user's MGU.
+**Status: fake ALSA only.** The DSP daemon 0.2.2 publishes a snapshot for the offline tests. The native interposer is outside the Store component and no vehicle process uses it. [Integration report](../../docs/equalizer-audio-integration.md)
 
 ## Findings
 
@@ -13,8 +13,8 @@
 `carplay_live_filter.c` is a test-only interposer that:
 - Watches only playback opening the exact named SmartX candidate, never PCM from any other ALSA handle.
 - Starts **disabled**, even if a process were to load the library.
-- Can be armed only from an explicit **in-process** test function, after a successful `snd_pcm_hw_params` negotiation of exactly 48 kHz, 2-channel, S16_LE (format code 2) with either RW_INTERLEAVED (access 3) or MMAP_INTERLEAVED (access 0). There is **no remote/car controller that calls this function**.
-- Uses the existing native 7-band `eq_dsp.c` for actual S16 PCM filtering while forwarding the underlying ALSA calls. The caller's PCM input buffer is untouched.
+- Can be armed only from an explicit **in-process** test function, after a successful `snd_pcm_hw_params` negotiation of exactly 48 kHz stereo, using S16_LE (2), S24_LE (6, four bytes per sample), or S24_3LE (32, three bytes per sample) with either RW_INTERLEAVED (access 3) or MMAP_INTERLEAVED (access 0). There is **no remote/car controller that calls this function**.
+- Uses the existing native 7-band `eq_dsp.c` for S16 and S24 PCM filtering while forwarding the underlying ALSA calls. The caller's PCM input buffer is untouched.
 - Fails open for wrong format, non-target streams, oversized blocks, DSP errors, concurrent audio callbacks, and unsupported access mode; if RW and MMAP calls are unexpectedly mixed, filtering is disarmed.
 - Handles short ALSA writes by restoring DSP state then advancing only by the accepted frames, without changing return values.
 - Can be disarmed without restarting ALSA in mock tests.
@@ -26,7 +26,7 @@
 The interposer now follows the settings of the existing Node DSP service without any IPC on the audio path:
 
 ```
-Equalizer app --control.sock--> mgu-equalizer-dsp 0.2.1
+Equalizer app --control.sock--> mgu-equalizer-dsp 0.2.2
                                   | atomic write (tmp + fsync + rename)
                                   v
                     /run/mgu-equalizer-dsp/carplay.snapshot   (204 B, v1, CRC-32)
@@ -39,8 +39,9 @@ Equalizer app --control.sock--> mgu-equalizer-dsp 0.2.1
 ```
 
 - **Format**: `native/equalizer-dsp/snapshot.js` and `eq_snapshot.c` implement the same layout. CI writes fixtures from Node and checks that the C encoder produces byte-identical files and that the parser rejects corrupt, truncated, unknown-flag, out-of-range and symlinked files.
-- **Audio thread**: no I/O, no allocation and no blocking lock. It never touches the bridge lock; it only exchanges the triple-buffer index and, on a change, rebuilds seven biquads and warms them with the stored history. On the development PC that costs at most ~125 µs per configuration change and ~160 µs per 4096-frame block (85 ms of audio). **Not yet measured on the MGU CPU.**
+- **Audio thread**: no I/O, no allocation and no blocking lock. It never touches the bridge lock; it only exchanges the triple-buffer index and, on a change, rebuilds seven biquads and warms them with the stored history. The native path has not been timed on the MGU CPU. The callback still includes the original ALSA write and the bound applies only to DSP block size, not to driver scheduling.
 - **Behaviour**: valid + enabled arms with a crossfade from exact bypass or reconfigures; valid + disabled (app Bypass) fades out and then disarms to bit-exact pass-through; a missing or corrupt file behaves like disabled. **Deleting the snapshot is therefore a rollback lever.** A reopened or renegotiated CarPlay stream inherits the newest configuration.
+- **Bridge stop** publishes bypass and the next callback finishes the transition to pass-through.
 - **Manual gate**: the bridge thread starts only through `mgu_cp_live_bridge_start()` or when the host process has `MGU_CP_LIVE_SNAPSHOT=<path>` set while opening the exact target PCM. Nothing in the repository sets this variable or loads the library.
 - **Evidence**: `test_carplay_bridge.c` covers the cases above plus a concurrent producer/audio stress test, which CI also runs under ThreadSanitizer.
 
@@ -69,4 +70,4 @@ The test verifies actual gain on 100-Hz stereo samples, exact-device isolation, 
 4. Conduct a parked-only, reversible test with an explicit manual enable gate; isolate alerts, phone and emergency channels. Include a documented rollback that restores unmodified CarPlay immediately on a fault.
 5. Only after verified stock CarPlay music output should this become an optional MGU Store component, **disabled by default** and isolated to CarPlay music.
 
-The standalone BMW OAP media source `OAPGenericMedia` (1046) is also under investigation as a safer future test-music playback route; its registration in AudioManager alone does not grant PCM write access.
+Equalizer 0.3.0 uses the separate `OapGenericMedia` MediaPlayer instance for local A/B files. The MediaPlayer contract provides file playback and transport controls. [Integration report](../../docs/equalizer-audio-integration.md)

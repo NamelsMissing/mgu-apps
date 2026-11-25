@@ -7,11 +7,13 @@ const B = require('../apps/g21_wheelheat/logic');
 const { ComfortAuto } = require('../apps/g21_wheelheat/comfort_auto');
 
 test('RAM payload values, RGB matching and FDL slot 11 stay bounded', () => {
-    assert.deepEqual(A.encode({ id: 0, on: 1, brightness: 100,
+    assert.deepEqual(A.encode({ on: 1, brightness: 100,
         red: 254, green: 0, blue: 45, seconds: 254 }),
     [0xE3, 0x11, 0, 1, 100, 254, 0, 45, 254]);
-    assert.throws(() => A.encode({ id: 255, on: 1, brightness: 100,
-        red: 10, green: 10, blue: 10, seconds: 5 }), RangeError);
+    assert.throws(() => A.encode({ on: 1, brightness: 100,
+        red: 10, green: 10, blue: 255, seconds: 5 }), RangeError);
+    assert.deepEqual(A.fromPreset(A.COLORS.at(-1), 100, 5), [0xE3, 0x11, 0, 0, 0, 0, 0, 0, 5]);
+    assert.throws(() => A.fromPreset(A.COLORS[0], 100, 0), RangeError);
     assert.deepEqual(A.exactColor([193, 79, 157]).rgb, [193, 79, 157]);
     assert.equal(A.slot11Plan([178, 102, 224]).newProfile, null,
         'no unverified free FDL index should be invented');

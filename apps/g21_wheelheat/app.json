@@ -2,7 +2,7 @@
   "id": "g21_wheelheat",
   "title": "G21 Heating Comfort",
   "description": "Automatic seat and steering-wheel heating with control-unit detection (BDC or seat modules), adjustable settings, manual controls, and diagnostic logs. Beta.",
-  "version": "0.5.2",
+  "version": "0.5.4",
   "mguAppStartType": "autostart",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAB2",
@@ -40,7 +40,7 @@
         ],
         [
           "BTN_ACTION",
-          "Read BDC status / Next QR page"
+          "Read BDC status"
         ],
         [
           "BTN_SETTINGS",
@@ -61,10 +61,6 @@
         [
           "BTN_LOG_LATEST",
           "Console: latest event"
-        ],
-        [
-          "BTN_QR_REFRESH",
-          "Refresh session QR snapshot"
         ],
         [
           "BTN_DETECT",
@@ -156,8 +152,20 @@
       "default": true
     },
     {
+      "key": "smfaDriverAuto",
+      "label": "Experimental SMFA driver heating",
+      "type": "bool",
+      "default": false
+    },
+    {
       "key": "seatPassenger",
       "label": "Passenger seat heating",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "smbfPassengerAuto",
+      "label": "Experimental SMBF passenger heating",
       "type": "bool",
       "default": false
     },

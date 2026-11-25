@@ -1,5 +1,7 @@
 'use strict';
 
+const { decodeSeatReadback } = require('./logic');
+
 /**
  * Control-unit detection for Heating Comfort (read-only, UDS service 0x22).
  *
@@ -11,16 +13,14 @@
  *
  * Rules (0.5.2):
  * - A timeout is NOT proof that a control unit is missing. A seat module
- *   counts as absent only after it stayed silent in two separate detection
- *   runs (>= ABSENT_GAP_MS apart) while the BDC answered in both. A module
- *   that answered once stays "present" for this BDC identity.
- * - Automatic seat heating is allowed ONLY on route 'bdc': BDC seat DID
- *   readable AND the matching seat module confirmed absent. Everything else
- *   (seat module, conflict, unresolved, unknown) keeps the seat out of the
- *   plan. The steering wheel is only removed on a definite NRC 0x31.
- * - Detection never grants a write. Every 0x2E still needs the fresh 0x22
- *   readback of its own DID in SafeDiag.
- * - Seat modules and IHKA are read-only. No 0x2E, routine or session change.
+ *   counts as absent only after two separate detection runs with no reply
+ *   (>= ABSENT_GAP_MS apart) while the BDC answered in both. Gateway NRC 25
+ *   counts as no reply only with readable BDC status for the same seat.
+ *   A module that answered directly stays "present" for this BDC identity.
+ * - BDC seat heating requires a readable BDC seat DID and a confirmed
+ *   absent seat module. Conflicting or unresolved routes stay out of the plan.
+ * - Opt-in seat-module control requires the configuration reported in issue #2.
+ *   Detection never grants a write. SafeDiag checks the target live.
  *
  * Identification uses the standard BMW DID 0xF150 (three-byte SGBD index),
  * the same request BimmerLink sends. VIN (F190) and serial numbers are
@@ -36,6 +36,13 @@ const MAX_RAW_BYTES = 255;
 const DID = { wheel: 0xD074, driver: 0xE432, passenger: 0xE430, seatCoded: 0xE434 };
 // Seat modules FAS_G11 / BFS_G11 and IHKA_G05 (docs/sgbd-seat-heating.md).
 const MODULE_DID = { seat: 0xD714, coded: 0xD701 };
+const SEAT_MODULES = {
+    driver: { id: 'SMFA', addr: 0x6D, name: 'Seat module driver', index: '0F21F0',
+        sgbd: 'FAS_G11', enableSetting: 'smfaDriverAuto', seatSetting: 'seatDriver' },
+    passenger: { id: 'SMBF', addr: 0x6E, name: 'Seat module passenger', index: '0F21F0',
+        sgbd: 'BFS_G11', enableSetting: 'smbfPassengerAuto', seatSetting: 'seatPassenger' },
+};
+const isModuleHeatLevel = level => Number.isInteger(level) && level >= 1 && level <= 3;
 const IHKA_DID = { status: 0xD8DB };
 const D714_LENGTH = 8;
 const D8DB_LENGTH = 28;
@@ -55,8 +62,8 @@ const sgbdName = (addr, index) => (SGBD[addr] && SGBD[addr][index]) || null;
 
 const CANDIDATES = [
     { id: 'BDC', addr: 0x40, name: 'Body Domain Controller' },
-    { id: 'SMFA', addr: 0x6D, name: 'Seat module driver' },
-    { id: 'SMBF', addr: 0x6E, name: 'Seat module passenger' },
+    SEAT_MODULES.driver,
+    SEAT_MODULES.passenger,
     { id: 'IHKA', addr: 0x78, name: 'Climate control' },
 ];
 
@@ -88,8 +95,10 @@ function classify(did, uds) {
     return { state: 'error', raw: bytes(all.slice(0, 16)) };
 }
 
-/** An ECU that answered anything (positive or NRC) is installed. */
+/** A positive or negative diagnostic reply. NRC 25 is handled separately
+ * for seat identification because it can come from the gateway. */
 const answered = r => !!r && (r.state === 'ok' || r.state === 'nrc');
+const subnetNoReply = r => r.state === 'nrc' && r.nrc === 0x25;
 const indexOf = r => r.state === 'ok' && r.payload.length >= 3 ?
     bytes(r.payload.slice(0, 3)).replace(/ /g, '') : null;
 
@@ -116,7 +125,14 @@ async function detect(probe, meta) {
     const bdcIndex = indexOf(bdc);
     const sameBdc = !!prev && !!bdcIndex && prev.ecus.BDC.index === bdcIndex;
     ecus.BDC = ecuEntry(CANDIDATES[0], bdc, bdcIndex, answered(bdc) ? 'present' : 'unknown');
+    const reads = {};
+    if (answered(bdc)) {
+        for (const key of ['wheel', 'driver', 'passenger', 'seatCoded'])
+            reads[key] = compactRead(await probeClassified(probe, 0x40, DID[key]));
+    }
     for (const c of CANDIDATES.slice(1)) {
+        const side = c.id === 'SMFA' ? 'driver' : c.id === 'SMBF' ? 'passenger' : null;
+        const moduleAnswered = r => answered(r) && !(side && subnetNoReply(r));
         const before = sameBdc ? prev.ecus[c.id] : null;
         if (before && before.presence === 'absent') {
             // Confirmed absent for this BDC identity: no further polling.
@@ -124,15 +140,20 @@ async function detect(probe, meta) {
             continue;
         }
         let r = await probeClassified(probe, c.addr, ID_DID);
-        if (!answered(r) && answered(bdc)) r = await probeClassified(probe, c.addr, ID_DID); // one quick retry
+        if (!moduleAnswered(r) && answered(bdc)) {
+            const retry = await probeClassified(probe, c.addr, ID_DID);
+            if (retry.state !== 'error') r = retry;
+        }
         const index = indexOf(r);
+        const bdcSeat = reads[side];
+        const gatewayWithoutSeatReply = side && subnetNoReply(r) && bdcSeat &&
+            bdcSeat.state === 'ok' && decodeSeatReadback(bdcSeat.payload);
         let presence, timeoutRuns = 0, lastTimeoutAt = null;
-        if (answered(r)) presence = 'present';
+        if (moduleAnswered(r)) presence = 'present';
         else if (before && before.presence === 'present') {
             presence = 'present'; // seen before: a later timeout is transient
-        } else if (answered(bdc) && r.state === 'timeout') {
-            // Only a real "no reply" while the BDC answers is absence evidence;
-            // busy/offline/transport errors are not.
+        } else if (answered(bdc) && (r.state === 'timeout' || gatewayWithoutSeatReply)) {
+            // Count a missing module reply. Busy, offline and transport errors do not count.
             const prevRuns = before ? before.timeoutRuns || 0 : 0;
             const prevAt = before ? before.lastTimeoutAt : null;
             const counts = !Number.isFinite(prevAt) || now - prevAt >= ABSENT_GAP_MS;
@@ -148,7 +169,7 @@ async function detect(probe, meta) {
         ecus[c.id].timeoutRuns = timeoutRuns;
         ecus[c.id].lastTimeoutAt = lastTimeoutAt;
         if (c.id !== 'IHKA') {
-            if (presence === 'present' && answered(r)) {
+            if (presence === 'present' && moduleAnswered(r)) {
                 const coded = await probeClassified(probe, c.addr, MODULE_DID.coded);
                 ecus[c.id].seatHeatingCoded = coded.state === 'ok' && DECODES.has(ecus[c.id].sgbd) ?
                     codedSeatHeating(coded.payload) : null;
@@ -156,11 +177,6 @@ async function detect(probe, meta) {
                 ecus[c.id].seatHeatingCoded = before.seatHeatingCoded;
             }
         }
-    }
-    const reads = {};
-    if (answered(bdc)) {
-        for (const key of ['wheel', 'driver', 'passenger', 'seatCoded'])
-            reads[key] = compactRead(await probeClassified(probe, 0x40, DID[key]));
     }
     return build(ecus, reads, now, m.appVersion);
 }
@@ -281,7 +297,7 @@ function decodeIhkaSeats(payload) {
     return out;
 }
 
-/** One read-only measurement with the complete UDS answer for the QR export. */
+/** One read-only measurement with the complete UDS answer. */
 async function measure(probe, ecu, did, decoder) {
     const at = Date.now();
     const p = await safeProbe(probe, ecu.addr, did);
@@ -337,7 +353,7 @@ function compareSources(s) {
 }
 const fmt = v => v === null || v === undefined ? '?' : String(v);
 
-/** Compact single-line text of one measurement for log and QR. */
+/** Compact single-line text of one measurement for the log. */
 function measurementLine(name, m) {
     if (!m) return name + ' not read';
     const t = new Date(m.at).toISOString().slice(11, 19);
@@ -359,9 +375,20 @@ function load(raw) {
     let p;
     try { p = JSON.parse(raw); } catch (_) { return null; }
     if (!p || !p.ecus || !p.ecus.BDC || !p.routes) return null;
-    if (p.schema === 1) return migrateV1(p);
+    if (p.schema === 1) p = migrateV1(p);
     if (p.schema !== SCHEMA) return null;
     for (const key of Object.keys(CHANNELS)) if (!p.routes[key]) return null;
+    // Old profiles cached gateway NRC 25 as a seat-module response forever.
+    const ecus = Object.assign({}, p.ecus), routes = Object.assign({}, p.routes);
+    let needsDetection = false;
+    for (const [side, { id }] of Object.entries(SEAT_MODULES)) {
+        const ecu = ecus[id];
+        if (!ecu || ecu.presence !== 'present' || ecu.index || !subnetNoReply(ecu)) continue;
+        ecus[id] = Object.assign({}, ecu, { presence: 'unknown', present: false, timeoutRuns: 0, lastTimeoutAt: null });
+        routes[side] = route(side, CHANNELS[side], ecus, p.reads || {});
+        needsDetection = true;
+    }
+    if (needsDetection) return Object.assign({}, p, { ecus, routes, complete: false });
     return p;
 }
 
@@ -421,12 +448,27 @@ function allows(profile, device) {
     return !!r && r.allowsAuto === true && r.route === 'bdc';
 }
 
+/** Eligibility for this seat's control-unit layout and opt-in setting. */
+function allowsSeatModule(profile, cfg, side) {
+    const module = SEAT_MODULES[side];
+    if (!profile || !module || cfg[module.enableSetting] !== true || !isModuleHeatLevel(cfg.seatLevel))
+        return false;
+    const ecu = profile.ecus[module.id], bdc = profile.ecus.BDC;
+    const read = profile.reads && profile.reads[side];
+    return !!bdc && bdc.sgbd === 'BDC_G05' && !!ecu &&
+        ecu.presence === 'present' && ecu.index === module.index && ecu.addr === module.addr &&
+        ecu.seatHeatingCoded === '2-circuit' && profile.routes[side].route === 'seat-module' &&
+        !!read && read.state === 'nrc' && read.nrc === 0x22;
+}
+
 /** Remove channels that may not be automated. Returns notes. */
 function applyRoutes(cfg, profile) {
     const skipped = [];
     const map = { wheel: 'wheelAuto', driver: 'seatDriver', passenger: 'seatPassenger' };
     for (const [key, setting] of Object.entries(map)) {
         if (!cfg[setting] || allows(profile, key)) continue;
+        if ((cfg.seatModuleRoutes && cfg.seatModuleRoutes[key]) ||
+            (cfg.pendingSeatRoutes && cfg.pendingSeatRoutes[key])) continue;
         cfg[setting] = false;
         const r = profile && profile.routes[key];
         skipped.push(CHANNELS[key].label + ': ' + (r ? r.route + ' - ' + r.reason : 'control units not detected yet'));
@@ -454,7 +496,7 @@ function routeLabel(profile, key) {
     }
 }
 
-/** One-line summary for log, Diagnostics tab and QR export. */
+/** One-line summary for the log and Diagnostics tab. */
 function summary(profile) {
     if (!profile) return 'no control-unit profile';
     const ecu = CANDIDATES.map(c => {
@@ -469,7 +511,8 @@ function summary(profile) {
         (profile.complete ? '' : ' (incomplete)');
 }
 
-module.exports = { SCHEMA, PROFILE_KEY, ID_DID, DID, MODULE_DID, IHKA_DID, SGBD, CANDIDATES, CHANNELS, DEVICE_KEY,
+module.exports = { SCHEMA, PROFILE_KEY, ID_DID, DID, MODULE_DID, D714_LENGTH, SEAT_MODULES, isModuleHeatLevel,
+    IHKA_DID, SGBD, CANDIDATES, CHANNELS, DEVICE_KEY,
     ABSENT_GAP_MS, ABSENT_RUNS, sgbdName, codedSeatHeating, decodeModuleSeat, decodeIhkaSeats,
     readSeatSources, compareSources, measurementLine, classify, detect, build, load, serialize,
-    reuseDecision, allows, applyRoutes, readsBdcSeat, routeLabel, summary };
+    reuseDecision, allows, allowsSeatModule, applyRoutes, readsBdcSeat, routeLabel, summary };

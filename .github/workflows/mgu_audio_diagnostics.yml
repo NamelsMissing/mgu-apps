@@ -10,6 +10,7 @@ on:
     paths:
       - 'apps/mgu_audio_diagnostics/**'
       - 'tests/mgu_audio_diagnostics.test.js'
+      - 'tests/mgu_audio_manager.test.js'
       - '.github/workflows/mgu_audio_diagnostics.yml'
 permissions:
   contents: read
@@ -18,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [8.17.0, 22]
+        node: [8.16.2, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

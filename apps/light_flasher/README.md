@@ -1,4 +1,38 @@
-# Light Flasher 0.1.14
+# Light Flasher 0.1.26
+
+This update restores the 0.1.24 behavior after a reported FLM identity timeout on 0.1.25.
+
+The high-beam stalk can start the 20–80 ms intervals when Fast Mode and the stalk trigger are enabled. The stalk can also start a pattern from Settings. The background trigger still requires its own setting, and the diagnostic screens remain passive.
+
+## 0.1.23
+
+The app no longer requires a stationary speed signal or gear position P for the lever trigger, fast intervals, cycle mode, or Advanced tests. Live flash still requires the configured trigger, a current OEM high beam OFF signal and diagnostic access. Cleanup and the cleanup lock continue to apply.
+
+## 0.1.21 – Lever timing and Diagnostic Logs
+
+The selected minimum and maximum are inclusive. Equal values such as 500–500 ms require that exact measured pulse duration. Hands-on tests are easier with a range such as 250–750 ms. A pulse is measured from the received OEM ON signal to the received OFF signal. The trigger still waits for OFF to settle and requires the parked guard throughout. The combined OEM signal cannot distinguish a lever pull from a change to the high-beam state, and notification or polling latency can affect the measured duration.
+
+**Settings → Service / diagnostics → Diagnostic Logs** shows recent OEM transitions, lever decisions, and the ten most recent automatic run reports. Use **Older entries** and **Newer entries** to browse, or **Refresh** to reload. Trigger a test from the main menu and then open the logs to see its result. The logs screen displays the app data directory on the MGU. Copy `light-flasher-background.json`, `light-flasher-run-*.json`, or the snapshot saved with **Export diagnostic report (JSON)** (`light-flasher-diagnostics.json`) from that directory over SSH/SCP.
+
+## 0.1.20 – Repeat by cycle count
+
+Run length offers the previous 2–5 s choices and 1–20 cycles. A cycle means one complete pattern (alternate L/R = 2 steps, double = 4, triple = 6, both together = 1). The chosen count is used for button and eligible parked stalk runs. Cycle mode requires confirmed stationary/P and fresh OEM-light/provider state throughout; existing below-100 ms button-only restriction remains. At most 30 s of pattern starts are permitted, so slow transport or long patterns may end before the requested count, with the achieved count reported. STOP/default session cleanup remains mandatory. No vehicle test yet.
+
+## 0.1.19 – Adjustable stalk pulse range
+
+Settings: Lever hold minimum (0–1.5 s) and maximum (0.25–2 s), default 0–1.5 s as before. Minimum must be strictly below maximum; invalid combinations disable the stalk trigger until corrected. Stable OFF before pull (1 s), OFF confirmation after release (400 ms) and cooldown (5 s) remain unchanged. Changing the range resets pending detection. A too-long pulse is rejected even if its first observed OFF transition arrives after the maximum. Passive background signal monitoring is always on while the app process is running; no additional diagnostic requests. Stalk activation requires flash control and stalk trigger enabled, plus background trigger enabled outside the main menu, confirmed stationary/P and fresh signals. Sub-100 ms flash intervals remain explicit button only. Timing reflects observed combined OEM beam signal, not direct lever position; sustained beam toggled briefly may look like a pull. Background launch/provider behavior must still be verified on the actual MGU.
+
+## 0.1.18 – Simplified interface
+
+Main: pattern/interval/duration summary, Start, Stop, short status, Restore normal lights and Settings. Settings now have their own page with seven operational choices. Service / diagnostics is accessible from Settings, with a short status and Save diagnostic report; the BDC/stalk/FLM read-only tests are in Advanced tests and require stationary P. Raw UDS, PWM/current traces, counters and file paths are no longer shown on the head unit, but remain in local automatic JSON reports and manual exports. The legacy diagnostic enable/background observation switches are hidden; manual service tests are enabled by explicitly opening Advanced tests, and passive background observation retains its saved setting/default. No changes to flash timing, routine commands, recovery or existing guard configuration. Background lever triggering is blocked in Settings and Service pages. No vehicle UI test yet.
+
+## 0.1.17 – Experimental sub-100 ms requests (fast mode)
+
+With fast mode enabled, the interval menu additionally offers 20, 40, 60 and 80 ms. These settings require an explicit Start button press, fresh stationary/P and OEM high-beam-OFF signals, and the foreground main menu. They are not available to stalk/autostart triggers or standard mode. No extra concurrent TASU requests are introduced: ON and PWM 0 still await diagnostic replies, so values below the transport round trip may produce identical actual timing. Existing OFF electrical verification, duration limits, STOP/default-session cleanup and recovery remain. Actual START gaps in the log are host-side timings, not measured optical pulse widths. Existing guard configuration for intervals >=100 ms is unchanged. Test on private property away from bystanders; in-vehicle behavior is unverified.
+
+## 0.1.16 – Manual cleanup recovery (candidate)
+
+If LOCKED appears after a run, park securely in P on private property, switch OEM high beam OFF and select **Restore normal lights (P)**. No new flash pattern is started. Recovery validates both FLM identities, attempts STOP and return to default diagnostic session, then checks CH8 OFF (0% / 0 mA) on both sides. Only confirmed replies and current parked/OEM-off signals permit removing the pending marker. If STOP is rejected (including an already expired routine), a timeout occurs, or readback fails, the lock remains: inspect the automatically exported recovery log and seek service if needed. Electrical readback is not optical restoration proof. The existing flash guard in 0.1.15 is unchanged; the recovery button independently requires current zero speed and P. A successful final STOP retry supersedes an earlier failed STOP. Vehicle validation is pending.
 
 ## 0.1.14 – Test option: fast mode
 

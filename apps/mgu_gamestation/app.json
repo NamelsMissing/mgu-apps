@@ -1,14 +1,19 @@
 {
   "id": "mgu_gamestation",
   "title": "MGU GameStation",
-  "description": "Offline retro games with iDrive or phone controllers, two players and in-game saves. Parked only.",
-  "version": "0.3.0",
+  "description": "Offline retro games and original Mineworks mining tycoon with GPU fullscreen, game audio, iDrive or phone controls and local saves. Parked only.",
+  "version": "0.8.1",
   "vendor": "G21 Offline Lab",
   "loggingId": "OAG1",
   "iconGlyph": "GAME",
   "cpuLimit": 80,
   "maxDiskUsage": 134217728,
   "signals": {
+    "org.genivi.am.commandinterface.CommandControl": {
+      "_instances": "1",
+      "_optional": "Dedicated GameStation PCM route",
+      "_methods": ["getListMainSources", "getListMainSinks", "getListMainConnections", "connect", "disconnect"]
+    },
     "de.bmw.infotainment.vehicle.Vehicle2": { "statusCarSpeed2": "rs" },
     "de.bmw.infotainment.controlelements.FrontCCU": {"statusRotaryEncoderState": "rs"}
   },
@@ -21,6 +26,7 @@
         ["BTN_PLATFORM", "Next console"],
         ["BTN_ACTION", "Play / Back"],
         ["BTN_PAIR", "Controllers"],
+        ["BTN_DIAG", "Diagnostics"],
         ["BTN_SETTINGS", "Settings"]
       ]
     }
@@ -30,11 +36,25 @@
      "options": [["idrive", "iDrive singleplayer"], ["phone", "Phone singleplayer"],
                  ["phones", "Two phones (multiplayer)"], ["hybrid", "iDrive P1 + phone P2"]]},
     {"key": "idriveClockwise", "label": "iDrive clockwise button", "type": "choice", "default": "b",
-     "options": [["a", "A"], ["b", "B"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
+     "options": [["a", "A"], ["b", "B"], ["c", "C (Mega Drive)"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
                  ["start", "START"], ["select", "SELECT"]]},
     {"key": "idriveCounterclockwise", "label": "iDrive counterclockwise button", "type": "choice", "default": "x",
-     "options": [["a", "A"], ["b", "B"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
+     "options": [["a", "A"], ["b", "B"], ["c", "C (Mega Drive)"], ["x", "X"], ["y", "Y"], ["l", "L"], ["r", "R"],
                  ["start", "START"], ["select", "SELECT"]]},
+    {"key": "chip8Mapping", "label": "CHIP-8 iDrive keypad", "type": "choice", "default": "arrows",
+     "options": [["arrows", "Directions 2/8/4/6"], ["alternate", "Directions 5/8/7/9"]]},
+    {"key": "videoFpsLimit", "label": "Video FPS Limit", "type": "choice", "default": "auto",
+     "options": [["auto", "Auto"], ["60", "60 FPS"], ["30", "30 FPS"], ["20", "20 FPS"]]},
+    {"key": "gameDisplayMode", "label": "Game Display Mode", "type": "choice", "default": "standard",
+     "options": [["standard", "Standard"], ["fullscreen", "Fullscreen"], ["immersive", "Immersive"]]},
+    {"key": "startGamesFullscreen", "label": "Start games in fullscreen", "type": "bool", "default": true},
+    {"key": "videoScale", "label": "Game Scaling", "type": "choice", "default": "fit",
+     "options": [["fit", "Aspect ratio"], ["integer", "Integer scaling"], ["crop", "Fill / Crop"], ["stretch", "Stretch (distorts image)"]]},
+    {"key": "audioEnabled", "label": "Game Audio Enabled", "type": "bool", "default": true},
+    {"key": "audioOutput", "label": "Game Audio Output", "type": "choice", "default": "auto",
+     "options": [["auto", "Auto (dedicated BMW route)"], ["legacy", "Previously configured PCM"], ["off", "Off"]]},
+    {"key": "audioVolume", "label": "Game Volume", "type": "number", "min": 0, "max": 100, "step": 10, "default": 30},
+    {"key": "audioDiagnostics", "label": "Open Audio Diagnostics", "type": "bool", "default": false},
     {"key": "theme", "label": "Colour theme", "type": "choice", "default": "ice",
      "options": [["ice", "Ice White"], ["m_tricolour", "M Tricolour"], ["amber", "Night Amber"]]},
     {"key": "renderer", "label": "Renderer", "type": "choice", "default": "auto",

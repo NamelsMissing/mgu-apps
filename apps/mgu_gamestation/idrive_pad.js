@@ -15,7 +15,7 @@ const PUSH = {
 };
 const DIR = {1: 'up', 2: 'up', 4: 'right', 5: 'right',
     7: 'down', 8: 'down', 10: 'left', 11: 'left'};
-const KEYS = ['a', 'b', 'x', 'y', 'l', 'r', 'start', 'select'];
+const KEYS = ['a', 'b', 'c', 'x', 'y', 'l', 'r', 'start', 'select'];
 const number = (v, names) => typeof v === 'number' ? v : names[v] === undefined ? 15 : names[v];
 
 class IDrivePad {
@@ -37,9 +37,9 @@ class IDrivePad {
     setEnabled(on) {
         if (this.enabled === !!on) return;
         this.enabled = !!on;
+        this.dir = null;
         if (!this.enabled) {
             this.pulses = {};
-            this.dir = null;
             this.pressed = false;
             this.pressedAt = 0;
             this.lastPressAt = -1e9;

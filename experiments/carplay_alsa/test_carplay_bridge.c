@@ -59,6 +59,9 @@ static MguCarplayLiveStats stats(void) { MguCarplayLiveStats s; mgu_cp_live_snap
 
 /* ---- stress: producer rewrites/polls while the "audio thread" writes ---- */
 static atomic_int stop_producer;
+static pthread_mutex_t producer_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t producer_ready = PTHREAD_COND_INITIALIZER;
+static int producer_has_polled;
 static void *producer(void *arg) {
     (void)arg;
     uint32_t rev = 100;
@@ -70,7 +73,12 @@ static void *producer(void *arg) {
             default: corrupt_snapshot(snap_path); break;
         }
         (void)mgu_cp_live_bridge_poll(snap_path);
-        ++rev;
+        if (++rev == 105) {
+            pthread_mutex_lock(&producer_lock);
+            producer_has_polled = 1;
+            pthread_cond_signal(&producer_ready);
+            pthread_mutex_unlock(&producer_lock);
+        }
     }
     return NULL;
 }
@@ -171,17 +179,26 @@ int main(int argc, char **argv) {
     assert(play(target) < baseline * 0.7);
     mgu_cp_live_bridge_stop();
     mgu_cp_live_bridge_stop(); /* idempotent */
+    play(target);
+    assert(!stats().armed && !stats().applied_valid);
+    assert(fabs(play(target) - baseline) < 1e-5);
 
     /* 9. Stress: concurrent producer vs. audio writes (run under TSan in CI). */
     pthread_t thread;
     atomic_store(&stop_producer, 0);
+    const MguCarplayLiveStats pre_stress = stats();
     assert(pthread_create(&thread, NULL, producer, NULL) == 0);
+    pthread_mutex_lock(&producer_lock);
+    while (!producer_has_polled) pthread_cond_wait(&producer_ready, &producer_lock);
+    pthread_mutex_unlock(&producer_lock);
     for (int i = 0; i < stress; i++)
         assert(snd_pcm_writei(target, audio, 256) == 256);
     atomic_store(&stop_producer, 1);
     pthread_join(thread, NULL);
+    play(target); /* Consume the final publish, even if the writer last ran after the loop. */
     s = stats();
-    assert(s.bridge_applies > 7 && s.bridge_rejects > 1);
+    assert(s.bridge_publishes > pre_stress.bridge_publishes);
+    assert(s.bridge_applies > pre_stress.bridge_applies && s.bridge_rejects > pre_stress.bridge_rejects);
     printf("stress: %d writes, %llu publishes, %llu applies, %llu rejects\n", stress,
            (unsigned long long)s.bridge_publishes, (unsigned long long)s.bridge_applies,
            (unsigned long long)s.bridge_rejects);

@@ -13,6 +13,7 @@ const { Spotify, positionAt, validImport, IMPORT_NAME } = require(path.join(APP,
 const { Lyrics, plainTitle } = require(path.join(APP, 'lrclib.js'));
 const K = require(path.join(APP, 'kombi.js'));
 const { LyricsEngine, displayable } = require(path.join(APP, 'engine.js'));
+const { BootControl } = require(path.join(APP, 'boot_control.js'));
 
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'cluster-lyrics-'));
@@ -368,6 +369,62 @@ function testKombi() {
     assert.strictEqual(cr.closed, 1);
     assert.ok(traces.some(t => /layers created/.test(t)) && traces.some(t => /hidden: vehicle moving/.test(t)));
 
+    // Waze coexistence: background is non-exclusive, small and translucent.
+    const kw = new K.KombiLyrics(quiet, { ClusterRender: FakeRender });
+    kw.configure({ layoutMode: 'withWaze', fontSizePct: 75, takeOverBmwMap: true });
+    kw.start();
+    kw.show({ title: 'Demo', artist: 'Artist', current: 'One short line', next: 'Next one', gap: false });
+    kw.cr.hello('map:1088x480,panel:1920x720');
+    const wave = kw.cr.ops.filter(o => o[0] === 'image');
+    assert.strictEqual(wave.length, 1);
+    const footer = wave[0][2];
+    assert.strictEqual(footer.exclusive, false);
+    assert.strictEqual(footer.contend, false);
+    assert.strictEqual(footer.guide_hold, true, 'lyrics are neutral in the map-wide AND');
+    assert.ok(footer.y >= 250 && footer.y + footer.h === K.MAP_H);
+    assert.ok(footer.x >= 0 && footer.x + footer.w <= K.MAP_W);
+    assert.strictEqual(kw.status().fontSizePct, 75);
+
+    const ref = wave[0][1];
+    for (const wazeGuideHold of [true, false, true]) {
+        // Model cluster-render stack.cpp: AND across wanting map layers.
+        const waze = { guide_hold: wazeGuideHold, visible: true };
+        assert.strictEqual([waze, ...kw.cr.layers.values()].filter(l => l.visible)
+            .every(l => l.guide_hold), wazeGuideHold);
+    }
+    kw.configure({ fontSizePct: 50, showNext: false });
+    kw.show({ title: 'New song', current: 'Changed line', gap: false });
+    assert.strictEqual(kw.cr.layers.get(ref).guide_hold, true);
+    const markUpdate = kw.cr.ops.findIndex(op => op[0] === 'set' && op[2].visible);
+    assert.ok(kw.cr.ops.slice(markUpdate + 1).every(op => op[0] === 'pixels'));
+    kw.hide('off');
+    assert.strictEqual(kw.cr.layers.get(ref).visible, false);
+    kw.show({ noteOnly: true });
+    assert.strictEqual(kw.cr.layers.get(ref).visible, true);
+    kw.configure({ layoutMode: 'exclusive' });
+    assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'drop').length, 1);
+    assert.ok(!kw.cr.layers.has(ref));
+    assert.strictEqual(kw.cr.ops.filter(o => o[0] === 'image').slice(-4)[0][2].exclusive, true);
+    kw.close();
+
+    const sample = { title: 'Demo', artist: 'Artist', current: 'Àgyp ñ', next: 'Çÿg' };
+    const draw = (content, pct) => K.renderFooter(content, content.next || '', '#ffffff', pct);
+    const compact = draw(sample, 75);
+    assert.deepStrictEqual(compact.lines.map(l => l.size), [18, 38, 21]);
+    assert.ok(compact.rows[1] - compact.rows[0] < 150);
+    const note = draw({ noteOnly: true }, 75);
+    assert.ok(note.rows[0] > compact.rows[0]);
+    assert.strictEqual(note.surface.d[note.rows[0] * note.surface.w * 4 + 3], 0);
+    assert.strictEqual(note.surface.d[(note.rows[0] * note.surface.w + note.surface.w / 2) * 4 + 3], 198);
+    for (const pct of [50, 75, 120]) {
+        const long = draw({ title: 'Égj '.repeat(50), current: 'Égj '.repeat(100), next: 'Çÿg '.repeat(100) }, pct);
+        assert.ok(long.rows[0] >= 0);
+        assert.ok(long.lines.some(l => l.text.endsWith('…')));
+        assert.ok(long.lines.every(l => require(path.join(APP, 'lyric_font.js')).measure(l.face, l.text, l.size)
+            <= long.surface.w - 32));
+        assert.ok(draw(sample, pct).rows[0] >= 0);
+    }
+
     // Another map size (iDrive 8) is not drawn on.
     const k8 = new K.KombiLyrics(quiet, { ClusterRender: FakeRender });
     k8.start();
@@ -378,7 +435,7 @@ function testKombi() {
 }
 
 /* ---------- KOMBI through the real client and a socket speaking the service's framing ---------- */
-function testKombiWire() {
+function testKombiWire(coexist) {
     const net = require('net');
     const dir = tmp(), sock = path.join(dir, 'render.sock');
     const messages = [], frames = [];
@@ -407,23 +464,30 @@ function testKombiWire() {
                     } else if (type === 0x46) frames.push({ ref: body.readUInt32LE(0), rects: body.readUInt16LE(12), bytes: body.length });
                 }
                 const visible = messages.filter(m => m.op === 'set' && m.visible === 1).length;
-                if (visible === 4 && frames.length >= 4) {
+                const expected = coexist ? 1 : 4;
+                if (visible === expected && frames.length >= expected) {
                     clearTimeout(timer);
                     try {
                         assert.deepStrictEqual(messages[0], { op: 'hello', app: 'cluster_lyrics', proto: 1 });
                         const layers = messages.filter(m => m.op === 'layer');
-                        assert.strictEqual(layers.length, 4);
+                        assert.strictEqual(layers.length, expected);
                         layers.forEach(l => {
                             assert.strictEqual(l.target, 'map');
                             assert.strictEqual(l.kind, 'image');
                             assert.strictEqual(l.class, 'overlay');
-                            assert.strictEqual(l.guide_hold, 0);
+                            assert.strictEqual(l.guide_hold, coexist ? 1 : 0);
                             assert.strictEqual(l.contend, 0);
                             assert.strictEqual(l.visible, 0, 'created hidden');
                         });
-                        assert.strictEqual(layers[0].exclusive, 1);
-                        assert.deepStrictEqual([layers[0].iw, layers[0].ih, layers[0].w, layers[0].h, layers[0].sampling], [16, 16, 1088, 480, 'bilinear']);
-                        assert.ok(layers.slice(1).every(l => l.exclusive === undefined && l.iw === l.w && l.ih === l.h));
+                        assert.strictEqual(layers[0].exclusive, coexist ? 0 : 1);
+                        if (coexist) {
+                            assert.deepStrictEqual([layers[0].x, layers[0].y, layers[0].iw, layers[0].ih],
+                                [152, 270, 784, 210]);
+                        } else {
+                            assert.deepStrictEqual([layers[0].iw, layers[0].ih, layers[0].w, layers[0].h, layers[0].sampling],
+                                [16, 16, 1088, 480, 'bilinear']);
+                            assert.ok(layers.slice(1).every(l => l.exclusive === undefined && l.iw === l.w && l.ih === l.h));
+                        }
                         // Every image got its pixels: a 14-byte frame header, no rects, the whole image.
                         layers.forEach(l => {
                             const f = frames.find(x => x.ref === l.ref);
@@ -436,6 +500,7 @@ function testKombiWire() {
             });
         });
         const k = new K.KombiLyrics(quiet, { socketPath: sock });
+        if (coexist) k.configure({ layoutMode: 'withWaze', takeOverBmwMap: true });
         server.listen(sock, () => {
             k.start();
             k.show({ title: 'Test Song', artist: 'Test Artist', current: 'First test line', next: 'Second', gap: false });
@@ -514,9 +579,23 @@ async function testEngine() {
     engine.tick();
     assert.strictEqual(last()[0], 'show');
     assert.strictEqual(engine.frame().current, 'First test line');
+    const rawBefore = engine.rawPosition();
+    const original = engine.timing();
+    assert.strictEqual(original.delayMs, 0);
+    assert.strictEqual(original.trackMs, rawBefore);
+    assert.strictEqual(original.lyricMs, rawBefore);
     engine.configure({ offsetMs: 2000 });
+    assert.strictEqual(engine.timing().trackMs, rawBefore, 'song clock stays unchanged');
+    assert.strictEqual(engine.timing().lyricMs, rawBefore - 2000, 'positive delay shifts lyric clock back');
     assert.strictEqual(engine.frame().gap, true, 'with 2 s delay the first line has not started');
+    engine.configure({ offsetMs: -2000 });
+    assert.strictEqual(engine.timing().trackMs, rawBefore, 'song time unaffected by negative delay');
+    assert.strictEqual(engine.timing().lyricMs, rawBefore + 2000, 'negative delay makes lyrics early');
+    assert.strictEqual(engine.frame().current, 'First test line');
+    engine.configure({ offsetMs: 3000 });
+    assert.strictEqual(engine.position(), rawBefore - 3000, 'max positive delay works');
     engine.configure({ offsetMs: 0 });
+    assert.deepStrictEqual(engine.timing(), original, 'reset restores original timing');
     now += 5000;
     assert.strictEqual(engine.frame().current, 'Second test line');
 
@@ -548,7 +627,20 @@ async function testEngine() {
     waiting.trackB.resolve({ status: 'none', lines: [] });
     await flush();
     engine.tick();
-    assert.deepStrictEqual(last(), ['hide', 'no synchronised lyrics (none)']);
+    assert.strictEqual(last()[0], 'show', 'missing lyrics show a note');
+    assert.deepStrictEqual(last()[1], { title: '', artist: '', current: '', next: '', gap: true, noteOnly: true });
+    engine.lyricsState = 'plain';
+    engine.tick();
+    assert.strictEqual(last()[1].noteOnly, true);
+    engine.lyricsState = 'instrumental';
+    engine.tick();
+    assert.strictEqual(last()[1].noteOnly, true);
+    engine.lyricsState = 'unreadable';
+    engine.tick();
+    assert.strictEqual(last()[1].noteOnly, true);
+    engine.lyricsState = 'error';
+    engine.tick();
+    assert.deepStrictEqual(last(), ['hide', 'no synchronised lyrics (error)']);
     answer = Object.assign({}, answer, { id: 'trackC' });
     await engine.pollOnce();
     const lateC = waiting.trackC;
@@ -587,14 +679,56 @@ async function testEngine() {
     assert.deepStrictEqual(last(), ['release', 'switched off']);
 }
 
+/* ---------- background startup / manual control ---------- */
+function testBootControl() {
+    function fake(kombiOn, autoStartOnBoot) {
+        const v = { kombiOn, autoStartOnBoot };
+        return { get(key) { return v[key]; }, set(key, value) { v[key] = value; },
+            stored: v };
+    }
+    const newInstall = fake(false, true);
+    const boot0 = new BootControl(newInstall);
+    assert.strictEqual(boot0.autostartEnabled(), true);
+    assert.strictEqual(boot0.active(), false, 'safe default: no cluster takeover');
+    assert.strictEqual(boot0.startedAutomatically, false);
+
+    const savedEnabled = fake(true, true);
+    const boot1 = new BootControl(savedEnabled);
+    assert.strictEqual(boot1.active(), true, 'saved KOMBI setting resumes without opening the app');
+    assert.strictEqual(boot1.startedAutomatically, true);
+    savedEnabled.set('autoStartOnBoot', false);
+    boot1.onSettingsChanged('autoStartOnBoot');
+    assert.strictEqual(boot1.active(), true, 'changing preference does not interrupt current song');
+    const boot2 = new BootControl(savedEnabled);
+    assert.strictEqual(boot2.active(), false, 'next launch begins with KOMBI off');
+    assert.strictEqual(boot2.startedAutomatically, false);
+    assert.strictEqual(boot2.toggle(), true, 'manual press works with boot autostart disabled');
+    boot2.onSettingsChanged('kombiOn');
+    assert.strictEqual(boot2.active(), true);
+    assert.strictEqual(new BootControl(savedEnabled).active(), false, 'manual activation stays session-only');
+    assert.strictEqual(boot2.toggle(), false);
+    assert.strictEqual(savedEnabled.get('kombiOn'), false, 'manual off persists');
+
+    const viaSettings = new BootControl(fake(false, false));
+    viaSettings.settings.set('kombiOn', true);
+    viaSettings.onSettingsChanged('kombiOn');
+    assert.strictEqual(viaSettings.active(), true, 'master switch from settings activates immediately');
+}
+
 function testManifest() {
     const spec = JSON.parse(fs.readFileSync(path.join(APP, 'app.json'), 'utf8'));
     assert.strictEqual(spec.mguInternet, true);
     const byKey = {};
     spec.settings.forEach(s => { byKey[s.key] = s; });
     assert.strictEqual(byKey.kombiOn.default, false, 'nothing reaches the cluster until switched on');
+    assert.strictEqual(spec.mguAppStartType, 'autostart', 'native package start mode');
+    assert.strictEqual(byKey.autoStartOnBoot.default, true, 'resume preference defaults to On');
     assert.strictEqual(byKey.kombiMode.default, 'parked');
     assert.strictEqual(byKey.takeOverBmwMap.default, false);
+    assert.strictEqual(byKey.layoutMode.default, 'exclusive');
+    assert.ok(byKey.layoutMode.options.some(o => o[0] === 'withWaze'));
+    assert.strictEqual(byKey.kombiFontPct.default, 75);
+    assert.ok(byKey.kombiFontPct.steps.indexOf(50) >= 0 && byKey.kombiFontPct.steps.indexOf(120) >= 0);
     assert.ok(byKey.offsetMs.steps.indexOf(0) >= 0);
     assert.deepStrictEqual(Object.keys(spec.signals), ['de.bmw.infotainment.vehicle.Vehicle2']);
     const repo = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'mgu-repo.json'), 'utf8'));
@@ -616,8 +750,10 @@ function testManifest() {
     await testSpotify();
     await testLrclib();
     testKombi();
-    await testKombiWire();
+    await testKombiWire(false);
+    await testKombiWire(true);
     await testEngine();
+    testBootControl();
     testManifest();
     console.log('Cluster Lyrics: LRC, font, uplink, Spotify, LRCLIB, KOMBI layers, engine and manifest OK');
 })().catch(e => { console.error(e); process.exit(1); });

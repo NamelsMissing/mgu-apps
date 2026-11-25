@@ -27,7 +27,7 @@ int main(void){
     signal100();
     MguCarplayLiveStats s;
     snd_pcm_t *other=0,*target=0;
-    snd_pcm_hw_params_t okay={2,2,48000,3}, wrong={6,2,48000,3}, mmap_params={2,2,48000,0};
+    snd_pcm_hw_params_t okay={2,2,48000,3}, wrong={14,2,48000,3}, mmap_params={2,2,48000,0};
     MguEqConfig config;mgu_eq_defaults(&config);
     config.enabled=1;config.auto_headroom=0;config.bands[0].gain_db=6;
     assert(snd_pcm_open(&other,"smartx:CarPlayAlternate_CF_24_MONO",0,0)==0);
@@ -92,7 +92,32 @@ int main(void){
     assert(snd_pcm_writei(target,audio,FRAMES)==FRAMES);
     assert(fabs(fake_alsa_rms()-baseline)<1e-5);
     assert(snd_pcm_close(target)==0);
+    const int formats[] = {MGU_EQ_S24_LE, MGU_EQ_S24_3LE};
+    for (unsigned fmt = 0; fmt < sizeof(formats) / sizeof(formats[0]); ++fmt) {
+        const unsigned bytes = mgu_eq_sample_bytes(formats[fmt]);
+        uint8_t pcm[FRAMES * 2 * 4], copy[sizeof(pcm)];
+        memset(pcm, 0, sizeof(pcm));
+        for (size_t i = 0; i < FRAMES * 2; ++i) {
+            const uint32_t value = (uint32_t)((int32_t)audio[i] * 256);
+            for (unsigned j = 0; j < bytes; ++j) pcm[i * bytes + j] = (uint8_t)(value >> (8 * j));
+        }
+        memcpy(copy, pcm, sizeof(pcm));
+        okay.format = formats[fmt];
+        assert(snd_pcm_open(&target, "smartx:CarPlayMain_CF_48_STEREO", 0, 0) == 0);
+        assert(snd_pcm_hw_params(target, &okay) == 0);
+        assert(snd_pcm_writei(target, pcm, FRAMES) == FRAMES);
+        assert(fabs(fake_alsa_rms() - baseline) < 1e-5);
+        assert(mgu_cp_live_arm(&config) == 0);
+        fake_alsa_partial(1);
+        assert(snd_pcm_writei(target, pcm, FRAMES) == FRAMES / 2);
+        fake_alsa_partial(0);
+        assert(fake_alsa_rms() > baseline * 1.45);
+        assert(memcmp(pcm, copy, sizeof(pcm)) == 0);
+        mgu_cp_live_snapshot(&s);
+        assert(s.format == formats[fmt] && s.processed_frames == FRAMES / 2 && s.partial_writes == 1);
+        assert(snd_pcm_close(target) == 0);
+    }
     assert(snd_pcm_close(other)==0);
-    puts("PASS: offline CarPlay exact-port live PCM DSP, default bypass, 48k S16LE stereo only, RW and MMAP handling, short-write recovery, mismatch rollback, isolated non-CarPlay audio");
+    puts("PASS: offline CarPlay exact-port live PCM DSP, default bypass, 48k S16LE and S24LE stereo, RW and MMAP handling, short-write recovery, mismatch rollback, isolated non-CarPlay audio");
     return 0;
 }

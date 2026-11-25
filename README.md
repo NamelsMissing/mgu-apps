@@ -2,7 +2,7 @@
 
 Community-made apps for **BMW iDrive 7** head units (**MGU**). You install and update them through **[MGU Store](https://github.com/robertnisipeanu/mgu-store)** directly in the car.
 
-The apps are developed and tested on a BMW 3 Series Touring (G21). On other cars, some functions may behave differently or not work.
+The apps are developed primarily for a BMW 3 Series Touring (G21). Some behavior has been verified in the vehicle; other features have only offline tests or still need an on-car check. Hardware and software differences between vehicles can affect the results.
 
 ## Add this repository to MGU Store
 
@@ -22,8 +22,8 @@ Spelled out: **n a m e L s m i s s i n g** / **m g u - a p p s**
 
 1. Park the car and make sure MGU Store has internet, for example your phone's hotspot under **Settings → Wi-Fi**.
 2. In MGU Store, open **Settings** and tap **+ Add source**.
-3. Enter `namelsmissing/mgu-apps`.
-4. If the name is correct, the Store lists what the repository offers. Choose the branch **main** (marked *Default branch*). There are no releases or tags, and the other branches are old test versions, so don't pick them.
+3. Enter `namelsmissing/mgu-apps`. The repository is public and works without GitHub sign-in.
+4. If the name is correct, the Store lists what the repository offers. Choose the branch **main** (marked *Default branch*). For normal installations use the default branch; test branches may contain incomplete changes.
 5. The source now appears under **Settings → Sources** with *Branch main*.
 6. Go to the **Store** tab, choose an app and tap **Install**. If an app needs extra background components, the Store installs them with it.
 
@@ -32,7 +32,7 @@ Spelled out: **n a m e L s m i s s i n g** / **m g u - a p p s**
 You don't have to type on the car at all:
 
 1. In MGU Store open **Settings → Phone access → On**.
-2. Connect your phone to the car's Wi-Fi hotspot and scan the QR code.
+2. Connect your phone to a network that can reach the MGU phone-access page, then scan the QR code.
 3. On the phone page, add a source and **paste** this link (copy it from here):
    `https://github.com/NamelsMissing/mgu-apps`
 4. Choose the branch **main** as above, then turn **Phone access** off again.
@@ -49,61 +49,85 @@ You don't have to type on the car at all:
 
 **Requirements:** an iDrive 7 head unit (MGU) with root access and MGU Store installed. How to get there is explained in the [MGU Store guide](https://github.com/robertnisipeanu/mgu-store#requirements).
 
-## The apps
+## Apps available from this main source
 
-**Stable** means the app works well on the developer's car. **Experimental** means it is still being built or tested: some parts may not work yet or may depend on your car. Tap an app's name for its full guide.
+Version numbers below are those in the **main** store catalog. **Stable** means the described basic use has been reported working on a compatible vehicle; **Beta / Experimental** means important functions, vehicle variants or hardware control paths remain unverified. Versions below are repository versions on `main`, **not a readout of what is installed in your car**. Consult each app's guide and its vehicle-verification notes before operating it.
 
 ### Comfort and vehicle
 
-| App | Status | What it's for |
-| --- | --- | --- |
-| [**Heating Comfort**](apps/g21_wheelheat/README.md) | Stable | Turns the seat and steering-wheel heating on by itself when it's cold. You choose from which temperature; manual buttons are there too. Since 0.5 it detects the control units (BDC or separate seat modules) and remembers them for the next start. |
-| [**DPF Monitor**](apps/dpf_monitor/README.md) | Stable | For diesel cars: shows how full the particulate filter is and when it last cleaned itself. Only reads data; it doesn't start a cleaning cycle. |
-| [**Vehicle Data**](https://github.com/NamelsMissing/mgu-chatgpt-bridge/tree/main/apps/vehicle_data) | Moved | Now part of [BMW AI](https://github.com/NamelsMissing/mgu-chatgpt-bridge): reads mileage, upcoming services and the service history and passes them to the BMW AI companion. Install it from that repository's store source. |
-| [**Ambient Lighting**](apps/g21_ambient/README.md) | Experimental | Choose your own colour and brightness for the interior ambient light, per zone, and save your favourite looks. |
+| App | Version | Status | What it does |
+| --- | --- | --- | --- |
+| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.4** | Beta / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
+| [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Experimental / read-only | Requests diesel particulate-filter measurements and regeneration-history values from the DDE. DID scaling was reviewed offline; live routing and actual responses still need vehicle verification. Does **not** start forced regeneration. |
+| [**Ambient Lighting**](apps/g21_ambient/README.md) | **0.4.7** | Experimental | Reads the OEM BMW ambient-color status and offers manual selection of menu slots 1–12 with separate setter/readback feedback. Includes RGB previews, saved looks and carefully gated BDC LIN testing; aftermarket LED control is not yet verified. |
 
-### Screens and instrument cluster
+### Screens and cluster
 
-| App | Status | What it's for |
-| --- | --- | --- |
-| [**GIF Home**](apps/gif_home/README.md) | Stable | Shows an animated GIF in the large tile on the iDrive home screen. Use the built-in animations or send your own GIF from your phone with a QR code. |
-| [**Custom Cluster**](apps/custom_cluster/README.md) | Experimental | Alternative designs for the digital instrument cluster, inspired by other BMW models, plus the Waze map and a phone status line in the cluster. |
-| [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | Experimental | Shows the lyrics of the song playing on your Spotify, on the iDrive screen and optionally in the instrument cluster. Needs internet in the car; not yet tested in a vehicle. |
+| App | Version | Status | What it does |
+| --- | --- | --- | --- |
+| [**GIF Home**](apps/gif_home/README.md) | **0.4.0** | Vehicle verification pending | Animated iDrive home widget with a local GIF library, phone management, groups and playlists. |
+| [**Custom Cluster**](apps/custom_cluster/README.md) | **0.6.11** | Experimental | Alternative instrument-cluster layouts, navigation-related controls and diagnostics. KOMBI overlay tests are guarded by parked / selected-layout conditions; background startup does not activate an overlay by itself. |
+| [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | **0.1.5** | Experimental | Spotify lyrics on the iDrive screen, optionally in the cluster map region, including an overlay mode with Waze visible. The app supports background startup; display and lyric availability depend on Spotify data and network access. |
 
-### Entertainment (while parked)
+### Entertainment (parked only)
 
-| App | Status | What it's for |
-| --- | --- | --- |
-| [**GameStation**](apps/mgu_gamestation/README.md) | Experimental | Retro games such as Pong and classic console games, with in-game saves. Play with the iDrive controller, or use up to two phones as gamepads (needs the GameStation Phone Port tool, installed with it). |
-| [**GameSnacks**](https://github.com/NamelsMissing/mgu-apps-beta/tree/main/apps/mgu_gamesnacks) | Moved | Now in [mgu-apps-beta](https://github.com/NamelsMissing/mgu-apps-beta): small games (2048, Snake, Blocks, Mines) and a gamesnacks.com web mirror. Install it from that repository's store source. |
-| [**Video Hub**](apps/mgu_video_hub/README.md) | Experimental | Watch your own videos and YouTube links on the iDrive screen. Needs extra software on the head unit; YouTube also needs internet. |
+| App | Version | Status | What it does |
+| --- | --- | --- | --- |
+| [**GameStation**](apps/mgu_gamestation/README.md) | **0.8.0** | Experimental | GPU game fullscreen, dedicated-route game audio, native NES, PlayStation and iDrive or phone controls. |
+| [**Video Hub**](apps/mgu_video_hub/README.md) | **0.2.0** | Experimental | Local videos and YouTube links using the head-unit playback tool; web video needs internet. |
 
 ### Sound
 
-| App | Status | What it's for |
-| --- | --- | --- |
-| [**Equalizer DSP**](apps/equalizer/README.md) | Experimental | A 7-band equalizer with presets to fine-tune the sound. For now it only affects apps that are connected to it (such as Video Hub), not yet CarPlay, radio or Bluetooth. |
-| [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | Experimental | Shows how the head unit's audio system is set up. Only reads data; meant for troubleshooting and for developing the equalizer. |
+| App | Version | Status | What it does |
+| --- | --- | --- | --- |
+| [**Equalizer DSP**](apps/equalizer/README.md) | **0.3.0** | Experimental | Seven-band PCM EQ, saved presets and a local BMW MediaPlayer A/B test. Direct CarPlay, radio and Bluetooth PCM routing remains unverified. |
+| [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.3** | Experimental / read-only | Displays CarPlay process metadata, AudioManager routes, SmartX, ALSA, and PCM client diagnostics. |
 
-### Lights (while parked)
+### Exterior lighting (use on private ground while parked)
 
-| App | Status | What it's for |
-| --- | --- | --- |
-| [**Light Show**](apps/light_show/README.md) | Experimental | Exterior light shows while parked in P: automatic vehicle scan, headlamp LEDs, body-controller light functions and rear light modules, effect library, 3D car and phone remote via QR code (needs **Light Show Phone Port**). |
-| [**Light Flasher**](apps/light_flasher/README.md) | Experimental | Makes the headlights flash rapidly like a strobe while parked. Starts with a button in the app or a short pull on the headlight-flasher stalk. |
+| App | Version | Status | What it does |
+| --- | --- | --- | --- |
+| [**Light Show**](apps/light_show/README.md) | **0.4.8** | Experimental | Scans supported BDC, headlamp and rear-light controllers; filters and tests individual outputs before allowing them in lighting effects. Includes 3D car view, phone remote, STOP and recovery reporting. Requires parked/P checks. |
+| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.26** | Experimental | Configurable headlamp strobe sequences with a button or short high-beam stalk pulse, recovery and background observation. |
 
-**How Light Flasher works:** instead of one normal flash, the headlights flash on and off several times in quick succession, like a strobe light. You set the rhythm in the app (from very fast, 100 ms, to slower, 1 second, between flashes) and how long the strobe runs (2–5 seconds). You start it in one of two ways:
-
-- **Button:** tap **Start flash pattern** on the app's main screen.
-- **Stalk:** briefly pull the headlight-flasher stalk, as for a normal flash. The app recognises the pull and runs the strobe pattern once. This also works with the app closed, as long as it is running in the background.
-
-Both only work when the car is stationary in **P** and are turned off by default; switch them on in the app's settings. Use it only on private ground with nobody in front of the car.
+Use lighting effects only while safely parked in P on private ground, with nobody in front of the car. **Light Flasher 0.1.26 does not enforce P or zero speed**, so this is a user safety requirement, not a claim that the software blocks operation while moving. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
 
 ### Tools
 
-| App | Status | What it's for |
+| App | Version | Status | What it does |
+| --- | --- | --- | --- |
+| [**Phone Terminal**](apps/mgu_phone_terminal/README.md) | **0.1.7** | Advanced / privileged | Temporary phone-browser terminal with QR pairing, commands, output and file downloads. Uses root privileges; verify local reachability and access controls on your MGU before relying on it. |
+
+### Background components installed with apps
+
+The same [store catalog](mgu-repo.json) lists **13 apps** and **8 native helper components**. These tools are dependencies, not additional user-facing MGU apps.
+
+| Helper | Version | Used by |
 | --- | --- | --- |
-| [**Phone Terminal**](apps/mgu_phone_terminal/README.md) | Stable | Opens a command console for the head unit in your phone's browser: scan the QR code, run commands, copy the output and download files. For experienced users only. |
+| `mgu-equalizer-dsp` | **0.2.2** | Equalizer DSP, Video Hub and Audio Diagnostics |
+| `mgu-game-net` | **0.1.0** | GameStation phone controllers |
+| `mgu-gamestation-audio` | **0.2.0** | On-demand GameStation ALSA PCM output |
+| `mgu-gamestation-retro` | **0.3.0** | On-demand GameStation native cartridge and disc cores |
+| `mgu-gif-net` | **0.1.0** | GIF Home phone management |
+| `mgu-light-net` | **0.1.0** | Light Show phone remote |
+| `mgu-phone-bridge` | **0.1.6** | Phone Terminal |
+| `mgu-video-net` | **0.1.0** | Video Hub phone import |
+
+App and tool version numbers are maintained in `apps/*/app.json` and `native/*/component.json`, respectively; `mgu-repo.json` must match those files. Do not raise version numbers just to refresh documentation. A Store install or update also depends on the actual SDK, network access and vehicle setup.
+
+### Apps moved to other repositories
+
+These apps are **not** in the main MGU Store catalog. Add the linked repository separately:
+
+| App | Location | Note |
+| --- | --- | --- |
+| [**Blitzer Status**](https://github.com/NamelsMissing/mgu-apps-beta/tree/main/apps/blitzer_status) | [MGU Apps Beta](https://github.com/NamelsMissing/mgu-apps-beta) | Version **0.1.0**. Receives iPhone Shortcuts foreground open/close events and optionally shows the last report in the cluster map window. Its companion phone-port tool moved with it. This does **not** prove Blitzer.de's background mode is running. |
+| [**GameSnacks**](https://github.com/NamelsMissing/mgu-apps-beta/tree/main/apps/mgu_gamesnacks) | [MGU Apps Beta](https://github.com/NamelsMissing/mgu-apps-beta) | Version **0.2.0**. Parked-only mini-games and optional web mirror. |
+| [**Vehicle Data**](https://github.com/NamelsMissing/mgu-chatgpt-bridge/tree/main/apps/vehicle_data) | [BMW AI / MGU ChatGPT Bridge](https://github.com/NamelsMissing/mgu-chatgpt-bridge) | Vehicle mileage, service information and related BMW AI integration. |
+
+For Blitzer Status, first update Custom Cluster to **0.6.11** or newer if you use it, then reinstall Blitzer Status from **beta** and replace the two iPhone Shortcut URLs with those shown by the app. Keep both repository sources in MGU Store for other apps and shared components.
+
+**Avoid an older duplicate:** The beta catalog also contains Heating Comfort **0.5.1**. Install Heating Comfort **0.5.4** from this **main** source rather than the older beta entry.
 
 ## Good to know
 
@@ -123,6 +147,7 @@ This repository contains the apps' source code and build tools, but no BMW SDK. 
 | [Store catalog](mgu-repo.json) | All components, versions and dependencies the Store reads |
 | [Store installation notes](STORE_INSTALLATION.md) | Autostart and settings behaviour after Store updates |
 | [Equalizer DSP notes](native/equalizer-dsp/README.md) | DSP design, audio routing and limits |
+| [BMW audio integration report](docs/equalizer-audio-integration.md) | BMW MediaPlayer A/B test, CarPlay evidence and vehicle verification |
 | [ECU/PRG review](docs/ecu-prg-review-2026-11-03.md) | Technical diagnostic research |
 
 **Privacy:** never upload BMW SDK files, diagnostic PRG files, SSH keys, VINs, personal data or logs that contain sensitive vehicle information.

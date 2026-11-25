@@ -7,11 +7,14 @@ const path = require('node:path');
 const app = require('../apps/g21_wheelheat/app.json');
 const main = fs.readFileSync(path.join(__dirname, '../apps/g21_wheelheat/main.js'), 'utf8');
 
-test('WheelHeat autostart uses a single explicit opt-in and honest diagnostic states', () => {
-    assert.equal(app.version, '0.5.2');
+test('WheelHeat autostart and experimental seat-module control are opt-in', () => {
+    const catalogEntry = require('../mgu-repo.json').components.find(entry => entry.id === app.id);
+    assert.equal(app.version, catalogEntry.version);
     assert.equal(app.mguAppStartType, 'autostart');
     assert(!app.settings.some(s => s.key === 'liveControl'));
     assert.equal(app.settings.find(s => s.key === 'autoEnabled').default, false);
+    assert.equal(app.settings.find(s => s.key === 'smfaDriverAuto').default, false);
+    assert.equal(app.settings.find(s => s.key === 'smbfPassengerAuto').default, false);
     assert(!('reset' in app.settings.find(s => s.key === 'autoEnabled')),
         'updates must preserve the previously saved consent');
     assert.match(main, /ctl\.autoWrite\(data/);
@@ -29,7 +32,8 @@ test('WheelHeat autostart uses a single explicit opt-in and honest diagnostic st
     assert.match(main, /\[HEAT EVENT\]/);
     assert(app.screens[0].buttons.some(row => row[0] === 'BTN_STOP'));
     assert(app.screens[0].buttons.some(row => row[0] === 'BTN_LOG_UP'));
-    assert(app.screens[0].buttons.some(row => row[0] === 'BTN_QR_REFRESH'));
+    assert(app.screens[0].buttons.some(row => row[0] === 'BTN_SETTINGS'));
+    assert(!app.screens[0].buttons.some(row => /QR/i.test(row.join(' '))));
     assert(app.settings.some(s => s.key === 'minVehicleOffMins'));
     assert(!app.settings.some(s => s.key === 'cycleRepeatMins'));
     assert(app.screens[0].buttons.some(row => row[0] === 'BTN_DETECT'), 're-detect button');

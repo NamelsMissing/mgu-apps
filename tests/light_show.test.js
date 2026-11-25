@@ -14,12 +14,89 @@ const { Names, Observations, migrateKey } = require(APP + '/store');
 const Journal = require(APP + '/journal');
 const Runner = require(APP + '/runner');
 const F = require(APP + '/flm-control');
+const Guard = require(APP + '/guard');
+const Link = require(APP + '/link');
+const { Diag } = require(APP + '/tasu');
 const Car3D = require(APP + '/car3d');
+const { FILTERS, LightList, ListScroll } = require(APP + '/lists');
 const { WebServer, privateAddress } = require(APP + '/web-server');
 const page = require(APP + '/web-page');
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'light-show-'));
 const ids = (pairs) => new Map(pairs);
+
+/* ---------- independent filter dimensions and scroll geometry ---------- */
+{
+    const box = { columns: 2, rowHeight: 60, rowGap: 8, h: 196 };
+    const scroll = new ListScroll(box);
+    scroll.resize(3);
+    assert.strictEqual(scroll.contentHeight, 128);
+    assert.strictEqual(scroll.max, 0);
+    assert.strictEqual(scroll.move(100), false);
+    scroll.resize(6);
+    assert.strictEqual(scroll.contentHeight, box.h);
+    assert.strictEqual(scroll.max, 0);
+    assert.deepStrictEqual(scroll.visible(), { first: 0, end: 6 });
+    scroll.resize(7);
+    assert.strictEqual(scroll.max, 68);
+    assert.strictEqual(scroll.move(400), true);
+    assert.deepStrictEqual(scroll.visible(), { first: 2, end: 7 });
+    assert.strictEqual(scroll.move(1), false);
+    assert.strictEqual(scroll.move(-400), true);
+    assert.strictEqual(scroll.move(-1), false);
+    assert.deepStrictEqual(scroll.visible(), { first: 0, end: 6 });
+    assert.strictEqual(scroll.reveal(6), true);
+    assert.strictEqual(scroll.offset, scroll.max);
+    assert.strictEqual(scroll.reveal(0), true);
+    assert.strictEqual(scroll.offset, 0);
+
+    const lights = new LightList(box);
+    const entries = [];
+    for (const group of ['front', 'side', 'rear']) {
+        for (const available of [true, false]) {
+            for (const status of ['visible', 'untested', 'not-visible', 'noise']) {
+                entries.push({ id: [group, available, status].join(':'), group, available, status });
+            }
+        }
+    }
+    lights.sync(entries);
+    assert.strictEqual(lights.items.length, 12, 'technical default includes every observation status');
+    for (const { key, options } of FILTERS) {
+        lights.resetFilters();
+        for (const [value] of options) {
+            lights.filter(key, value);
+            const expected = entries.filter((l) => value === 'all' || (key === 'position' ? l.group === value
+                : key === 'availability' ? l.available === (value === 'controllable') : l.status === value));
+            assert.deepStrictEqual(lights.items, expected, key + ' ' + value);
+        }
+    }
+    lights.resetFilters();
+    const pick = 'front:true:visible';
+    assert.ok(lights.pick(pick) || lights.selected.id === pick);
+    lights.scroll.move(400);
+    lights.filter('position', 'front');
+    assert.strictEqual(lights.scroll.offset, 0);
+    assert.strictEqual(lights.selected.id, pick);
+    lights.filter('availability', 'controllable');
+    lights.filter('status', 'visible');
+    assert.deepStrictEqual(lights.keys, [pick]);
+    lights.filter('status', 'not-visible');
+    assert.deepStrictEqual(lights.keys, ['front:true:not-visible']);
+    assert.strictEqual(lights.selected.id, lights.keys[0]);
+    lights.filter('position', 'side');
+    lights.filter('position', 'rear');
+    lights.filter('availability', 'all');
+    lights.filter('status', 'untested');
+    assert.deepStrictEqual(lights.keys, ['rear:true:untested', 'rear:false:untested']);
+    lights.sync(entries.filter((l) => l.group !== 'rear'));
+    assert.strictEqual(lights.items.length, 0);
+    assert.strictEqual(lights.selected, null);
+    assert.strictEqual(lights.pick(pick), false);
+    lights.resetFilters();
+    assert.strictEqual(lights.items.length, 16);
+    assert.strictEqual(lights.selected.id, pick);
+    console.log('ok: independent filters, retained selection and scroll bounds');
+}
 
 /* ---------- vehicle scan ---------- */
 {
@@ -149,6 +226,11 @@ const base = { stepMs: 500, gapMs: 100, cycles: 2, pwm: 60 };
     assert.strictEqual(obs.status('flm:left:3'), 'visible');
     assert.strictEqual(obs.status('flm:left:4'), 'untested', 'unconfirmed release never counts as visible');
     assert.strictEqual(obs.status('flm:right:2'), 'noise', 'noise wins');
+    obs.record('flm:left:3', 'none', true);
+    assert.strictEqual(obs.status('flm:left:3'), 'not-visible', 'a newer no-effect report supersedes a visible one');
+    obs.record('flm:left:3', 'visible', true, { moduleIndex: '0F26C0' });
+    assert.strictEqual(obs.status('flm:left:3', '0F26C0'), 'visible');
+    assert.strictEqual(obs.status('flm:left:3', '0F26C8'), 'not-visible');
     names.set('fn:high', 'Fernlicht');
     assert.strictEqual(new Names(dir).name('fn:high'), 'Fernlicht');
     assert.throws(() => names.set('fn:high', '<script>'), /Name must/);
@@ -163,6 +245,21 @@ const base = { stepMs: 500, gapMs: 100, cycles: 2, pwm: 60 };
     fs.writeFileSync(path.join(dir, 'light-show-recovery.json'), '{broken');
     assert.strictEqual(new Journal(dir).control(), null, 'unreadable marker needs the manual light check');
     console.log('ok: 0.3.x names, observations and recovery markers are taken over safely');
+}
+
+{
+    const guard = new Guard(() => 10000);
+    guard.speedSub = guard.gearSub = { available: true };
+    guard.feedSpeed({ speedVehicleCentreOfGravity: 0 });
+    guard.feedSelection({ statusGearSelectionDrive: 'P' });
+    assert.strictEqual(guard.reason(), null);
+    guard.feedStage({ statusActualStageDrive: 'D' });
+    guard.feedSelection({ statusGearSelectionDrive: 'P' });
+    assert.match(guard.reason(), /Park/);
+    guard.feedStage({ statusActualStageDrive: 'P' });
+    assert.strictEqual(guard.reason(), null);
+    guard.feedSelection({ statusGearSelectionDrive: 'NP' });
+    assert.match(guard.reason(), /Park/);
 }
 
 /* ---------- runner ---------- */
@@ -198,6 +295,59 @@ function runnerWith(link, guardReason, commOff) {
 const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
 (async () => {
     {
+        const log = { warn() {}, info() {} };
+        const diag = new Diag({}, log);
+        diag.send = async () => {
+            diag.emit('frame', { ecu: 0x43, uds: [0x7F, 0x22, 0x78] });
+            diag.emit('frame', { ecu: 0x40, uds: [0x62, 0xF1, 0x50, 0x0F, 0x26, 0x80] });
+            diag.emit('frame', { ecu: 0x40, uds: [0x62, 0xF1, 0x90, 0x01, 0x02, 0x03] });
+            diag.emit('frame', { ecu: 0x40, uds: [0x7F, 0x22, 0x31] });
+            setTimeout(() => diag.emit('frame', { ecu: 0x43, uds: [0x62, 0xF1, 0x50, 0x0F, 0x26, 0xC8] }), 30);
+            return 'NO_ERROR';
+        };
+        const replies = await diag.functional(0x22, [0xF1, 0x50], { idleMs: 10, pendingMs: 300, maxMs: 500 });
+        assert.deepStrictEqual(Array.from(replies), [
+            [0x40, [0x62, 0xF1, 0x50, 0x0F, 0x26, 0x80]], [0x43, [0x62, 0xF1, 0x50, 0x0F, 0x26, 0xC8]],
+        ]);
+        assert.strictEqual(diag.listenerCount('frame'), 0);
+        const previous = Scan.profile(ids([[0x40, '0F2680'], [0x17, '0F2C10'], [0x43, '0F26C0']]), 'old');
+        const attempts = [];
+        const link = {
+            scan: async () => ids([[0x40, '0F2680']]),
+            readIdentity: async (address) => {
+                const retried = attempts.indexOf(address) >= 0;
+                attempts.push(address);
+                if (retried && address === 0x43) return '0F26C8';
+                throw new Error('No reply');
+            },
+        };
+        const scan = await Scan.scan(link, log, null, { previous });
+        assert.deepStrictEqual(scan.unconfirmed, [0x17]);
+        assert.strictEqual(scan.rlm[0].index, '0F2C10');
+        assert.strictEqual(scan.units.find((u) => u.address === 0x17).supportText, 'Last seen');
+        assert.strictEqual(scan.flm.left.index, '0F26C8');
+        assert.strictEqual(attempts.filter((a) => a === 0x43).length, 2);
+        const dir = tmp();
+        Scan.save(dir, scan);
+        assert.deepStrictEqual(Scan.load(dir).unconfirmed, [0x17]);
+        Scan.save(dir, Scan.profile(ids([[0x10, '0F1310']]), 'empty'));
+        assert.strictEqual(Scan.load(dir), null, 'an old empty scan cannot suppress automatic discovery');
+        link.scan = async () => ids([[0x10, '0F1310']]);
+        link.readIdentity = async () => { throw new Error('No reply'); };
+        await assert.rejects(Scan.scan(link, log, null, { previous }), /No exterior light module/);
+        let checks = 0;
+        await assert.rejects(Scan.scan(link, log, null, { check() { if (++checks > 1) throw new Error('Park'); } }), /Park/);
+        const live = new Link({}, log);
+        live.available = true;
+        live.diag.physical = async (address, sid, data, timeout) => {
+            assert.ok(timeout >= 1000, 'identity reads have a separate timeout');
+            return [0x62, 0xF1, 0x50, 0x0F, 0x26, 0xC8];
+        };
+        await assert.rejects(live.identifyFlm('left', '0F26C0'), /changed.*Scan the vehicle/);
+        await assert.rejects(live.flmStart('left', 3), /not identified/);
+        console.log('ok: pending identity, scan retry, incomplete scans and module changes');
+    }
+    {
         const link = new FakeLink(), { r, journal } = runnerWith(link);
         const plan = Effects.plan(['flm:left:1', 'flm:right:1', 'fn:high', 'out:24'], g21Lamps, Object.assign({ effect: 'chase' }, base, { cycles: 1 }));
         const res = await r.play(plan, byId);
@@ -207,7 +357,8 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         assert.ok(l.indexOf('left:start1') > l.indexOf('left:03'), 'session before control');
         assert.ok(l.indexOf('left:stop') > l.indexOf('left:start1'));
         assert.ok(l.indexOf('out:24:0') > l.indexOf('out:24:1'));
-        assert.deepStrictEqual(l.slice(-7), ['left:stop', 'right:stop', 'fn:high:0', 'out:24:0', 'left:01', 'right:01', 'bdc:01'], 'full release at the end');
+        assert.deepStrictEqual(l.slice(-3), ['left:01', 'right:01', 'bdc:01'], 'default sessions after confirmed OFF commands');
+        assert.strictEqual(l.filter((x) => x === 'left:stop').length, 1, 'no second STOP on an idle routine');
         assert.ok(!journal.pending());
         assert.strictEqual(r.status().state, 'IDLE');
         console.log('ok: a mixed show identifies, controls, switches off and releases every unit');
@@ -224,7 +375,7 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         const plan = Effects.plan(['flm:left:1', 'flm:right:1'], g21Lamps, Object.assign({ effect: 'wigwag' }, base, { cycles: 10 }));
         const res = await r.play(plan, byId);
         assert.ok(res.ok && /stationary/.test(res.error), 'guard loss ends the show');
-        assert.deepStrictEqual(link.log.slice(-4), ['left:stop', 'right:stop', 'left:01', 'right:01']);
+        assert.deepStrictEqual(link.log.slice(-2), ['left:01', 'right:01']);
         assert.ok(!journal.pending());
         console.log('ok: leaving P stops the show and still releases everything');
     }
@@ -237,6 +388,27 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         await r.stop();
         assert.ok(!journal.pending(), 'STOP releases what is left');
         console.log('ok: a failed release keeps the recovery marker until STOP succeeds');
+    }
+    {
+        const link = new FakeLink(), { r, journal } = runnerWith(link);
+        journal.mark('0F2680', { flmSides: ['left'], rlm: [{ address: 0x17, kind: 'grp', items: [1] }] });
+        link.o.failOn = 'id:rlm17';
+        await r.stop();
+        assert.ok(link.log.includes('left:01'), 'release a reachable module even when another module has no identity');
+        assert.ok(!link.log.includes('rlm17:grp0:off') && journal.pending());
+        assert.match(r.status().note, /rear light 0x17 identity/);
+    }
+    {
+        const link = new FakeLink(), w = runnerWith(link);
+        link.flmSession = async () => {
+            await link.rec('left:03');
+            w.setReason('Vehicle must be stationary');
+        };
+        const plan = Effects.plan(['flm:left:1', 'flm:right:1'], g21Lamps, Object.assign({ effect: 'wigwag' }, base));
+        const res = await w.r.play(plan, byId);
+        assert.match(res.error, /stationary/);
+        assert.ok(!link.log.includes('right:03') && !link.log.includes('left:start1'));
+        assert.ok(link.log.includes('left:01') && !w.journal.pending());
     }
     {
         const link = new FakeLink({ flm: '0F2E30' }), { r, journal } = runnerWith(link);
@@ -254,7 +426,9 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         assert.ok(res.ok, JSON.stringify(res));
         const l = link.log;
         assert.ok(l.indexOf('id:rlm17') < l.indexOf('rlm17:03') && l.indexOf('rlm17:03') < l.indexOf('rlm17:fn2:on'));
-        assert.deepStrictEqual(l.slice(-7), ['fn:indLeft:0', 'fn:indRight:0', 'rlm17:fn2:off', 'rlm1a:fn2:off', 'rlm17:01', 'rlm1a:01', 'bdc:01']);
+        assert.deepStrictEqual(l.slice(-3), ['rlm17:01', 'rlm1a:01', 'bdc:01']);
+        assert.ok(l.indexOf('rlm17:fn2:off') > l.indexOf('rlm17:fn2:on'));
+        assert.strictEqual(l.filter((x) => x === 'rlm17:fn2:off').length, 1);
         assert.ok(!journal.pending());
         console.log('ok: rear light modules and BDC indicator functions play and are released');
         const link2 = new FakeLink(), w = runnerWith(link2);
@@ -262,8 +436,9 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         assert.ok(seq.steps.every((st) => st.on.filter((id) => /:g/.test(id)).length <= 1), 'one segment group per module and step');
         const res2 = await w.r.play(seq, m);
         assert.ok(res2.ok, JSON.stringify(res2));
-        assert.ok(link2.log.indexOf('rlm17:grp0:off') > 0 && link2.log.filter((x) => x === 'rlm17:01').length === 1);
-        console.log('ok: RLM2 segment groups play one per module and are stopped once per module');
+        assert.ok(link2.log.indexOf('rlm17:grp1:off') > 0 && link2.log.filter((x) => x === 'rlm17:01').length === 1);
+        assert.ok(link2.log.indexOf('rlm17:grp0:off') < 0);
+        console.log('ok: RLM2 segment groups play one per module with no redundant final stop');
     }
     {
         const link = new FakeLink(), { r, journal } = runnerWith(link, null, true);
@@ -282,7 +457,8 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         await w3.r.test(byId['flm:left:3'], {});
         assert.ok(w3.journal.pending() && w3.journal.control().commOff[0] === 'left', 'marker keeps the silenced side');
         both.o.failOn = null; await w3.r.stop();
-        assert.ok(both.log.slice(-2)[0] === 'left:28 00 03' && !w3.journal.pending(), 'STOP turns communication back on');
+        assert.strictEqual(both.log.filter((line) => line === 'left:28 00 03').length, 1, 'confirmed communication restoration is retained');
+        assert.ok(both.log.slice(-1)[0] === 'left:01' && !w3.journal.pending(), 'STOP completes the outstanding default session');
         const Link = require(APP + '/link');
         const ln = new Link({}, { warn() {}, info() {} });
         ln.available = true; ln.verifiedFlm[0x43] = '0F26C0';
@@ -295,18 +471,130 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
         console.log('ok: test option silences only the used headlamp modules and always turns them back on');
     }
 
+    {
+        const P = require(APP + '/protocol');
+        const log = { info() {}, warn() {} };
+        const link = new Link({}, log);
+        link.available = true;
+        link.diag.p = {};
+        const packets = [];
+        let refuseOff = false, badDefault = false, timeoutOff = false;
+        link.diag.send = async (target, sid, data) => {
+            packets.push([target, sid].concat(data));
+            if (sid === 0x2E && data[5] === 0 && timeoutOff) {
+                link.diag.emit('tasReject', 0x35);
+                return 'NO_ERROR';
+            }
+            const payload = sid === 0x22 ? [0x62, 0xF1, 0x50, 0x0F, 0x26, 0x80]
+                : sid === 0x10 && data[0] === 1 && badDefault ? [0x7F, 0x10, 0x22]
+                : sid === 0x10 ? [0x50, data[0]]
+                : refuseOff && data[5] === 0 ? [0x7F, 0x2E, 0x35] : [0x6E, 0xD5, 0x42];
+            const emit = (address, body) => {
+                const header = Array(9).fill(0); header[6] = address;
+                link.diag._onResponse({ errorCode: 0, udsResponse: header.concat(body) });
+            };
+            if (sid === 0x2E) {
+                emit(0x44, [0x7F, 0x2E, 0x35]);
+                emit(0x40, [0x7F, 0x10, 0x35]);
+                emit(0x40, [0x7F, 0x2E]);
+            }
+            emit(target, payload);
+            return 'NO_ERROR';
+        };
+        const dir = tmp(), journal = new Journal(dir);
+        let waits = [], gate = null;
+        const makeRunner = (j) => new Runner({ link, journal: j, log, guard: { reason: () => null },
+            sleep(ms) { if (ms === P.MAX_TIMED_MS) { waits.push(ms); if (gate) return gate.promise; } return Promise.resolve(); } });
+        const lamp = byId['fn:locator'], r = makeRunner(journal);
+        assert.ok((await r.test(lamp, { ms: 500 })).ok);
+        assert.ok(!journal.pending());
+        assert.ok(packets.some((u) => P.hex(u) === '40 2E D5 42 00 15 00 32'));
+        assert.ok(packets.some((u) => P.hex(u) === '40 2E D5 42 00 15 00 00'));
+
+        refuseOff = true;
+        const refusal = await r.test(lamp, { ms: 500 });
+        assert.ok(!refusal.ok && /NRC 0x35.*invalidKey.*7F 2E 35/.test(refusal.error));
+        assert.ok(!journal.pending(), 'bounded locator recovery requires positive default and full expiry');
+        assert.deepStrictEqual(waits, [2000]);
+        assert.ok(r.status().cleanup.locatorOffRejected);
+
+        badDefault = true;
+        await r.test(lamp, { ms: 500 });
+        assert.ok(journal.pending());
+        assert.match(r.status().note, /locator off.*NRC 0x35.*default session.*NRC 0x22/);
+        assert.deepStrictEqual(waits, [2000], 'failed default never authorizes the expiry path');
+
+        const restarted = makeRunner(new Journal(dir));
+        assert.strictEqual(restarted.status().state, 'RECOVERY REQUIRED');
+        badDefault = false;
+        let finish;
+        gate = { promise: new Promise((resolve) => { finish = resolve; }) };
+        const before = packets.length, stop = restarted.stop();
+        assert.strictEqual(restarted.stop(), stop, 'duplicates share the actual STOP promise');
+        while (waits.length < 2) await new Promise((resolve) => setImmediate(resolve));
+        assert.strictEqual(restarted.status().state, 'STOPPING');
+        assert.ok(restarted.journal.pending());
+        finish(); gate = null;
+        assert.ok((await stop).ok);
+        assert.deepStrictEqual(packets.slice(before).map((u) => P.hex(u)), ['40 22 F1 50', '40 10 01']);
+        refuseOff = false;
+        assert.ok((await restarted.test(lamp, { ms: 500 })).ok, 'works again without restarting the recovered app');
+
+        timeoutOff = true;
+        const timedOut = await restarted.test(lamp, { ms: 500 });
+        assert.match(timedOut.error, /timed out.*TASU header rejection 0x35.*not correlated/);
+        assert.ok(restarted.journal.pending(), 'a TASU rejection is never treated as a matching UDS NRC');
+        assert.ok(restarted.journal.confirmed().has('BDC 0x40 default session'));
+        assert.strictEqual(waits.length, 2);
+
+        const retryOffset = packets.length;
+        const retry = await restarted.stop();
+        assert.ok(!retry.ok, 'STOP waits for the failed retry and reports its error');
+        assert.match(retry.error, /locator off.*timed out/);
+        assert.ok(packets.slice(retryOffset).some((u) => P.hex(u) === '40 10 03'), 'a timeout-only marker requires a fresh OFF');
+        assert.ok(restarted.journal.pending());
+        timeoutOff = false;
+        assert.ok((await restarted.stop()).ok);
+        assert.ok(!restarted.journal.pending());
+        console.log('ok: locator wire format, correlated NRC, timeout, restart, duplicate STOP and confirmed expiry');
+    }
+    {
+        const link = new FakeLink({ failOn: 'left:01' }), { r, journal } = runnerWith(link);
+        journal.mark('0F2680', { flmSides: ['left', 'right'] });
+        assert.ok(!(await r.stop()).ok);
+        assert.ok(journal.pending() && journal.confirmed().has('FLM right default session'));
+        link.o.failOn = null;
+        link.log.length = 0;
+        assert.ok((await r.stop()).ok);
+        assert.deepStrictEqual(link.log, ['id:bdc', 'id:left', 'left:01']);
+        assert.ok(!journal.pending());
+    }
+
+    {
+        const dir = tmp(), file = path.join(dir, 'light-show-recovery.json');
+        fs.writeFileSync(file, 'null');
+        const journal = new Journal(dir), link = new FakeLink();
+        const r = new Runner({ link, journal, guard: { reason: () => null } });
+        assert.match((await r.stop()).error, /unreadable/);
+        assert.ok(journal.pending() && fs.existsSync(file));
+        assert.deepStrictEqual(link.log, []);
+    }
+
     /* ---------- car3d ---------- */
     let polys = 0, dots = 0;
     Car3D.render({ poly: (p) => { polys++; assert.ok(p.length >= 3); }, dot: () => dots++ },
         { x: 0, y: 0, w: 600, h: 300, yaw: 0.8, pitch: -0.3 }, [{ points: [[0.6, 0.74, 2.3]], hex: '#ffffff', on: true }]);
     assert.ok(polys > 10 && dots >= 3);
     assert.ok(page.indexOf('Car3D') > 0 && page.indexOf('/api/state') > 0);
+    const htmlIds = Array.from(page.matchAll(/\bid="([a-z-]+)"/g), (m) => m[1]);
+    assert.strictEqual(htmlIds.length, new Set(htmlIds).size, 'car preview and Car tab need distinct DOM ids');
     console.log('ok: 3D car renders and the phone page embeds it');
 
     /* ---------- phone server ---------- */
     assert.ok(privateAddress('172.16.222.5') && privateAddress('192.168.1.2') && !privateAddress('8.8.8.8'));
     let shown = 0;
-    const srv = new WebServer({ state: () => ({ hello: 1 }), stop: () => ({ ok: true }), show: (b) => { shown = b.effect; return { ok: true }; } },
+    const srv = new WebServer({ state: () => ({ hello: 1 }), diagnostics: () => ({ text: 'BDC 0x40 locator off' }),
+        stop: async () => ({ ok: false, error: 'BDC default session timed out' }), show: (b) => { shown = b.effect; return { ok: true }; } },
         { warn() {} }, { port: 0, token: 'abc', address: () => '127.0.0.1' });
     srv.start();
     await new Promise((res) => srv.http.on('listening', res));
@@ -329,6 +617,13 @@ const byId = {}; g21Lamps.forEach((l) => { byId[l.id] = l; });
     assert.strictEqual((await get('/api/scan?t=abc', { method: 'POST', body: '{}' })).status, 404, 'unknown action refused');
     assert.strictEqual((await get('/api/show?t=abc', { method: 'POST', body: 'x'.repeat(9000) })).status, 413);
     assert.ok(/:18880\/\?t=/.test(new WebServer({}, null, { token: 't', address: () => '172.16.222.97' }).url()));
+    const stopReply = await get('/api/stop?t=abc', { method: 'POST' });
+    assert.deepStrictEqual(JSON.parse(stopReply.body), { ok: false, error: 'BDC default session timed out' });
+    assert.strictEqual((await get('/api/diagnostics?t=wrong')).status, 403);
+    assert.deepStrictEqual(JSON.parse((await get('/api/diagnostics?t=abc')).body), { text: 'BDC 0x40 locator off' });
+    const download = await get('/api/diagnostics?t=abc&download=1');
+    assert.match(download.headers['content-disposition'], /attachment/);
+    assert.strictEqual(download.body, 'BDC 0x40 locator off');
     srv.stop();
     console.log('ok: phone server needs the pairing token, answers the helper probe, limits requests');
 })().catch((e) => { console.error(e); process.exit(1); });

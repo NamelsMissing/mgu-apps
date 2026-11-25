@@ -5,6 +5,7 @@ import base64
 import json
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 
 
@@ -42,6 +43,35 @@ class GifHomeWidgetTests(unittest.TestCase):
             self.assertTrue((package / "variantGroups" / "Common" / "texts" / "de_DE.json").is_file())
             self.assertEqual((package / "variantGroups" / "Common" / "images" /
                               "gif_home_widget_icon.png").read_bytes(), b"test-icon")
+
+    def test_generated_widget_uses_existing_bmw_cell_and_store_dependency(self):
+        sys.path.insert(0, str(ROOT / "kit" / "tools"))
+        try:
+            import build
+        finally:
+            sys.path.pop(0)
+        app = json.loads((ROOT / "apps" / "gif_home" / "app.json").read_text(encoding="utf-8"))
+        catalog = json.loads((ROOT / "mgu-repo.json").read_text(encoding="utf-8"))
+        components = {entry["id"]: entry for entry in catalog["components"]}
+        helper_path = ROOT / components["mgu-gif-net"]["path"]
+        helper = json.loads((helper_path / "component.json").read_text(encoding="utf-8"))
+        self.assertEqual(app["version"], components["gif_home"]["version"])
+        self.assertEqual(components["gif_home"]["requires"][helper["id"]], helper["version"])
+        for entry in helper["files"]:
+            self.assertTrue((helper_path / entry["path"]).is_file())
+        for entry in helper["units"]:
+            content = (helper_path / entry["from"]).read_text(encoding="utf-8")
+            self.assertIn("/var/opt/mgu-gif-net/current/", content)
+        with tempfile.TemporaryDirectory(prefix="gif-home-id7-") as d:
+            stage = Path(d)
+            icon = stage / "icon.png"
+            icon.write_bytes(b"test-icon")
+            result = build.build_start_widget(app, app["id"], str(icon), str(stage / "rhmiDataStartWidget"))
+            self.assertEqual(result, {"component": "GIF_HOME_WIDGET",
+                                      "layout": "LT_Table_OnlineApps_DriveRecorderWidget"})
+            self.assertEqual(app["startWidget"]["image"], "BackgroundImage1")
+            self.assertEqual(app["startWidget"]["cells"]["background"], [False, "Bool"])
+            self.assertTrue((builder.package_widget(stage) / "uiDescriptions" / "ID7" / "application.xml").exists())
 
     def test_standard_gif_resource_is_included(self):
         data = json.loads((ROOT / "apps" / "gif_home" / "resources" / "demo.json").read_text(encoding="utf-8"))

@@ -32,10 +32,12 @@ jobs:
             -Lbuild -lfakealsa_live -lmgu_cp_live -lm -pthread -Wl,-rpath,'$ORIGIN'
           cc -std=c11 -O2 -Wall -Wextra -Werror -o build/test_cp_bridge test_carplay_bridge.c \
             -Lbuild -lfakealsa_live -lmgu_cp_live -lm -pthread -Wl,-rpath,'$ORIGIN'
+          cc -std=c11 -O2 -Wall -Wextra -Werror -o build/test_eq_dsp test_eq_dsp.c eq_dsp.c -lm
           cc -std=c11 -O2 -Wall -Wextra -Werror -o build/test_eq_snapshot test_eq_snapshot.c eq_snapshot.c eq_dsp.c -lm
       - name: Simulated CarPlay PCM writes
         run: |
           cd experiments/carplay_alsa
+          ./build/test_eq_dsp
           LD_PRELOAD=./build/libmgu_cp_live.so ./build/test_cp_live
       - name: Snapshot format shared with the Node DSP service
         run: |

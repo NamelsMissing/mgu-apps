@@ -4885,7 +4885,7 @@ GameBoyCore.prototype.disableBootROM = function () {
 GameBoyCore.prototype.initializeTiming = function () {
     //Emulator Timing:
     this.clocksPerSecond = this.emulatorSpeed * 0x400000;
-    this.baseCPUCyclesPerIteration = this.clocksPerSecond / 1000 * settings[6];
+    this.baseCPUCyclesPerIteration = this.frameCycles || this.clocksPerSecond / 1000 * settings[6];
     this.CPUCyclesTotalRoundoff = this.baseCPUCyclesPerIteration % 4;
     this.CPUCyclesTotalBase = this.CPUCyclesTotal = (this.baseCPUCyclesPerIteration - this.CPUCyclesTotalRoundoff) | 0;
     this.CPUCyclesTotalCurrent = 0;
@@ -5237,6 +5237,8 @@ GameBoyCore.prototype.initializeAudioStartState = function () {
     this.noiseSampleTable = this.LSFR15Table;
 }
 GameBoyCore.prototype.outputAudio = function () {
+    if (this.onAudioSample) this.onAudioSample((this.downsampleInput >>> 16) * this.downSampleInputDivider - 1,
+        (this.downsampleInput & 0xFFFF) * this.downSampleInputDivider - 1);
     this.audioBuffer[this.audioDestinationPosition++] = (this.downsampleInput >>> 16) * this.downSampleInputDivider - 1;
     this.audioBuffer[this.audioDestinationPosition++] = (this.downsampleInput & 0xFFFF) * this.downSampleInputDivider - 1;
     if (this.audioDestinationPosition == this.numSamplesTotal) {
@@ -5725,6 +5727,7 @@ GameBoyCore.prototype.run = function () {
                 this.audioTicks += this.CPUCyclesTotal;
                 this.audioJIT();
                 this.stopEmulator |= 1;         //End current loop.
+                this.frameDone = true;         //A stopped CPU still completes a silent host frame.
             }
         }
         else {      //We can only get here if there was an internal error, but the loop was restarted.
@@ -5813,6 +5816,7 @@ GameBoyCore.prototype.iterationEndRoutine = function () {
         this.DIVTicks &= 0xFF;
         //Update emulator flags:
         this.stopEmulator |= 1;         //End current loop.
+                this.frameDone = true;         //A stopped CPU still completes a silent host frame.
         this.emulatorTicks -= this.CPUCyclesTotal;
         this.CPUCyclesTotalCurrent += this.CPUCyclesTotalRoundoff;
         this.recalculateIterationClockLimit();
@@ -10338,7 +10342,7 @@ Interface.prototype = {
      *
      * TODO: better documentation on what ROMs are and how they should be formatted.
      */
-    loadRom : function (ROM) {
+    loadRom : function (ROM, frameCycles) {
         let that = this;
         let _that = this[PRIVATE];
 
@@ -10350,6 +10354,8 @@ Interface.prototype = {
         _that.shutdownEmulation(); //Will shut down emulator if it's still running.
 
         _that.gameboy = new GameBoyCore(ROM);
+        _that.gameboy.frameCycles = frameCycles;
+        if (frameCycles) _that.gameboy.initializeTiming();
 
         //Start emulator (some logic in here that needs to be documented)
         _that.gameboy.start();
@@ -10376,7 +10382,10 @@ Interface.prototype = {
         }
 
         _that.gameboy.frameDone = false;
+        // A halted or broken LCD/frame clock must return control to the OAP app.
+        let iterations = 0;
         while(!_that.gameboy.frameDone) {
+            if (iterations++ >= 6) throw new Error('Game Boy frame timed out');
             _that.gameboy.run(); //Run internal logic until the entire frame as finished.
         }
 

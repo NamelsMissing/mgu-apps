@@ -1,8 +1,8 @@
 {
   "id": "light_flasher",
   "title": "Light Flasher",
-  "description": "Compact parked flash control with optional lever trigger in P (also with the app closed via autostart), one diagnostics page, requested intervals 100–1000 ms.",
-  "version": "0.1.15",
+  "description": "Compact flash control, separate settings and service tools; automatic diagnostic reports.",
+  "version": "0.1.26",
   "vendor": "custom",
   "loggingId": "OLF1",
   "iconGlyph": "LF",
@@ -28,38 +28,8 @@
   },
   "settings": [
     {
-      "key": "enabled",
-      "label": "Enable diagnostic mode (no lamp commands)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "backgroundMonitor",
-      "label": "Background status monitor (read only)",
-      "type": "bool",
-      "default": true
-    },
-    {
       "key": "manualFlash",
-      "label": "Enable manual parked flash (private property only)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "fastTest",
-      "label": "Test: fast mode (no 150 ms gap, PWM 0 instead of STOP between pulses)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "leverTrigger",
-      "label": "Start pattern by short lever flash (P only)",
-      "type": "bool",
-      "default": false
-    },
-    {
-      "key": "leverBackground",
-      "label": "Lever trigger also with app closed (autostart, P only)",
+      "label": "Enable flash control",
       "type": "bool",
       "default": false
     },
@@ -89,10 +59,26 @@
     },
     {
       "key": "interval",
-      "label": "Requested interval (ms)",
+      "label": "Requested flash interval",
       "type": "choice",
       "default": "100",
       "options": [
+        [
+          "20",
+          "20 ms (fast)"
+        ],
+        [
+          "40",
+          "40 ms (fast)"
+        ],
+        [
+          "60",
+          "60 ms (fast)"
+        ],
+        [
+          "80",
+          "80 ms (fast)"
+        ],
         [
           "100",
           "100 ms"
@@ -121,7 +107,7 @@
     },
     {
       "key": "hold",
-      "label": "Flash duration",
+      "label": "Run length (time or cycles)",
       "type": "choice",
       "default": "3000",
       "options": [
@@ -140,8 +126,160 @@
         [
           "5000",
           "5 s"
+        ],
+        [
+          "cycles:1",
+          "1 cycle"
+        ],
+        [
+          "cycles:2",
+          "2 cycles"
+        ],
+        [
+          "cycles:3",
+          "3 cycles"
+        ],
+        [
+          "cycles:4",
+          "4 cycles"
+        ],
+        [
+          "cycles:5",
+          "5 cycles"
+        ],
+        [
+          "cycles:6",
+          "6 cycles"
+        ],
+        [
+          "cycles:8",
+          "8 cycles"
+        ],
+        [
+          "cycles:10",
+          "10 cycles"
+        ],
+        [
+          "cycles:12",
+          "12 cycles"
+        ],
+        [
+          "cycles:15",
+          "15 cycles"
+        ],
+        [
+          "cycles:20",
+          "20 cycles"
         ]
       ]
+    },
+    {
+      "key": "fastTest",
+      "label": "Fast mode (PWM 0)",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "leverTrigger",
+      "label": "Start via high-beam stalk",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "leverBackground",
+      "label": "Stalk trigger in background",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "leverMinMs",
+      "label": "Lever hold minimum",
+      "type": "choice",
+      "default": "0",
+      "options": [
+        [
+          "0",
+          "0 ms (no minimum)"
+        ],
+        [
+          "250",
+          "0.25 s"
+        ],
+        [
+          "500",
+          "0.5 s"
+        ],
+        [
+          "750",
+          "0.75 s"
+        ],
+        [
+          "1000",
+          "1.0 s"
+        ],
+        [
+          "1250",
+          "1.25 s"
+        ],
+        [
+          "1500",
+          "1.5 s"
+        ]
+      ]
+    },
+    {
+      "key": "leverMaxMs",
+      "label": "Lever hold maximum",
+      "type": "choice",
+      "default": "1500",
+      "options": [
+        [
+          "250",
+          "0.25 s"
+        ],
+        [
+          "500",
+          "0.5 s"
+        ],
+        [
+          "750",
+          "0.75 s"
+        ],
+        [
+          "1000",
+          "1.0 s"
+        ],
+        [
+          "1250",
+          "1.25 s"
+        ],
+        [
+          "1500",
+          "1.5 s"
+        ],
+        [
+          "1750",
+          "1.75 s"
+        ],
+        [
+          "2000",
+          "2.0 s"
+        ]
+      ]
+    },
+    {
+      "key": "enabled",
+      "label": "Enable diagnostic mode (no lamp commands)",
+      "type": "bool",
+      "default": false,
+      "hidden": true
+    },
+    {
+      "key": "backgroundMonitor",
+      "label": "Background status monitor (read only)",
+      "type": "bool",
+      "default": true,
+      "hidden": true
     }
   ],
   "screens": [
@@ -149,7 +287,6 @@
       "name": "MAIN",
       "kind": "menu",
       "title": "Light Flasher",
-      "settings": true,
       "items": [
         [
           "text3",
@@ -159,7 +296,7 @@
         [
           "button",
           "BTN_FLASH",
-          "Start flash pattern (P)"
+          "Start flash pattern"
         ],
         [
           "button",
@@ -168,45 +305,172 @@
         ],
         [
           "text3",
-          "LEVER_STATUS",
-          "Lever: off"
-        ],
-        [
-          "text3",
           "FLASH_STATUS",
-          "Idle"
+          "Ready"
         ],
         [
+          "button",
+          "BTN_RECOVER",
+          "Restore normal lights"
+        ],
+        [
+          "button",
+          "BTN_OPTIONS",
+          "Settings"
+        ]
+      ]
+    },
+    {
+      "name": "OPTIONS",
+      "kind": "menu",
+      "title": "Light Flasher | Settings",
+      "settings": true,
+      "items": [
+        [
           "text3",
-          "FLASH_RESULT",
-          "No result yet"
+          "LEVER_RANGE_STATUS",
+          "Lever hold range"
         ],
         [
           "button",
           "BTN_DIAG",
-          "Diagnostics"
+          "Service / diagnostics"
         ],
         [
-          "text3",
-          "NOTICE",
-          "Parked test only (P). Lever trigger optionally also with the app closed. Private property. Automatic JSON log."
+          "button",
+          "BTN_OPTIONS_BACK",
+          "Back"
         ]
       ]
     },
     {
       "name": "DIAGNOSTICS",
       "kind": "menu",
-      "title": "Light Flasher | Diagnostics",
+      "title": "Light Flasher | Service",
       "items": [
         [
           "text3",
           "DIAG_STATE",
-          "Connection status"
+          "Service status"
         ],
         [
           "text3",
           "DIAG_RESULT",
-          "Last flash and return status"
+          "Last operation"
+        ],
+        [
+          "text3",
+          "DIAG_LEVER",
+          "Lever signal and hold time"
+        ],
+        [
+          "button",
+          "BTN_LOGS",
+          "Diagnostic Logs"
+        ],
+        [
+          "button",
+          "BTN_SAVE",
+          "Save diagnostic report"
+        ],
+        [
+          "button",
+          "BTN_ADVANCED",
+          "Advanced tests"
+        ],
+        [
+          "button",
+          "BTN_BACK",
+          "Back"
+        ]
+      ]
+    },
+    {
+      "name": "LOGS",
+      "kind": "menu",
+      "title": "Diagnostic Logs",
+      "items": [
+        [
+          "text3",
+          "LOG_STATE",
+          "Lever status"
+        ],
+        [
+          "text3",
+          "LOG_PATH",
+          "Storage folder"
+        ],
+        [
+          "text3",
+          "LOG_FILES",
+          "JSON files"
+        ],
+        [
+          "text3",
+          "LOG_POSITION",
+          "Recent entries"
+        ],
+        [
+          "text3",
+          "LOG_ROW_0",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_1",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_2",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_3",
+          " "
+        ],
+        [
+          "text3",
+          "LOG_ROW_4",
+          " "
+        ],
+        [
+          "button",
+          "BTN_LOG_OLDER",
+          "Older entries"
+        ],
+        [
+          "button",
+          "BTN_LOG_NEWER",
+          "Newer entries"
+        ],
+        [
+          "button",
+          "BTN_LOG_REFRESH",
+          "Refresh"
+        ],
+        [
+          "button",
+          "BTN_LOG_SAVE",
+          "Export diagnostic report (JSON)"
+        ],
+        [
+          "button",
+          "BTN_LOG_BACK",
+          "Back"
+        ]
+      ]
+    },
+    {
+      "name": "ADVANCED",
+      "kind": "menu",
+      "title": "Light Flasher | Advanced tests",
+      "items": [
+        [
+          "text3",
+          "DIAG_CAPTURE",
+          "Read-only test status"
         ],
         [
           "button",
@@ -229,23 +493,8 @@
           "Read FLM light status"
         ],
         [
-          "text3",
-          "DIAG_CAPTURE",
-          "Read-only test status"
-        ],
-        [
           "button",
-          "BTN_SAVE",
-          "Save full diagnostic JSON"
-        ],
-        [
-          "scroll",
-          "DIAG_LOG",
-          "Recent diagnostic details"
-        ],
-        [
-          "button",
-          "BTN_BACK",
+          "BTN_ADVANCED_BACK",
           "Back"
         ]
       ]
