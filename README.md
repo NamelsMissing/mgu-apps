@@ -51,29 +51,29 @@ You don't have to type on the car at all:
 
 ## Apps available from this main source
 
-Version numbers below are those in the **main** store catalog. **Stable** means the described basic use has been reported working on a compatible vehicle; **Beta / Experimental** means important functions, vehicle variants or hardware control paths remain unverified. Versions below are repository versions on `main`, **not a readout of what is installed in your car**. Consult each app's guide and its vehicle-verification notes before operating it.
+Version numbers below are those in the **main** store catalog. **Stable** is the maintainer's release classification for basic app use; it does not mean every feature, hardware variant or vehicle control path has been validated. **Beta / Experimental** identifies apps not yet classified as stable. Individual experimental features and safety restrictions remain documented. Versions below are repository versions on `main`, **not a readout of what is installed in your car**. Consult each app's guide and its vehicle-verification notes before operating it.
 
 ### Comfort and vehicle
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.4** | Beta / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
-| [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Experimental / read-only | Requests diesel particulate-filter measurements and regeneration-history values from the DDE. DID scaling was reviewed offline; live routing and actual responses still need vehicle verification. Does **not** start forced regeneration. |
+| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.5** | Stable / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs; 0.5.5 improves cold-start activation and individual heating confirmation. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
+| [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Stable / read-only | Requests diesel particulate-filter measurements and regeneration-history values from the DDE. DID scaling was reviewed offline; live routing and actual responses still need vehicle verification. Does **not** start forced regeneration. |
 | [**Ambient Lighting**](apps/g21_ambient/README.md) | **0.4.7** | Experimental | Reads the OEM BMW ambient-color status and offers manual selection of menu slots 1–12 with separate setter/readback feedback. Includes RGB previews, saved looks and carefully gated BDC LIN testing; aftermarket LED control is not yet verified. |
 
 ### Screens and cluster
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**GIF Home**](apps/gif_home/README.md) | **0.4.0** | Vehicle verification pending | Animated iDrive home widget with a local GIF library, phone management, groups and playlists. |
+| [**GIF Home**](apps/gif_home/README.md) | **0.4.0** | Stable | Animated iDrive home widget with a local GIF library, phone management, groups and playlists. |
 | [**Custom Cluster**](apps/custom_cluster/README.md) | **0.6.11** | Experimental | Alternative instrument-cluster layouts, navigation-related controls and diagnostics. KOMBI overlay tests are guarded by parked / selected-layout conditions; background startup does not activate an overlay by itself. |
-| [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | **0.1.5** | Experimental | Spotify lyrics on the iDrive screen, optionally in the cluster map region, including an overlay mode with Waze visible. The app supports background startup; display and lyric availability depend on Spotify data and network access. |
+| [**Cluster Lyrics**](apps/cluster_lyrics/README.md) | **0.1.5** | Stable | Spotify lyrics on the iDrive screen, optionally in the cluster map region, including an overlay mode with Waze visible. The app supports background startup; display and lyric availability depend on Spotify data and network access. |
 
 ### Entertainment (parked only)
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**GameStation**](apps/mgu_gamestation/README.md) | **0.8.0** | Experimental | GPU game fullscreen, dedicated-route game audio, native NES, PlayStation and iDrive or phone controls. |
+| [**GameStation**](apps/mgu_gamestation/README.md) | **0.8.1** | Stable | Offline retro games and the original Mineworks Tycoon, GPU fullscreen, dedicated-route game audio, native NES, experimental PlayStation support, and iDrive or phone controls. Individual cores and audio routes may still need vehicle validation. |
 | [**Video Hub**](apps/mgu_video_hub/README.md) | **0.2.0** | Experimental | Local videos and YouTube links using the head-unit playback tool; web video needs internet. |
 
 ### Sound
@@ -81,14 +81,14 @@ Version numbers below are those in the **main** store catalog. **Stable** means 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
 | [**Equalizer DSP**](apps/equalizer/README.md) | **0.3.0** | Experimental | Seven-band PCM EQ, saved presets and a local BMW MediaPlayer A/B test. Direct CarPlay, radio and Bluetooth PCM routing remains unverified. |
-| [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.3** | Experimental / read-only | Displays CarPlay process metadata, AudioManager routes, SmartX, ALSA, and PCM client diagnostics. |
+| [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.3** | Stable / read-only | Displays CarPlay process metadata, AudioManager routes, SmartX, ALSA, and PCM client diagnostics. |
 
 ### Exterior lighting (use on private ground while parked)
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Light Show**](apps/light_show/README.md) | **0.4.8** | Experimental | Scans supported BDC, headlamp and rear-light controllers; filters and tests individual outputs before allowing them in lighting effects. Includes 3D car view, phone remote, STOP and recovery reporting. Requires parked/P checks. |
-| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.26** | Experimental | Configurable headlamp strobe sequences with a button or short high-beam stalk pulse, recovery and background observation. |
+| [**Light Show**](apps/light_show/README.md) | **0.4.8** | Stable | Scans supported BDC, headlamp and rear-light controllers; filters and tests individual outputs before allowing them in lighting effects. Includes 3D car view, phone remote, STOP and recovery reporting. Requires parked/P checks. |
+| [**Light Flasher**](apps/light_flasher/README.md) | **0.1.26** | Stable | Configurable headlamp strobe sequences with a button or short high-beam stalk pulse, recovery and background observation. |
 
 Use lighting effects only while safely parked in P on private ground, with nobody in front of the car. **Light Flasher 0.1.26 does not enforce P or zero speed**, so this is a user safety requirement, not a claim that the software blocks operation while moving. These features send diagnostic commands; acknowledgements do not guarantee physical lamp restoration. See each safety and recovery guide.
 
@@ -127,7 +127,7 @@ These apps are **not** in the main MGU Store catalog. Add the linked repository 
 
 For Blitzer Status, first update Custom Cluster to **0.6.11** or newer if you use it, then reinstall Blitzer Status from **beta** and replace the two iPhone Shortcut URLs with those shown by the app. Keep both repository sources in MGU Store for other apps and shared components.
 
-**Avoid an older duplicate:** The beta catalog also contains Heating Comfort **0.5.1**. Install Heating Comfort **0.5.4** from this **main** source rather than the older beta entry.
+**Avoid an older duplicate:** The beta catalog also contains Heating Comfort **0.5.1**. Install Heating Comfort **0.5.5** from this **main** source rather than the older beta entry.
 
 ## Good to know
 
