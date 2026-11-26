@@ -117,3 +117,38 @@ The app package includes the MGU **autostart** setting. This allows the process 
 **Safety:** Test and configure the app while parked. Do not assume a heating request was successful without checking the actual vehicle behavior.
 
 For Store setup and update details, see [Store Installation](../../STORE_INSTALLATION.md).
+
+## AutoHeat startup and diagnosis (0.5.5)
+
+The 26 November G21 log entered the old blocked branch because the first vehicle state arrived
+after the drive was already ON. The planner also initialized its one-shot flag to true,
+so the log showed a completed-looking state without a command. The background service now
+distinguishes the plan from the command reservation and from readback-confirmed activation.
+
+A live OFF-to-drive-ready transition establishes a vehicle session. For an AUTOSTART that first
+sees drive-ready ON, the app can also use a persisted, vehicle-reported OFF after the previous
+session, subject to the saved minimum OFF duration. The first live ON is the end of the measured
+interval. The BMW signals available to this app do not expose an exact ON timestamp during
+head-unit downtime, a unique vehicle-session ID, or an independent remote-start indicator.
+Without usable OFF evidence the service waits for a valid cycle. Diagnostic-only wake and
+missing signals do not establish drive readiness. The one-shot test is an explicit exception
+to the parking duration. Engine RPM and vehicle speed are not used as evidence of a new cycle.
+
+A separate atomic journal records the cycle, manual cancellation and each heater's write
+reservation. On an AUTOSTART restart within the original two-minute window, already reserved
+channels are skipped, including uncertain writes. An explicitly transient ECU rejection can be
+retried after another valid read. The retry delays are 2, 5, 10, 20 and 30 seconds. The existing
+wheel recovery after two explicit OFF readings is bounded to one attempt.
+
+On the supplied profile, D074 is the wheel state/current source, E432/E430 report each BDC seat
+state and level, and D714 is used for identified, separately controlled seat modules. D8DB on
+identified IHKA_G05 can show front left/right requested levels independently of whether seat
+modules are present. It does not confirm physical current or authorize a write, and no
+driver-side inference is made from that data. NRC 25 and unreadable responses are unknown states.
+
+Use **AutoHeat status / readback** on Diagnostics and **Next log filter** on Log. Identical USSO,
+UserManager, token and analytics messages are grouped under SDK debug. The SDK owns its own startup
+and telemetry, and the app continues to use the platform's normal authorization and ECU conditions.
+The 26 November log demonstrates the old fault on the G21. New behavior is covered by offline
+tests. Hardware confirmation of the new flow, especially persisted parking evidence across MGU
+shutdown, cold-start retries, remote start and each installed seat-module variant, remains pending.

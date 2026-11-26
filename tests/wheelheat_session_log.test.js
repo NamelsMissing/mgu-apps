@@ -67,3 +67,20 @@ test('NRC 0x31 and seat OFF never trigger additional writes', async () => {
         assert.equal(requests, 1);
     }
 });
+
+test('USSO and analytics noise are grouped in SDK debug while TASU errors stay visible', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelheat-sdk-'));
+    try {
+        const now = Date.parse('2026-11-26T06:10:00Z');
+        fs.writeFileSync(path.join(dir, 'g21_wheelheat.log'), [
+            'SDK_ERROR buildTypedProxy(de.bmw.infotainment.telematic.usso.USSO@USSO_1) ENOENT',
+            'SDK_WARN AnalyticsServiceImpl::sendPlatformEvent timeout',
+            'SDK_WARN AnalyticsServiceImpl::sendPlatformEvent timeout',
+            'SDK_ERROR TASU proxy unavailable',
+        ].map((line, i) => new Date(now + i).toISOString() + ' ' + line).join('\n'));
+        const events = Log.sessionWarnings({ dataDir: dir }, now);
+        assert.equal(Log.filterEvents(events, 'All').length, 1);
+        assert.match(Log.filterEvents(events, 'All')[0].message, /TASU/);
+        assert(Log.filterEvents(events, 'SDK debug').some(e => /timeout.*×2/.test(e.message)));
+    } finally { fs.rmSync(dir, {recursive: true, force: true}); }
+});

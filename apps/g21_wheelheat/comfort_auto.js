@@ -18,8 +18,8 @@ const SEAT_MODULE_RENEW_MS = 60000;
 // observed timeout is about 120 s. D714 has no duration field.
 const SEAT_MODULE_MAX_RENEW_AGE_MS = 90000;
 const START_WINDOW_MS = 120000;
-const START_RETRY_MS = 8000;
-const START_MAX_ATTEMPTS = 8;
+const START_RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000];
+const START_MAX_ATTEMPTS = START_RETRY_DELAYS.length + 1;
 
 class ComfortAuto {
     constructor() {
@@ -155,8 +155,8 @@ class ComfortAuto {
                     (s.deadline > now + SEAT_MODULE_MAX_RENEW_AGE_MS ? now + SEAT_MODULE_RENEW_MS : Infinity) :
                     (s.duration > SEGMENT_SECONDS ? now + intent.data.seconds * 1000 - RENEW_EARLY_MS : Infinity);
             } else if (retryable && s.attempts < START_MAX_ATTEMPTS &&
-                now + START_RETRY_MS < s.startUntil) {
-                s.nextAttemptAt = now + START_RETRY_MS;
+                now + START_RETRY_DELAYS[s.attempts - 1] < s.startUntil) {
+                s.nextAttemptAt = now + START_RETRY_DELAYS[s.attempts - 1];
             } else {
                 this.active.delete(intent.device);
             }

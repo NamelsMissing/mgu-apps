@@ -54,6 +54,7 @@ function boot(t, car, settingsOverride, dir) {
         onChange: fn => listeners.push(fn),
     };
     const watchers = {}, clicks = {};
+    const watchAttempts = {};
     let render = null, selectTab = null;
     let wheelUntil = null;
     class FakeDiag {
@@ -97,9 +98,14 @@ function boot(t, car, settingsOverride, dir) {
     const drawn = [];
     const cv = { chrome: {}, clear() { return cv; }, fillRect() {}, text(s) { drawn.push(String(s)); }, image() {} };
     const ctx = {
-        settings, dataDir: dir, app: { startReason: 'TEST' }, spec: { id: 'g21_wheelheat', version: 'test' },
+        settings, dataDir: dir, app: { startReason: settingsOverride && settingsOverride.launchReason || 'TEST' }, spec: { id: 'g21_wheelheat', version: 'test' },
         log: { info() {}, warn() {}, error() {} },
-        signals: { watch: async (iface, _v, handlers) => { watchers[iface] = handlers; return { available: true }; } },
+        signals: { watch: async (iface, _v, handlers) => {
+            watchAttempts[iface] = (watchAttempts[iface] || 0) + 1;
+            if (car.failWatch && car.failWatch(iface, watchAttempts[iface])) return { error: 'provider startup' };
+            watchers[iface] = handlers;
+            return { available: true };
+        } },
         ui: { onClick: (id, fn) => { clicks[id] = fn; }, onVisible() {}, isVisible: () => false,
             image() {}, onTouch() {}, onTap() {} },
         onTab(fn) { selectTab = fn; },
@@ -356,7 +362,7 @@ test('SMFA needs a complete live OFF read and matching live coding before starti
     await apps[0].tick(20000, ...apps.slice(1));
     for (const app of apps) {
         assert.deepEqual(wrote(app, 0xD714), []);
-        assert(app.kinds('START FAILED').some(e => /Driver seat/.test(e.message)));
+        assert(app.events().some(e => /START FAILED|START RETRY/.test(e.kind) && /Driver seat/.test(e.message)));
     }
 });
 
@@ -371,7 +377,7 @@ test('SMFA yields to a manual level change and leaves that level alone on STOP',
     app.clicks.BTN_STOP();
     await app.tick(300000);
     assert.deepEqual(wrote(app, 0xD714).map(w => w.data[2]), [1]);
-    assert(app.kinds('SMFA DIFFERENT').some(e => /D714 reports level 3/.test(e.message)));
+    assert(app.kinds('MANUAL OVERRIDE').some(e => /Driver seat.*SMFA/.test(e.message)));
 });
 
 test('changing the configured SMFA level stops the acknowledged level for this ignition', async t => {
@@ -539,12 +545,13 @@ test('wheel ACK with two OFF reads recovers once and keeps the original OFF time
 
 test('wheel ON with zero current is reported as such and does not trigger recovery', async t => {
     withTimers(t);
-    const car = Object.assign({}, G21, { '40:d074': () => pos(0xD074, 1, 3, 0, 2, 1) });
+    const car = Object.assign({}, G21, { '40:d074': n => n <= 2 ? G21['40:d074'] : pos(0xD074, 1, 3, 0, 2, 1) });
     const app = boot(t, car, { seatDriver: false, seatPassenger: false });
     await app.drive(93);
     await app.tick(32000);
     assert.equal(wrote(app, 0xD074).length, 1);
     assert.equal(app.kinds('WHEEL RECOVERY').length, 0);
+    assert.equal(app.kinds('ACTIVATION CONFIRMED').length, 0);
     assert.match(app.screen().join('\n'), /Steering wheel: BDC ON +\| +0\.0 A/);
 });
 
@@ -565,7 +572,7 @@ test('wheel monitoring respects a later manual off and never repeats a failed re
     await manual.tick(60000, neverStarts);
     assert.equal(wrote(manual, 0xD074).length, 1);
     assert.equal(wrote(neverStarts, 0xD074).length, 2);
-    assert.match(manual.screen().join('\n'), /Steering wheel: BDC OFF +\| +0\.0 A/);
+    assert(manual.kinds('MANUAL OVERRIDE').some(e => /Steering wheel/.test(e.message)));
 });
 
 test('only SMFA installed: passenger via BDC, driver skipped', async t => {
@@ -672,4 +679,63 @@ test('route changes during an active seat session: no EXTEND, own ON undone via 
     assert(after.every(w => w.data[2] === 0 && w.data[3] === 0), 'only OFF (level 0), never EXTEND');
     await app.tick(300000);
     assert(wrote(app, 0xE432).slice(1).every(w => w.data[2] === 0));
+});
+
+test('26 November cold AUTOSTART: delayed input and NRC 25 do not block the BDC seats or require UI', async t => {
+    withTimers(t);
+    let driver = 0, wheel = false;
+    const car = {
+        ...G21,
+        '40:d074': n => n <= 5 ? nrc(0x25) : pos(0xD074, wheel ? 1 : 0, 0, wheel ? 40 : 0, 1, 1),
+        '40:e432': () => pos(0xE432, driver > 0 ? 1 : 0, driver, 87, 87, 0, 0, 0, 255, 255),
+        write(_addr, data) {
+            if (data[0] === 0xD0) wheel = data[2] > 0;
+            if (data[0] === 0xE4 && data[1] === 0x32) driver = data[2];
+            return [0x6E, data[0], data[1]];
+        },
+    };
+    const app = boot(t, car, {
+        launchReason: 'AUTOSTART', testNextStartup: false, minVehicleOffMins: 10,
+        belowTemp: 10, seatPassenger: false,
+        _vehicleOnAt: T0 - 60 * 60000, _vehicleOffAt: T0 - 15 * 60000,
+    });
+    await app.started;
+    await app.tick(3000); // Vehicle provider and temperature arrive independently.
+    app.signal('de.bmw.infrastructure.VehicleCondition', 'VehicleCondition', { statusConditionVehicle: 10 });
+    await app.tick(9000);
+    assert.equal(app.writes().length, 0);
+    app.signal('de.bmw.infrastructure.EnvironmentalInformation', 'ExteriorTemperature', { temperatureExterior: 93 });
+    await app.tick(81000);
+    assert.equal(wrote(app, 0xE432).length, 1);
+    assert.equal(wrote(app, 0xD074).length, 1);
+    assert(wrote(app, 0xE432)[0].at < wrote(app, 0xD074)[0].at);
+    assert.equal(app.kinds('ACTIVATION CONFIRMED').length, 2);
+    assert(app.kinds('VEHICLE ON').some(e => /persisted vehicle OFF/.test(e.message)));
+    assert.equal(app.kinds('UI OPEN').length, 0);
+    assert(!app.events().some(e => /ALREADY ATTEMPTED|autoAlreadyFired/.test(e.message)));
+    // A physical change stays in effect after an AUTOSTART restart in this session.
+    driver = 0;
+    await app.tick(17000);
+    assert(app.kinds('MANUAL OVERRIDE').some(e => /Driver seat/.test(e.message)));
+    const restarted = boot(t, car, { launchReason: 'AUTOSTART' }, app.dir);
+    await restarted.drive(93);
+    await restarted.tick(12000);
+    assert.equal(restarted.writes().length, 0);
+    assert.equal(restarted.values.belowTemp, 10);
+});
+
+test('background retries a failed subscription and leaves a warm start untouched', async t => {
+    withTimers(t);
+    const car = { ...G21, failWatch: (iface, n) => iface.endsWith('VehicleCondition') && n === 1 };
+    const app = boot(t, car, { launchReason: 'AUTOSTART', testNextStartup: false,
+        _vehicleOnAt: T0 - 3600000, _vehicleOffAt: T0 - 2400000 });
+    await app.started;
+    await app.tick(3000);
+    app.selectTab(1);
+    await app.drive(130);
+    await app.tick(50000);
+    assert(app.kinds('VEHICLE SIGNAL ERROR').some(e => /VehicleCondition/.test(e.message)));
+    assert(app.kinds('VEHICLE ON').length > 0);
+    assert(app.kinds('AUTO').some(e => /ABOVE LIMIT/.test(e.message)));
+    assert.equal(app.writes().length, 0);
 });

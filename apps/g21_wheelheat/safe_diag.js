@@ -34,7 +34,14 @@ class SafeDiag {
                 }
             },
         }, this.ctx.log, { pollMs: 2000 }).catch(e => this.ctx.log.warn('Vehicle speed: ' + e));
-        await this.diag.init();
+        await this.retryConnection();
+    }
+    async retryConnection() {
+        if (this.diag.p || this.connecting) return;
+        this.connecting = true;
+        try { await this.diag.init(); }
+        catch (e) { this.info = 'TASU unavailable: ' + e; }
+        finally { this.connecting = false; }
     }
     get online() { return !!(this.diag.p && this.diag.available); }
     get parked() { return this.speed !== null && this.speed <= 0.5 && Date.now() - this.speedAt < 5000; }
@@ -144,7 +151,7 @@ class SafeDiag {
      * No simulator or unknown-speed command is ever sent to the vehicle.
      * Returns true only on a positive 0x6E reply (not proof of physical heat).
      */
-    async autoWrite(data, label) {
+    async autoWrite(data, label, beforeWrite = () => true) {
         // Never carry an older ECU NRC into a new attempt that is rejected
         // locally by the readiness gate (e.g. a stale speed signal).
         this.lastNrc = null;
@@ -156,6 +163,7 @@ class SafeDiag {
         this.busy = true;
         this.info = 'Sending ' + label + ' to BDC ...';
         try {
+            if (!beforeWrite()) { this.info = "Could not persist command reservation"; return false; }
             this.lastWriteAttempted = true;
             this.invalidate(did);
             const u = await this.diag.physical(this.target, 0x2E, data, 2300,
@@ -174,7 +182,7 @@ class SafeDiag {
 
     /** Use the documented seat-module heating levels and OFF. Keep the live
      * identity, readback and write in one diagnostic operation. */
-    async autoWriteSeatModule(side, action, expectedLevel, allowed) {
+    async autoWriteSeatModule(side, action, expectedLevel, allowed, beforeWrite = () => true) {
         const module = E.SEAT_MODULES[side];
         const valid = action === 0 ? E.isModuleHeatLevel(expectedLevel) :
             E.isModuleHeatLevel(action) && (expectedLevel === 0 || expectedLevel === action);
@@ -195,12 +203,14 @@ class SafeDiag {
         try {
             const id = E.classify(E.ID_DID, await request(0x22, [E.ID_DID >> 8, E.ID_DID & 255]));
             if (id.state !== 'ok' || bytes(id.payload.slice(0, 3)).replace(/ /g, '') !== module.index)
-                return { state: 'unreadable', detail: 'Live ' + module.sgbd + ' identification unavailable' };
+                return { state: id.state === 'ok' ? 'unsupported' : 'unreadable',
+                    detail: 'Live ' + module.sgbd + ' identification unavailable', nrc: id.nrc };
             if (starting) {
                 const codedDid = E.MODULE_DID.coded;
                 const coded = E.classify(codedDid, await request(0x22, [codedDid >> 8, codedDid & 255]));
                 if (coded.state !== 'ok' || E.codedSeatHeating(coded.payload) !== '2-circuit')
-                    return { state: 'unreadable', detail: 'D701 does not confirm 2-circuit seat heating' };
+                    return { state: coded.state === 'ok' ? 'unsupported' : 'unreadable',
+                        detail: 'D701 does not confirm 2-circuit seat heating', nrc: coded.nrc };
             }
             if (!ready()) return { state: 'blocked', detail: 'Conditions changed during identification' };
             const reply = await request(0x22, did);
@@ -208,19 +218,21 @@ class SafeDiag {
             const decoded = read.state === 'ok' ? E.decodeModuleSeat(read.payload) : null;
             if (!decoded || !decoded.complete || read.length !== E.D714_LENGTH)
                 return { state: 'unreadable', detail: 'D714 ' + (read.state === 'ok' ?
-                    'invalid seat readback ' + bytes(reply) : errorFor(reply)) };
+                    'invalid seat readback ' + bytes(reply) : errorFor(reply)), nrc: read.nrc };
             if (decoded.level !== expectedLevel)
-                return { state: 'different', detail: 'D714 reports level ' + decoded.level };
+                return { state: 'different', level: decoded.level, detail: 'D714 reports level ' + decoded.level };
             if (!ready()) return { state: 'blocked', detail: 'Conditions changed during seat readback' };
 
             // Action byte and six zeros. The level-2 and OFF frames were
             // confirmed on the vehicle in #2.
+            if (!beforeWrite()) return { state: "blocked", detail: "Could not persist command reservation" };
             sentAt = this.lastWriteAt = Date.now();
             const ack = await request(0x2E, [...did, action, 0, 0, 0, 0, 0, 0]);
             if (ack && ack[0] === 0x6E && ack[1] === did[0] && ack[2] === did[1])
                 return { state: 'acknowledged', detail: bytes(ack), sentAt };
             const rejected = ack && ack[0] === 0x7F && ack[1] === 0x2E && ack.length >= 3;
-            return { state: rejected ? 'rejected' : 'unconfirmed', detail: errorFor(ack), sentAt };
+            return { state: rejected ? 'rejected' : 'unconfirmed', detail: errorFor(ack),
+                nrc: rejected ? ack[2] : null, sentAt };
         } catch (e) {
             return { state: sentAt === null ? 'unreadable' : 'unconfirmed',
                 detail: String(e.message || e), sentAt };

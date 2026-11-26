@@ -55,13 +55,24 @@ function fileLog(level, msg) {
         fs.appendFileSync(LOG_FILE, new Date().toISOString() + ' ' + level + ' ' + msg + '\n');
     } catch (e) { /* data dir not writable (host preview) */ }
 }
+let classifySdkDebug;
+const debugEvents = new Map();
+function logSdkDebug(message) {
+    if (!classifySdkDebug || !classifySdkDebug(message)) return false;
+    const now = Date.now(), entry = debugEvents.get(message);
+    if (entry && now - entry.at < 30000) { entry.count++; return true; }
+    fileLog('SDK_DEBUG', message + (entry && entry.count ? ' (repeated ' + entry.count + ' times)' : ''));
+    if (debugEvents.size >= 100 && !entry) debugEvents.delete(debugEvents.keys().next().value);
+    debugEvents.set(message, { at: now, count: 0 });
+    return true;
+}
 // The SDK can swallow the first RHMI resource error and fail later with a misleading
 // null entry-point factory. Preserve the original warnings/errors in the app log.
 ['warn', 'error'].forEach((level) => {
     const original = sdkLog[level];
     sdkLog[level] = (...args) => {
         const message = args.map((x) => x && x.stack || String(x)).join(' ');
-        if (message.indexOf(SPEC.id + ': ') !== 0) fileLog('SDK_' + level.toUpperCase(), message);
+        if (message.indexOf(SPEC.id + ': ') !== 0 && !logSdkDebug(message)) fileLog('SDK_' + level.toUpperCase(), message);
         return original.apply(sdkLog, args);
     };
 });
@@ -71,7 +82,8 @@ function fileLog(level, msg) {
     const original = sdkLog.info;
     sdkLog.info = (...args) => {
         const message = args.map((x) => x && x.stack || String(x)).join(' ');
-        if (/conditionalLoading|_createRhmiApplication/.test(message) && message.indexOf(SPEC.id + ': ') !== 0) fileLog('SDK_INFO', message);
+        if (message.indexOf(SPEC.id + ': ') !== 0 && !logSdkDebug(message) &&
+            /conditionalLoading|_createRhmiApplication/.test(message)) fileLog('SDK_INFO', message);
         return original.apply(sdkLog, args);
     };
 }
@@ -526,6 +538,7 @@ function widgetText(s) {
 
 /* ---------------- run ---------------- */
 async function run(impl) {
+    classifySdkDebug = impl && impl.isSdkDebug;
     try { return await runInner(impl); } catch (e) {
         // log only: no process.exit here. On the car an unexpected exit makes CorruptAppsHandler
         // wipe the app's data, and a second one uninstalls a custom app.
@@ -707,6 +720,9 @@ async function runInner(impl) {
         });
     });
 
+    // A native background service must not wait for entry-point mapping or settings rendering.
+    const backgroundStart = impl && impl.start && impl.startBeforeScreen ?
+        Promise.resolve().then(() => impl.start(ctx)).catch(e => log.error('background app start', e)) : null;
     // entry points (tiles): map them to the main screen once, up front, like
     // BMW's own apps do; a tap then only opens the mapped state
     const mainName = (SPEC.screens && SPEC.screens[0] && SPEC.screens[0].name) || 'MAIN';
@@ -748,6 +764,7 @@ async function runInner(impl) {
             new Promise((res) => { timer = setTimeout(() => { log.warn(what + ' still pending after ' + ms + ' ms, continuing'); res(); }, ms); }),
         ]).catch((e) => log.error(what, e)).then(() => clearTimeout(timer));
     };
+    if (backgroundStart) await step('background app start', backgroundStart, 5000);
     // push every screen's rows to the HMI once (BMW apps do this via
     // updateResources before opening a state); until then the HMI has no rows
     // and lists render empty
@@ -758,7 +775,8 @@ async function runInner(impl) {
         .map((s) => ui.comp(s.name)).filter((st) => st && st.updateResources)
         .map((st) => st.updateResources())), 4000);
     await step('settings screen', wireSettings(ctx), 3000);
-    if (impl && impl.start) await step('app start', Promise.resolve().then(() => impl.start(ctx)), 5000);
+    if (impl && impl.start && !impl.startBeforeScreen)
+        await step('app start', Promise.resolve().then(() => impl.start(ctx)), 5000);
     await app.initialized();
     log.info('initialized (start reason ' + app.startReason + ')');
     // launched by a tile tap / bookmark: the execute event came before we

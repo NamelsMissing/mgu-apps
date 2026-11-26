@@ -94,3 +94,45 @@ test('STOP clears timers and does not emit another extension', () => {
     assert.deepEqual(c.step({ now: start + 240000, tempC: 0,
         tempAt: start, cfg }), [], 'no automatic restart/extension after cancel');
 });
+
+test('parked AUTOSTART assigns a cycle on the first ON and resumes the same session after a crash', () => {
+    const times = { onAt: start - 30 * M, offAt: start - 15 * M, usedOnAt: start - 30 * M };
+    const c = new Cycle.VehicleCycle(times, 10, false, true);
+    assert(c.observe(10, start).changed);
+    assert(c.canStart());
+    assert.match(c.source, /persisted vehicle OFF/);
+    c.channels['Driver seat'] = 'sent';
+    const resumed = new Cycle.VehicleCycle(c.snapshot(), 10, false, true);
+    resumed.observe(10, start + 30000);
+    assert.equal(resumed.onAt, start);
+    assert.equal(resumed.channels['Driver seat'], 'sent');
+    assert(resumed.canStart(), 'other channels can still start within the original window');
+    assert.equal(resumed.observe(8, start + 40000).changed, false, 'start-stop leaves the session intact');
+    assert.equal(resumed.observe(undefined, start + 45000).changed, false);
+    assert.equal(resumed.observe(10, start + 46000).changed, false);
+    const late = new Cycle.VehicleCycle(resumed.snapshot(), 10, false, true);
+    late.observe(10, start + 3 * M);
+    assert(!late.canStart());
+});
+
+test('a manual launch, ambiguous wake, corrupt record or short stop cannot supply a cold start', () => {
+    for (const [saved, autostart] of [
+        [{ onAt: start - 30 * M, offAt: start - 15 * M }, false],
+        [{ offAt: 'invalid', onAt: 'invalid' }, true],
+        [{ offAt: start + M }, true],
+        [{ offAt: start - M }, true],
+        [{ offAt: start - 20 * M, lastActivationAt: start - M }, true],
+    ]) {
+        const c = new Cycle.VehicleCycle(saved, 10, false, autostart);
+        c.observe(10, start);
+        assert(!c.canStart());
+    }
+    const c = new Cycle.VehicleCycle({}, 10, false, true);
+    c.observe(undefined, start);
+    assert(!c.canStart());
+    assert(!Cycle.driveReady(7));
+    assert(!Cycle.driveReady('WOHNEN'));
+    c.observe(5, start + M);
+    c.observe(10, start + 11 * M);
+    assert(c.canStart());
+});

@@ -11,8 +11,8 @@ test('failed preflight retries only the failed heater; duration starts at ACK', 
     p.acknowledge(wheel,true,101000);
     p.acknowledge(seat,false,102000,true);
     assert.equal(p.remaining('Driver seat',102000),0);
-    assert.equal(step(p,109999).length,0);
-    const [again] = step(p,110000);
+    assert.equal(step(p,103999).length,0);
+    const [again] = step(p,104000);
     assert.equal(again.device,'Driver seat');
     assert.equal(again.attempt,2);
     p.acknowledge(again,true,111000);
@@ -49,7 +49,7 @@ test('attempt count bounded even before deadline', () => {
     for(let t=100000;t<220000;t+=8000) {
         for(const i of step(p,t)) {count++;p.acknowledge(i,false,t,true);}
     }
-    assert.equal(count,16);
+    assert.equal(count,12);
     assert.equal(p.active.size,0);
 });
 test('new ignition after cancellation can re-arm', () => {

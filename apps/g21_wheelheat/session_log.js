@@ -4,7 +4,8 @@ const fs = require('fs');
 const path = require('path');
 
 const RAW_FILE_TAIL_BYTES = 64000;
-const WARNING_RE = /SDK_(?:ERROR|WARN)|UNHANDLED REJECTION|\b(?:ERROR|FATAL)\b/i;
+const WARNING_RE = /SDK_(?:DEBUG|ERROR|WARN)|UNHANDLED REJECTION|\b(?:ERROR|FATAL)\b/i;
+const isSdkDebug = message => /\bUSSO\b|UserManager|TokenImpl|AnalyticsService|APP_(?:START|MEMORY|CPU) discarded/i.test(message);
 const IMPORTANT_RE = /REJECT|ERROR|BLOCK|FAILED|UNCONFIRMED|BUSY|VEHICLE ON|PROCESS START|UI OPEN/i;
 
 function readTail(filename, maxBytes) {
@@ -39,7 +40,19 @@ function sessionWarnings(ctx, sinceAt, maxLines) {
         }
     }
     all.sort((a, b) => a.at - b.at);
-    return all.filter((e, index) => index === 0 || e.at !== all[index - 1].at ||
+    const debug = new Map();
+    for (const e of all) {
+        if (!isSdkDebug(e.message) && !e.message.startsWith('SDK_DEBUG '))
+            continue;
+        e.kind = 'SDK DEBUG';
+        const previous = debug.get(e.message);
+        if (previous) previous.count++;
+        else debug.set(e.message, { event: e, count: 1 });
+    }
+    for (const { event, count } of debug.values())
+        if (count > 1) event.message += ' (×' + count + ')';
+    return all.filter(e => e.kind !== 'SDK DEBUG').concat(Array.from(debug.values(), d => d.event))
+        .sort((a, b) => a.at - b.at).filter((e, index) => index === 0 || e.at !== all[index - 1].at ||
         e.message !== all[index - 1].message).slice(-Math.max(0, Math.min(300, maxLines || 80)));
 }
 
@@ -66,4 +79,18 @@ function consoleLines(events, warnings, sinceAt) {
     return lines.slice(-800);
 }
 
-module.exports = { consoleLines, sessionWarnings };
+function filterEvents(events, filter) {
+    const patterns = {
+        AutoHeat: /^(AUTO|START|BACKGROUND|PLAN)/,
+        Vehicle: /^VEHICLE/,
+        Cycle: /CYCLE|SESSION|PROCESS START/,
+        Commands: /COMMAND|ACK|REJECT|BLOCK|STOP/,
+        ECU: /ECU|^READ|^SMFA|^SMBF|^SDK$/,
+        Readback: /READBACK|^READ|STATUS|CONFIRMED|OVERRIDE/,
+        'SDK debug': /^SDK/,
+    };
+    return events.filter(e => filter === 'SDK debug' ? patterns[filter].test(e.kind) :
+        e.kind !== 'SDK DEBUG' && (!patterns[filter] || patterns[filter].test(e.kind)));
+}
+
+module.exports = { consoleLines, sessionWarnings, filterEvents, isSdkDebug };
