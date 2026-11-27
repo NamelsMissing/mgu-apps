@@ -1,0 +1,74 @@
+{
+  "id": "active_sound",
+  "title": "Active Sound",
+  "description": "Active sound design: 16 synthesized engine sounds (inline-6, V8, V10, V12, rotary, boxer, diesel, electric, turbine) that follow the real engine speed and torque. Plays on the phone (QR code, through CarPlay or Bluetooth) or on head-unit ALSA where available.",
+  "version": "0.1.0",
+  "vendor": "NamelsMissing",
+  "loggingId": "OASD",
+  "iconGlyph": "ASD",
+  "cpuLimit": 50,
+  "signals": {
+    "de.bmw.infotainment.vehicle.CDS": {
+      "statusEngineSpeed2": "rs"
+    },
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "_optional": "Load falls back to a fixed value without acceleration",
+      "statusLongitudinalAccelerationMassCenter": "rs",
+      "statusLateralAccelerationMassCenter": "rs"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "_optional": "Load from acceleration instead of crankshaft torque",
+      "statusActualValueTorque2": "rs"
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Active Sound",
+      "buttons": [
+        ["BTN_TOGGLE", "Sound on / off"],
+        ["BTN_NEXT", "Next engine"],
+        ["BTN_PREV", "Previous engine"],
+        ["BTN_VOLUP", "Volume +"],
+        ["BTN_VOLDN", "Volume -"],
+        ["BTN_PAGE", "Next page"],
+        ["BTN_EXPORT", "Export demo WAV"]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "theme",
+      "label": "Colour theme",
+      "type": "choice",
+      "default": "m_tricolour",
+      "options": [["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]
+    },
+    {
+      "key": "demo",
+      "label": "Demo data (no car)",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "Show when the car does not answer (silent)"], ["on", "On, with sound (bench test)"], ["off", "Off"]]
+    },
+    {
+      "key": "layout",
+      "label": "Screen layout",
+      "type": "choice",
+      "default": "full",
+      "options": [["full", "Full screen"], ["standard", "Standard"]]
+    },
+    {
+      "key": "renderer",
+      "label": "Renderer",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "GPU 60 fps"], ["software", "Software"]]
+    }
+  ],
+  "showRepoCredits": false
+}

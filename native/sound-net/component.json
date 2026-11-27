@@ -1,0 +1,17 @@
+{
+  "id": "mgu-sound-net",
+  "kind": "tool",
+  "version": "0.1.0",
+  "title": "Active Sound Phone Port",
+  "description": "Opens TCP 18885 on wlan_bridge for the Active Sound phone page, only while Active Sound listens",
+  "mguHmi": ["ID7"],
+  "files": [
+    {"path": "mgu-sound-net", "mode": "0755"},
+    {"path": "firewall.js", "mode": "0644"},
+    {"path": "server.js", "mode": "0644"}
+  ],
+  "units": [{"name": "mgu-sound-net.service", "from": "mgu-sound-net.service"}],
+  "enable": [{"unit": "mgu-sound-net.service", "target": "multi-user.target"}],
+  "recmgr": ["mgu-sound-net"],
+  "restart": ["mgu-sound-net.service"]
+}

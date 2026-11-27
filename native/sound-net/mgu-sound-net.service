@@ -1,0 +1,18 @@
+[Unit]
+Description=Active Sound phone link firewall helper
+After=oapcontroller.service
+RequiresMountsFor=/var/opt
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/var/opt/mgu-sound-net/current/mgu-sound-net
+ExecStopPost=-/usr/bin/node /var/opt/mgu-sound-net/current/firewall.js close
+User=root
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

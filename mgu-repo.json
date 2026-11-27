@@ -299,6 +299,39 @@
       "uninstallable": true
     },
     {
+      "id": "active_sound",
+      "kind": "app",
+      "title": "Active Sound",
+      "version": "0.1.0",
+      "path": "apps/active_sound",
+      "icon": "icon.png",
+      "mguHmi": [
+        "ID7"
+      ],
+      "build": {
+        "python": "tools/build_store_app.py",
+        "args": [
+          "{id}"
+        ],
+        "sdk": "oap-sdk",
+        "output": "dist/{id}@{version}.tgz"
+      },
+      "requires": {
+        "mgu-sound-net": "0.1.0"
+      }
+    },
+    {
+      "id": "mgu-sound-net",
+      "kind": "tool",
+      "title": "Active Sound Phone Port",
+      "version": "0.1.0",
+      "path": "native/sound-net",
+      "mguHmi": [
+        "ID7"
+      ],
+      "uninstallable": true
+    },
+    {
       "id": "light_flasher",
       "kind": "app",
       "title": "Light Flasher",
