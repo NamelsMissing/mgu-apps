@@ -139,7 +139,7 @@ The PC suite covers original programs, core adapters, saves, UI targets, fresh-s
 
 ### BMW acceptance (manual)
 
-1. Install Renderer 0.6.25, restart the head unit, then install PCM Output 0.2.0, Retro Cores 0.3.0 and GameStation 0.8.0. The local Store build still requires the BMW OAP SDK.
+1. Install Renderer 0.6.25, restart the head unit, then install PCM Output 0.2.0, Retro Cores 0.3.0 and GameStation 0.8.1. The local Store build still requires the BMW OAP SDK.
 2. Confirm a dedicated GameStationMedia mapping from the unit's integrator or collect the Audio Diagnostics log showing what the current firmware exposes. While parked and with the front media sink free, run **Test Speaker**. Verify actual device and BMW connection IDs, compare queued and ALSA-written frames, and manually confirm audible output and the vehicle volume control.
 3. Play legal test programs for the systems in the compatibility table. Check mono centring, stereo channel placement, pitch and sync at 20, 30 and 60 FPS output, and compare underruns and delay. Play Pong and check all three effects. Exercise rapid pause/resume, firmware media-source changes, focus loss, loss of valid speed, restart, exited app and unavailable device. Confirm only GameStation's own link disappears and concurrent phone, CarPlay/Android Auto, voice guidance and warning sounds remain available.
 4. Compare Standard, Fullscreen and Immersive in both BMW layouts. Test scaling and the menu via touch, the BMW action, iDrive navigation and the paired phone. With the phone disconnected, use BMW Back/Menu and reopen. Verify safety holds, return to Games and unchanged save data. Repeat the Diagnostics GPU-pattern checks and reload Zelda's battery save.
