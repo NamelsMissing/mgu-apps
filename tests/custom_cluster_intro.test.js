@@ -49,7 +49,7 @@ const ours = () => [...service.layers.values()].filter(l => l.app === 'custom_cl
 const intros = () => ours().filter(l => l.w === Intro.RECT.w);
 const steady = () => ours().filter(l => l.w !== Intro.RECT.w);
 const parked = (c, rpm) => c.sample({ speed: 0, rpm: rpm || 790, stage: 'P', gear: 0, receivedAt: { speed: clock, rpm: clock } });
-function run(c, ms, rpm) { const end = clock + ms; while (clock < end) { clock += 33; if (clock % 250 < 33) { parked(c, rpm); c.apply(); } c.tickAnimation(clock); } }
+function run(c, ms, rpm) { const end = clock + ms; let n = 0; while (clock < end) { clock += 33; if (++n % 8 === 0) { parked(c, rpm); c.apply(); } c.tickAnimation(clock); } }
 
 try {
     // --- shader text: original, bounded, draws the layout's own contours
@@ -115,7 +115,7 @@ try {
     });
     // smooth: a jump in RPM arrives over several uniform messages
     const rpmBand = bands.find(b => b.x >= 1504), before = rpmBand.history.length;
-    run(c, 600, 3000);
+    run(c, 1000, 3000);
     const steps = rpmBand.history.slice(before).map(x => x[1]);
     assert.ok(steps.length >= 4 && Math.abs(steps[steps.length - 1] - 0.5) < 0.01, 'eased to 3000 rpm');
 

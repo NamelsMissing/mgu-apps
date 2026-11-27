@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Custom Cluster 0.7.0 - KOMBI-only test control and lightweight main status page.
+ * Custom Cluster 0.7.1 - KOMBI-only test control and lightweight main status page.
  * Stock is the default. Real values only can reach cluster-render; emulator
  * and demo values stay exclusively on the centre-screen preview.
  */
@@ -9,9 +9,11 @@ const Car = require('./kit/car');
 const G = require('./kit/gauges');
 const { ClusterLayers } = require('./cluster_layers.js');
 const { WazeControl } = require('./waze_control.js');
-const { resolveColor, resolve6WBColor, colorHex } = require('./cluster_colors.js');
+const { resolveColor, resolve6WBColor, colorHex, sixwbThemeOf } = require('./cluster_colors.js');
 const QR = require('./cluster_diagnostics.js');
 const { LiveLog } = require('./live_log.js');
+const { renderMainPage } = require('./main_page.js');
+const DRIVE_NAMES = { comfort: 'Comfort', sport: 'Sport', eco: 'ECO PRO', adaptive: 'Adaptive', unknown: 'unknown', unavailable: 'not available' };
 const { BackgroundStatus } = require('./background_status.js');
 
 function ageText(age) { return age == null ? 'no sample' : age + 's old'; }
@@ -158,7 +160,9 @@ mgu.run({
                 ' test=selected_layout target=panel');
             testNotice = 'Settings changed. Test KOMBI uses the selected layout.';
         });
-        car.onSample((d) => { if (!d.demo) cluster.sample(d); });
+        // Preview data may be demo/emulator values; only real ones reach the cluster.
+        let previewData = null;
+        car.onSample((d) => { previewData = d; if (!d.demo) cluster.sample(d); });
         // Driving mode (read-only FES) for colour "Follow driving mode". Optional:
         // without it the colour stays Comfort.
         let driveModeName = 'unavailable';
@@ -437,33 +441,18 @@ mgu.run({
                 const t=ctx.theme(),st=cluster.status();
                 const cv=ctx.canvas(1600,520).clear(t.bg);
                 const layout=settings.get('layout');
-                const names={stock:'BMW original',sixwb:'BMW 6WB',oem:'G21 OEM-style recreation',
-                    g80:'G80-inspired',sport:'M Sport',classic:'Classic',minimal:'Minimal digital'};
                 const activeOptions={accent:settings.get('accent'), colorMode:settings.get('colorMode'),
                     rgbRed:settings.get('rgbRed'),rgbGreen:settings.get('rgbGreen'),rgbBlue:settings.get('rgbBlue'),
                     colorBrightness:settings.get('colorBrightness'),driveMode:st.driveMode,cycleSeconds:settings.get('cycleSeconds'),
                     sixwbTheme:settings.get('sixwbTheme'),sixwbColorSource:settings.get('sixwbColorSource')};
                 const color=colorHex(layout==='sixwb'?resolve6WBColor(activeOptions,Date.now()):resolveColor(activeOptions,Date.now()));
-                G.frame(cv,t,['Custom Cluster'],0,[{text:st.ready?'RENDERER READY':'RENDERER OFFLINE'}]);
-                cv.text('Selected KOMBI layout',48,100,27,t.dim);
-                cv.text(names[layout]||layout||'Unknown',48,164,44,t.text);
-                cv.text('Instrument colour: '+color,48,211,23,t.text);
-                cv.text('Test KOMBI sends this layout to the instrument display only.',48,264,21,t.text);
-                cv.text('Waze: '+waze.status+'   |   Driving mode: '+driveModeName+
-                    '   |   Intro: '+({start:'once per start',always:'every time',off:'off'}[settings.get('intro')]||'once per start'),48,309,21,t.dim);
-                cv.text('Test status: '+(st.panelActive?(st.autoRun?'AUTOMATIC / only while parked in P':'REQUESTED / '+st.secondsLeft+'s remaining'):testNotice).slice(0,103),
-                    48,366,21,st.panelActive?'#2fd27a':t.text);
-                cv.text('Last renderer result: '+String(st.disarmReason||'-').slice(0,90),48,406,19,t.dim);
-                if(st.autoMode==='parked')cv.text('Automatic KOMBI (no menu needed): '+String(st.autoReason||'-').slice(0,70),48,444,19,
-                    st.autoRun&&st.panelActive?'#2fd27a':t.dim);
-                cv.text('Renderer: '+(st.ready?'Connected':'Offline'),1100,110,24,st.ready?'#2fd27a':t.warn);
-                cv.text('Selector: '+(st.gearLabel||st.gearPosition||'?'),1100,157,23,t.text);
-                cv.text('Live speed/RPM: '+(st.live?'YES':'NO'),1100,201,21,t.text);
-                cv.text('Sample age: '+ageText(st.sampleAgeSeconds),1100,240,20,t.dim);
-                cv.text('KOMBI safe: '+(st.parked?'YES':'NO'),1100,280,22,st.parked?'#2fd27a':t.warn);
-                cv.text('Slot: '+String(st.panelTargetState||'-').slice(0,25),1100,324,19,t.dim);
-                cv.text(st.panelActive?(st.introPlaying?'Intro playing':st.autoRun?'KOMBI shown (automatic)':'Test active'):'No active custom panel',1100,365,19,t.text);
-                cv.text('Stationary only. Original BMW indicators must remain available.',48,482,19,t.warn);
+                const data=Object.assign({},previewData||{},{gearMode:settings.get('gearDisplay')});
+                renderMainPage(cv,t,G,{st,layout,accentHex:color,data,waze:'Waze: '+waze.status,
+                    driveMode:DRIVE_NAMES[driveModeName]||driveModeName,
+                    intro:({start:'once per start',always:'every time',off:'off'}[settings.get('intro')]||'once per start')+
+                        ' · '+(settings.get('needleSweep')===false?'no sweep':'sweep'),
+                    testNotice,sixwbTheme:sixwbThemeOf(activeOptions)},
+                    require('./kit/canvas').Canvas);
                 await ui.image('MAIN_GFX',cv);
                 lastUiError='';
             } catch(e){

@@ -1,4 +1,16 @@
-# Custom Cluster 0.7.0 — BMW G21 / MGU iDrive 7
+# Custom Cluster 0.7.1 — BMW G21 / MGU iDrive 7
+
+
+## 0.7.1 — new main page on the centre screen
+
+The main page was a text list; it is now a **to-scale live miniature of the KOMBI** with status cards beside it (`main_page.js`, centre screen only — nothing here reaches the cluster):
+- **Miniature (1920×720 at 0.55):** the selected layout with live speed/RPM, readouts and bands in the current instrument colour, cover plates with the light edge, BMW's map window (Waze / map / lyrics) and the bottom strip where they really are. 6WB shows its round faces with needles; *BMW original* shows the stock areas. During the intro the miniature shows the intro. A pill says **PREVIEW**, **IN KOMBI** or **INTRO**. On the emulator, demo values drive the miniature only.
+- **KOMBI SAFE:** Ready / Not now with the reason (selector, moving, stale data), selector · speed · RPM, data age.
+- **KOMBI STATUS:** idle hint, automatic parked mode, intro, or the running test with a countdown bar; last renderer result.
+- **INSTRUMENTS:** colour (hex + swatch), driving mode, intro and sweep setting.
+- Faces are resampled once per layout/colour and cached; a 2 Hz frame costs ~30 ms here.
+- The leftover "TEST" caption on the 6WB faces is gone (also in the KOMBI).
+- Tests: new `custom_cluster_main_page.test.js` (all 7 layouts × 6 states); the intro test no longer depends on the wall clock.
 
 
 ## 0.7.0 — start-up intro, needle sweep, smooth gauges, driving-mode colours

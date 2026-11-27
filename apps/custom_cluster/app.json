@@ -2,7 +2,7 @@
   "id": "custom_cluster",
   "title": "Custom Cluster",
   "description": "KOMBI layouts while parked: start-up intro, needle sweep, smooth gauges, driving-mode colours, diagnostics.",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "vendor": "custom",
   "loggingId": "OAQ7",
   "iconGlyph": "CC",

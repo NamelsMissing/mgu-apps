@@ -49,7 +49,6 @@ function face(pos, accent, theme, Canvas) {
         }
     }
     cv.text(pos.unit,c,192,17,dim,{align:'center',literal:true});
-    cv.text('TEST',c,214,16,'#e4bd7a',{align:'center',font:'bold',literal:true});
     return Buffer.from(cv.d);
 }
 

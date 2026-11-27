@@ -76,7 +76,9 @@ const deps = {
     './waze_control.js': { WazeControl: FakeWaze },
     './g80_preview.js': { drawG80Preview() {} },
     './sixwb_preview.js': { draw6WBPreview() {} },
-    './cluster_colors.js': { resolveColor() { return []; }, resolve6WBColor() { return []; }, colorHex() { return ''; } },
+    './cluster_colors.js': { resolveColor() { return []; }, resolve6WBColor() { return []; }, colorHex() { return ''; }, sixwbThemeOf() { return 'comfort'; } },
+    // Real page drawing is covered by custom_cluster_main_page.test.js.
+    './main_page.js': { renderMainPage(cv, t, G, m) { cv.text({ g80: 'G80-inspired' }[m.layout] || String(m.layout), 0, 0, 10, ''); } },
     './kit/canvas': { withAlpha() { return ''; } },
     './cluster_diagnostics.js': { report, matrix: (data) => data, draw() {},
         snapshot() { return 'test text'; }, save() { savedTxt++; return ['/tmp/saved.txt']; },
