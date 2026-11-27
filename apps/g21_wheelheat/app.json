@@ -1,7 +1,7 @@
 {
   "id": "g21_wheelheat",
   "title": "G21 Heating Comfort",
-  "description": "Automatic seat and steering-wheel heating with control-unit detection (BDC or seat modules), adjustable settings, manual controls, and diagnostic logs. Beta.",
+  "description": "Automatic seat and steering-wheel heating with control-unit detection (BDC or seat modules), adjustable settings, manual controls, and diagnostic logs. Stable.",
   "version": "0.5.5",
   "mguAppStartType": "autostart",
   "vendor": "G21 Offline Lab",
