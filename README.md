@@ -57,7 +57,7 @@ Version numbers below are those in the **main** store catalog. **Stable** is the
 
 | App | Version | Status | What it does |
 | --- | --- | --- | --- |
-| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.5** | Stable / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs; 0.5.5 improves cold-start activation and individual heating confirmation. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
+| [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.6** | Stable / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs; 0.5.6 detects cold starts without relying on the start reason (MGU boot gap and drive-ready heartbeat) and adds a start-conditions diagnosis. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
 | [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Stable / read-only | Requests diesel particulate-filter measurements and regeneration-history values from the DDE. DID scaling was reviewed offline; live routing and actual responses still need vehicle verification. Does **not** start forced regeneration. |
 | [**Ambient Lighting**](apps/g21_ambient/README.md) | **0.4.7** | Experimental | Reads the OEM BMW ambient-color status and offers manual selection of menu slots 1–12 with separate setter/readback feedback. Includes RGB previews, saved looks and carefully gated BDC LIN testing; aftermarket LED control is not yet verified. |
 
@@ -127,7 +127,7 @@ These apps are **not** in the main MGU Store catalog. Add the linked repository 
 
 For Blitzer Status, first update Custom Cluster to **0.6.11** or newer if you use it, then reinstall Blitzer Status from **beta** and replace the two iPhone Shortcut URLs with those shown by the app. Keep both repository sources in MGU Store for other apps and shared components.
 
-**Avoid an older duplicate:** The beta catalog also contains Heating Comfort **0.5.1**. Install Heating Comfort **0.5.5** from this **main** source rather than the older beta entry.
+**Avoid an older duplicate:** The beta catalog also contains Heating Comfort **0.5.1**. Install Heating Comfort **0.5.6** from this **main** source rather than the older beta entry.
 
 ## Good to know
 

@@ -56,7 +56,12 @@ test('headunit restart, unknown signal, ambiguous readiness and missing OFF fail
     const saved = c.snapshot();
     const restart = new Cycle.VehicleCycle(saved, 30, false);
     restart.observe(10, start + 36 * M);
-    assert.equal(restart.canStart(), false, 'reopening GUI is not new ignition');
+    assert.equal(restart.onAt, saved.onAt, 'a process restart is not a new ignition');
+    assert.match(restart.reason, /EXISTING VEHICLE CYCLE/, 'it only resumes the original window');
+    const later = new Cycle.VehicleCycle(saved, 30, false);
+    later.observe(10, start + 40 * M);
+    assert.equal(later.canStart(), false, 'outside the original window nothing restarts');
+    assert.match(later.reason, /SAME JOURNEY/);
     c.observe(12, start + 36 * M);
     assert.equal(c.mode, 'unknown');
     assert.equal(c.canStart(), false);

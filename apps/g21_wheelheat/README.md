@@ -118,6 +118,31 @@ The app package includes the MGU **autostart** setting. This allows the process 
 
 For Store setup and update details, see [Store Installation](../../STORE_INSTALLATION.md).
 
+## Vehicle-cycle detection (0.5.6)
+
+AutoHeat starts only once per journey, after the vehicle was parked for at least the configured
+minimum OFF time. The app accepts any of these as evidence of a new journey:
+
+| | Evidence | Needs |
+|---|---|---|
+| A | OFF → drive-ready seen live by the app | nothing else |
+| B | A vehicle OFF recorded by the app that is newer than every recorded drive-ready time | MGU booted ≤ 15 min before, or an AUTOSTART process |
+| C | Last drive-ready heartbeat before the MGU boot, MGU down ≥ 2 min | MGU uptime readable, MGU booted ≤ 15 min before the first drive-ready signal |
+| D | Last drive-ready heartbeat ≥ 2 min before this process started | AUTOSTART, process ≤ 15 min old |
+
+The start reason (`AUTOSTART` / `ENTRY_POINT`) no longer decides anything else: the MGU also
+starts autostart apps with `ENTRY_POINT`. A new MGU process alone is never treated as a new
+journey. Missing data is not treated as parked, OFF or a new journey. If nothing proves a new
+journey, the *Start conditions* view and the log list exactly which evidence is missing.
+Opening the app late in a drive (MGU up longer than 15 minutes) does not start heating.
+
+**Diagnostics → AutoHeat status → Start conditions** shows the live values and the final blocking
+reason. **Evaluate AutoHeat now** re-evaluates immediately and writes the full block to the log.
+It does not bypass any guard.
+
+Still to be confirmed on the vehicle: that `os.uptime()` reflects the MGU boot (the start log line
+`CYCLE … MGU uptime=` shows the raw value), and that the MGU restarts the process after parking.
+
 ## AutoHeat startup and diagnosis (0.5.5)
 
 The 26 November G21 log entered the old blocked branch because the first vehicle state arrived

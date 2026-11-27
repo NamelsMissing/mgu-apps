@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const mgu = require('./kit/mgu');
 const G = require('./kit/gauges');
@@ -55,10 +56,17 @@ mgu.run({
                 cancelledOnAt: ctx.settings.get('_vehicleCancelledOnAt'),
             } : {};
         }
+        // MGU uptime (seconds since boot). Used only as cycle evidence when
+        // plausible; ctx.uptimeMs lets offline tests inject a value.
+        const uptimeMs = typeof ctx.uptimeMs === 'function' ? ctx.uptimeMs : () => {
+            try { const u = os.uptime(); return Number.isFinite(u) && u > 0 ? u * 1000 : null; }
+            catch (_) { return null; }
+        };
         const cycle = new Cycle.VehicleCycle({
             ...savedCycle, lastActivationAt: ctx.settings.get('_autoCycleAt'),
-        }, offMinutes(), testConsumed, startReason === 'AUTOSTART');
+        }, offMinutes(), testConsumed, { startReason, uptimeMs, processStartedAt: appStartedAt });
         let cycleReason = cycle.reason;
+        let lastConditionsKey = '';
         const outside = { value: null, at: 0, raw: null };
         const acknowledged = new Set();
         const deviceStatus = new Map();
@@ -68,7 +76,7 @@ mgu.run({
         const pendingStops = new Set();
         const stopAttempts = new Map();
         let firstUiAt = 0, uiOpenCount = 0, cancelGeneration = 0;
-        let lastVehicleRaw = '', lastVehicleLogAt = 0;
+        let lastVehicleRaw = '', lastVehicleLogAt = 0, latestVehicleRaw = '';
         let tab = 0, busy = false, statusBusy = false, statusAt = 0;
         let lastAction = 'No heating command has been sent.';
         const eventFile = path.join(ctx.dataDir, 'heating_events.json');
@@ -76,7 +84,7 @@ mgu.run({
         // A verified ignition OFF also begins a new log session.
         let sessionStartedAt = appStartedAt, sessionReason = 'MGU PROCESS START';
         let events = [], sawVehicleOn = false;
-        let consoleOffset = 0, consoleTouchY = null, filter = 0, showAutoStatus = false;
+        let consoleOffset = 0, consoleTouchY = null, filter = 0, showAutoStatus = false, showConditions = false;
         const filters = ['All', 'AutoHeat', 'Vehicle', 'Cycle', 'Commands', 'ECU', 'Readback', 'SDK debug'];
         let warningCache = [], warningCacheAt = 0;
         const record = (kind, message) => {
@@ -127,7 +135,10 @@ mgu.run({
                 testConsumed ?
                     'One-shot test consumed; parking duration bypassed on next verified ignition ON' :
                     'One-shot startup test denied (reset not confirmed): ' + testError);
-        record('CYCLE', cycleReason);
+        record('CYCLE', cycleReason + '; MGU uptime=' + (cycle.uptime() === null ? 'unavailable' :
+            Math.round(cycle.uptime() / 1000) + 's') + '; last drive-ready=' + cycle.diagnostics(appStartedAt).lastOn +
+            '; last OFF=' + cycle.diagnostics(appStartedAt).lastOff +
+            (cycle.loadNotes.length ? '; discarded: ' + cycle.loadNotes.join(', ') : ''));
         if (typeof ctx.ui.onVisible === 'function') {
             ctx.ui.onVisible((name, shown) => {
                 if (name !== 'MAIN' && name !== 'SETTINGS') return;
@@ -238,6 +249,7 @@ mgu.run({
         watchVehicleSignal('de.bmw.infrastructure.VehicleCondition', {
             VehicleCondition: value => {
                 const raw = value && value.statusConditionVehicle;
+                latestVehicleRaw = String(raw);
                 const before = cycle.mode;
                 vehicleReportsOn = Cycle.driveReady(raw);
                 if (Cycle.condition(raw) === 'on' && !vehicleReportsOn) return;
@@ -286,6 +298,7 @@ mgu.run({
                     record('VEHICLE ON', observed.reason +
                         '; app started via ' + startReason +
                         '; UI shown=' + (firstUiAt ? 'yes' : 'no'));
+                    record('CYCLE CHECK', cycle.checks.join(' | '));
                 }
                 cycleReason = cycle.reason;
                 lastPlannerStatus = '';
@@ -826,11 +839,100 @@ mgu.run({
                 (!ecuVerified && E.allowsSeatModule(ecuProfile, cfg, side));
         }
 
+        function channelText(name, selected) {
+            if (!selected) return 'not selected';
+            const active = auto.active.get(name), info = deviceStatus.get(name);
+            const state = cycle.channels[name] || (active && active.pending ?
+                (active.attempts ? 'retry pending (attempt ' + active.attempts + ')' : 'start pending') :
+                info && info.error ? 'failed: ' + info.error : acknowledged.has(name) ? 'ACK, readback pending' : 'no command');
+            return state + (info && info.source ? ' via ' + info.source : '');
+        }
+
+        // Real runtime start conditions (diagnostics screen, log, Evaluate now).
+        function startConditions(now) {
+            const c = config(), r = tempReading(now);
+            const fresh = r.value !== null && now - r.at <= 120000;
+            const d = cycle.diagnostics(now);
+            const tempOk = fresh && r.value <= c.belowTemp;
+            const ecuOk = !!(ecuProfile && ecuProfile.complete !== false) && ctl.online;
+            const startUntil = cycle.onAt + START_WINDOW_MS;
+            const blocking = !c.autoEnabled ? 'AutoHeat disabled in settings'
+                : !vehicleReportsOn ? 'vehicle not drive-ready (VehicleCondition=' + (latestVehicleRaw || 'none') + ')'
+                : !cycle.mayContinue() ? 'manually cancelled for this drive'
+                : auto.active.size ? 'none - heating commands active/monitored'
+                : auto.fired ? 'none - start plan finished for this drive'
+                : !cycle.canStart() ? 'vehicle cycle: ' + cycle.reason
+                : !fresh ? (r.value === null ? 'outside temperature not received' : 'outside temperature stale')
+                : !tempOk ? 'outside ' + r.value.toFixed(1) + ' C above limit ' + c.belowTemp + ' C'
+                : !ctl.online ? 'TASU/BDC connection unavailable'
+                : !ctl.motionKnown ? 'no fresh vehicle speed'
+                : now >= startUntil ? 'start window expired'
+                : 'none - cold dwell, start imminent';
+            const rows = [
+                ['Background service', 'RUNNING since ' + Math.round((now - appStartedAt) / 1000) + 's, start ' + startReason],
+                ['AutoHeat enabled', c.autoEnabled ? 'YES' : 'NO'],
+                ['Ignition', (vehicleReportsOn ? 'ON (drive-ready)' : cycle.mode.toUpperCase()) +
+                    ', VehicleCondition=' + (latestVehicleRaw || 'none')],
+                ['Outside temperature', fresh ? r.value.toFixed(1) + ' C' : r.value === null ? 'not received' : 'stale'],
+                ['Temperature limit', c.belowTemp + ' C'],
+                ['Temperature condition', !fresh ? 'UNKNOWN' : tempOk ? 'PASSED' : 'NOT MET'],
+                ['ECU profile', ecuProfile ? ecuState + (ecuOk ? ' / BDC online' : ' / BDC offline') : 'NOT DETECTED'],
+                ['Vehicle cycle', d.state],
+                ['Cycle evidence', d.evidence],
+                ['Missing cycle evidence', d.missing],
+                ['MGU uptime', d.mguUptime + '; at first ON ' + d.firstOnUptime],
+                ['Last verified OFF', d.lastOff],
+                ['Last drive-ready before', d.lastOn + ' (heartbeat ' + d.heartbeat + ')'],
+                ['Calculated OFF duration', d.offDuration],
+                ['Required OFF duration', d.required],
+                ['Persisted cycle ID', d.cycleId],
+                ['Last confirmed heating', d.lastHeating],
+                ['Next evaluation', d.nextEvaluation],
+                ['Steering wheel', channelText('Steering wheel', c.wheelAuto)],
+                ['Driver seat', channelText('Driver seat', c.seatDriver)],
+                ['Passenger seat', channelText('Passenger seat', c.seatPassenger)],
+                ['Final blocking reason', blocking],
+            ];
+            return { rows, blocking, cycle: d };
+        }
+
+        // Diagnostics button: re-evaluate now. Bypasses no guard.
+        function evaluateNow() {
+            const now = Date.now();
+            if (cycle.evaluate(now)) {
+                if (!persistCycle()) {
+                    cycle.eligible = false;
+                    cycle.reason = 'VEHICLE STATE STORAGE NOT VERIFIED: automatic start blocked';
+                }
+                if (cycle.canStart()) auto.rearm();
+                cycleReason = cycle.reason;
+            }
+            lastPlannerStatus = '';
+            const cond = startConditions(now);
+            record('EVALUATE', 'manual AutoHeat evaluation (no guard bypassed)');
+            for (const [label, value] of cond.rows) record('EVAL ' + label.toUpperCase(), String(value));
+            record('EVAL CYCLE CHECKS', cycle.checks.join(' | ') || 'no drive-ready decision yet');
+            autoStep().catch(e => ctx.log.error(e));
+        }
+
         async function autoStep() {
             if (busy || statusBusy) return;
             busy = true;
             try {
                 const now = Date.now(), cfg = config(), reading = tempReading(now);
+                // Resolve an unknown cycle without waiting for a signal change.
+                if (cycle.evaluate(now)) {
+                    if (!persistCycle()) {
+                        cycle.eligible = false;
+                        cycle.reason = 'VEHICLE STATE STORAGE NOT VERIFIED: automatic start blocked';
+                    }
+                    if (cycle.canStart()) auto.rearm();
+                    record('CYCLE', cycle.reason);
+                    record('CYCLE CHECK', cycle.checks.join(' | '));
+                    cycleReason = cycle.reason;
+                    lastPlannerStatus = '';
+                }
+                if (cycle.heartbeat(now)) persistCycle();
                 cfg.seatModuleRoutes = { driver: viaSeatModule(cfg, 'driver'), passenger: viaSeatModule(cfg, 'passenger') };
                 cfg.pendingSeatRoutes = {
                     driver: seatRoutePending(cfg, 'driver'), passenger: seatRoutePending(cfg, 'passenger'),
@@ -913,6 +1015,13 @@ mgu.run({
                         offMinutes() + 'm; vehicle=' + cycle.mode);
                     lastPlannerStatus = plannerStatus;
                 }
+                const cond = startConditions(now);
+                const condKey = cond.blocking + '|' + cond.cycle.state + '|' + cond.cycle.evidence;
+                if (condKey !== lastConditionsKey) {
+                    lastConditionsKey = condKey;
+                    record('START CONDITIONS', 'cycle=' + cond.cycle.state + '; evidence=' + cond.cycle.evidence +
+                        '; missing=' + cond.cycle.missing + '; final=' + cond.blocking);
+                }
                 const pendingBefore = Array.from(auto.active).filter(([, s]) => s.pending).map(([name]) => name);
                 const intents = auto.step({ now, tempC: reading.value, tempAt: reading.at,
                     cfg: Object.assign({}, cfg, { autoEnabled: enabledForPlanner }) });
@@ -971,7 +1080,19 @@ mgu.run({
         ctx.ui.onClick('BTN_LOG_DOWN', () => { if (tab === 2) consoleMove(-12); });
         ctx.ui.onClick('BTN_LOG_LATEST', () => { if (tab === 2) consoleOffset = 0; });
         ctx.ui.onClick('BTN_DETECT', redetect);
-        ctx.ui.onClick('BTN_AUTO_STATUS', () => { if (tab === 1) showAutoStatus = !showAutoStatus; });
+        // Diagnostics sub-views: read-back -> AutoHeat status -> start conditions.
+        const nextStatusView = () => {
+            if (showConditions) showConditions = false;
+            else if (showAutoStatus) { showAutoStatus = false; showConditions = true; }
+            else showAutoStatus = true;
+        };
+        ctx.ui.onClick('BTN_AUTO_STATUS', () => { if (tab === 1) nextStatusView(); });
+        ctx.ui.onClick('BTN_EVALUATE', () => {
+            setTab(1);
+            showAutoStatus = false;
+            showConditions = true;
+            evaluateNow();
+        });
         const nextFilter = () => { filter = (filter + 1) % filters.length; consoleOffset = 0; };
         ctx.ui.onClick('BTN_LOG_FILTER', () => { if (tab === 2) nextFilter(); });
         if (typeof ctx.onTap === 'function') ctx.onTap((x, y) => {
@@ -981,9 +1102,11 @@ mgu.run({
                 else if (x >= 1102 && x < 1288) consoleMove(-12);
                 else if (x >= 1298 && x < 1537) consoleOffset = 0;
             } else if (tab === 1 && x >= 920 && x < 1210 && y >= 112 && y <= 165) {
-                showAutoStatus = !showAutoStatus;
-            } else if (tab === 1 && x >= 1236 && x < 1546 && y >= 112 && y <= 165)
-                redetect();
+                nextStatusView();
+            } else if (tab === 1 && x >= 1236 && x < 1546 && y >= 112 && y <= 165) {
+                if (showAutoStatus || showConditions) evaluateNow();
+                else redetect();
+            }
         });
         if (typeof ctx.onTouch === 'function') ctx.onTouch((phase, x, y) => {
             if (tab !== 2) { consoleTouchY = null; return; }
@@ -1081,9 +1204,26 @@ mgu.run({
                         auto.remaining('Passenger seat', now)) + 's', 820, 453, 30, t.accent);
                 if (ctx.settings.saveError)
                     text(cv, 'Settings could not be saved; see log', 820, 482, 20, t.warn);
+            } else if (tab === 1 && showConditions) {
+                G.panel(cv, t, 24, 62, 1552, 445, 'AutoHeat start conditions');
+                text(cv, 'BACK TO READBACK', 945, 140, 21, t.accent);
+                cv.fillRect(1236, 112, 310, 40, '#284354');
+                text(cv, 'EVALUATE NOW', 1256, 140, 21, t.text);
+                const cond = startConditions(now);
+                const rows = cond.rows.slice(0, -1);
+                rows.forEach(([label, value], i) => {
+                    const col = i < 11 ? 0 : 1, row = i < 11 ? i : i - 11;
+                    const bad = /NOT MET|UNKNOWN|NO$|NOT DETECTED|offline|failed|unavailable/.test(String(value));
+                    text(cv, (label + ': ' + value).slice(0, 72), 54 + col * 770, 186 + row * 27, 18,
+                        bad ? t.warn : t.text);
+                });
+                text(cv, ('Final blocking reason: ' + cond.blocking).slice(0, 130), 54, 490, 19,
+                    /^none/.test(cond.blocking) ? t.accent : t.warn, { font: 'bold' });
             } else if (tab === 1 && showAutoStatus) {
                 G.panel(cv, t, 24, 62, 1552, 445, 'AutoHeat status');
-                text(cv, 'STATUS / READBACK', 945, 140, 21, t.accent);
+                text(cv, 'START CONDITIONS', 945, 140, 21, t.accent);
+                cv.fillRect(1236, 112, 310, 40, '#284354');
+                text(cv, 'EVALUATE NOW', 1256, 140, 21, t.text);
                 text(cv, 'Background running | start: ' + startReason + ' | vehicle: ' +
                     (vehicleReportsOn ? 'Drive-ready ON' : cycle.mode.toUpperCase()), 54, 140, 22, t.text);
                 text(cv, 'Cycle: ' + cycle.source + ' | minimum OFF: ' + offMinutes() + ' min', 54, 190, 22, t.text);

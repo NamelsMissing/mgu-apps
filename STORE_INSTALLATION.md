@@ -2,7 +2,7 @@
 
 1. In MGU Store add `namelsmissing/mgu-apps`. Use a lowercase L after `name`. The public repository is available without GitHub sign-in.
 2. Select **Branch → main**. Do not choose the historical `wheelheat-autostart-0.4.2-qa` branch.
-3. Refresh the source and compare the installed versions with [the current catalog](mgu-repo.json). Examples on `main`: `dpf_monitor` **0.2.8**, `g21_ambient` **0.4.7**, `g21_wheelheat` **0.5.5**, and `light_show` **0.4.8**. These are **repository** versions; they do not establish what is installed on the head unit.
+3. Refresh the source and compare the installed versions with [the current catalog](mgu-repo.json). Examples on `main`: `dpf_monitor` **0.2.8**, `g21_ambient` **0.4.7**, `g21_wheelheat` **0.5.6**, and `light_show` **0.4.8**. These are **repository** versions; they do not establish what is installed on the head unit.
 4. Heating Comfort declares `mguAppStartType: autostart` in its app manifest and uses the standard Store build wrapper. Custom Cluster, Cluster Lyrics and Light Flasher also declare autostart; this is package metadata, **not proof** that the installed process or its background actions actually run after an MGU restart. No separate WheelHeat USB patch or second source branch is required.
 5. Restart the MGU to test *process* autostart. Separately enable **Automatic heating on cold startup** in the app if it has never been enabled. Future normal updates preserve that choice and the other settings.
 

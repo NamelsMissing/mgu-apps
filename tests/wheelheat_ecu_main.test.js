@@ -34,7 +34,8 @@ const G05 = {
 };
 
 // --- harness -------------------------------------------------------------
-function boot(t, car, settingsOverride, dir) {
+function boot(t, car, settingsOverride, dir, env) {
+    env = env || {};
     dir = dir || fs.mkdtempSync(path.join(os.tmpdir(), 'wheelheat-main-'));
     const requests = [];
     const counts = {};
@@ -98,6 +99,7 @@ function boot(t, car, settingsOverride, dir) {
     const drawn = [];
     const cv = { chrome: {}, clear() { return cv; }, fillRect() {}, text(s) { drawn.push(String(s)); }, image() {} };
     const ctx = {
+        uptimeMs: env.uptimeMs || (() => null),
         settings, dataDir: dir, app: { startReason: settingsOverride && settingsOverride.launchReason || 'TEST' }, spec: { id: 'g21_wheelheat', version: 'test' },
         log: { info() {}, warn() {}, error() {} },
         signals: { watch: async (iface, _v, handlers) => {
@@ -738,4 +740,123 @@ test('background retries a failed subscription and leaves a warm start untouched
     assert(app.kinds('VEHICLE ON').length > 0);
     assert(app.kinds('AUTO').some(e => /ABOVE LIMIT/.test(e.message)));
     assert.equal(app.writes().length, 0);
+});
+
+// --- 0.5.6: vehicle-cycle regressions (27 November ENTRY_POINT log) ---------
+function cycleDir(journal) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wheelheat-cycle-'));
+    fs.writeFileSync(path.join(dir, 'vehicle_cycle.json'), JSON.stringify(journal));
+    return dir;
+}
+const nightParked = { v: 2, onAt: T0 - 20 * 3600000, aliveAt: T0 - 19 * 3600000, channels: {} };
+const coldSeatsAndWheel = () => {
+    let driver = 0, wheel = false;
+    return {
+        ...G21,
+        '40:d074': () => pos(0xD074, wheel ? 1 : 0, 0, wheel ? 40 : 0, 1, 1),
+        '40:e432': () => pos(0xE432, driver > 0 ? 1 : 0, driver, 87, 87, 0, 0, 0, 255, 255),
+        write(_addr, data) {
+            if (data[0] === 0xD0) wheel = data[2] > 0;
+            if (data[0] === 0xE4 && data[1] === 0x32) driver = data[2];
+            return [0x6E, data[0], data[1]];
+        },
+    };
+};
+
+test('27 November ENTRY_POINT: night parked, OFF never observed -> wheel and seat confirmed without UI', async t => {
+    withTimers(t);
+    const app = boot(t, coldSeatsAndWheel(), {
+        launchReason: 'ENTRY_POINT', testNextStartup: false, minVehicleOffMins: 10,
+        belowTemp: 10, seatPassenger: false,
+    }, cycleDir(nightParked), { uptimeMs: () => 90000 });
+    await app.started;
+    await app.tick(3000);
+    await app.drive(93);
+    await app.tick(90000);
+    assert(app.kinds('VEHICLE ON').some(e => /NEW VEHICLE CYCLE: C: MGU boot gap/.test(e.message)));
+    assert(!app.events().some(e => /waiting for reliable cycle evidence/.test(e.message)));
+    assert.equal(wrote(app, 0xE432).length, 1);
+    assert.equal(wrote(app, 0xD074).length, 1);
+    assert.equal(app.kinds('ACTIVATION CONFIRMED').length, 2);
+    assert.equal(app.kinds('UI OPEN').length, 0);
+    const journal = JSON.parse(fs.readFileSync(path.join(app.dir, 'vehicle_cycle.json'), 'utf8'));
+    assert(journal.aliveAt > T0, 'drive-ready heartbeat persisted for the next start');
+});
+
+test('ENTRY_POINT late in a drive (MGU up 40 min) does not heat and names the missing evidence', async t => {
+    withTimers(t);
+    const app = boot(t, coldSeatsAndWheel(), {
+        launchReason: 'ENTRY_POINT', testNextStartup: false, minVehicleOffMins: 10, belowTemp: 10,
+    }, cycleDir(nightParked), { uptimeMs: () => 40 * 60000 });
+    await app.started;
+    await app.tick(3000);
+    await app.drive(93);
+    await app.tick(30000);
+    assert.equal(app.writes().length, 0);
+    assert(app.kinds('START CONDITIONS').some(e => /MGU already running 40.0 min/.test(e.message)));
+    app.clicks.BTN_EVALUATE();
+    await app.tick(2000);
+    assert(app.kinds('EVAL FINAL BLOCKING REASON').some(e => /vehicle cycle/.test(e.message)));
+    assert(app.kinds('EVAL CYCLE CHECKS').some(e => /C MGU boot gap: MGU uptime 40.0 min/.test(e.message)));
+    assert.equal(app.writes().length, 0, 'Evaluate now bypasses no guard');
+});
+
+test('MGU restart during the same drive: no second activation', async t => {
+    withTimers(t);
+    const dir = cycleDir(nightParked);
+    const car = coldSeatsAndWheel();
+    const app = boot(t, car, { launchReason: 'AUTOSTART', testNextStartup: false,
+        minVehicleOffMins: 10, belowTemp: 10, seatPassenger: false }, dir, { uptimeMs: () => 60000 });
+    await app.started;
+    await app.tick(3000);
+    await app.drive(93);
+    await app.tick(240000);
+    const first = app.writes().length;
+    assert(first >= 2);
+    const again = boot(t, car, { launchReason: 'AUTOSTART' }, dir, { uptimeMs: () => 45000 });
+    await again.started;
+    await again.tick(3000);
+    await again.drive(93);
+    await again.tick(60000);
+    assert.equal(again.writes().length, 0, again.kinds('VEHICLE ON').map(e => e.message).join('\n'));
+    // Both processes share the event file here, so read the second app's own screen.
+    again.clicks.BTN_EVALUATE();
+    await again.tick(1000);
+    assert.match(again.screen().join('\n'), /Vehicle cycle: SAME JOURNEY/);
+});
+
+test('a failing steering wheel does not block the driver seat', async t => {
+    withTimers(t);
+    let driver = 0;
+    const car = {
+        ...G21,
+        '40:e432': () => pos(0xE432, driver > 0 ? 1 : 0, driver, 87, 87, 0, 0, 0, 255, 255),
+        write(_addr, data) {
+            if (data[0] === 0xD0) return [0x7F, 0x2E, 0x31];
+            if (data[0] === 0xE4 && data[1] === 0x32) driver = data[2];
+            return [0x6E, data[0], data[1]];
+        },
+    };
+    const app = boot(t, car, { launchReason: 'ENTRY_POINT', testNextStartup: false,
+        minVehicleOffMins: 10, belowTemp: 10, seatPassenger: false }, cycleDir(nightParked), { uptimeMs: () => 60000 });
+    await app.started;
+    await app.tick(3000);
+    await app.drive(93);
+    await app.tick(120000);
+    assert(app.kinds('ACTIVATION CONFIRMED').some(e => /Driver seat/.test(e.message)));
+    assert(!app.kinds('ACTIVATION CONFIRMED').some(e => /Steering wheel/.test(e.message)));
+});
+
+test('the start-conditions view renders real values', async t => {
+    withTimers(t);
+    const app = boot(t, coldSeatsAndWheel(), { launchReason: 'ENTRY_POINT', testNextStartup: false,
+        minVehicleOffMins: 10, belowTemp: 10 }, cycleDir(nightParked), { uptimeMs: () => 60000 });
+    await app.started;
+    await app.tick(3000);
+    app.clicks.BTN_EVALUATE();
+    await app.tick(1000);
+    const lines = app.screen().join('\n');
+    assert.match(lines, /AutoHeat enabled: YES/);
+    assert.match(lines, /Required OFF duration: 10 min/);
+    assert.match(lines, /Final blocking reason: vehicle not drive-ready/);
 });
