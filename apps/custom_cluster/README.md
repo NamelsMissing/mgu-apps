@@ -1,4 +1,27 @@
-# Custom Cluster 0.6.11 — BMW G21 / MGU iDrive 7
+# Custom Cluster 0.7.0 — BMW G21 / MGU iDrive 7
+
+
+## 0.7.0 — start-up intro, needle sweep, smooth gauges, driving-mode colours
+
+Reworked after comparing with [Cluster Layouts](https://github.com/eroobeeroo/idrive7-cluster-info/tree/main/apps/cluster_layouts) (start-up sweep, eased needles, colours per drive mode) and [bimmer-lab Cluster Themes](https://github.com/bimmer-lab/apps/tree/main/apps/cluster_themes). Ideas only; no code was copied (Cluster Layouts is PolyForm Noncommercial).
+
+**Start-up intro (new, setting *Start-up intro on KOMBI*, default "Once per car start").** When the layout appears in the KOMBI, one GPU effect plays a 7.3 s intro: a row of sparkles gathers into one magenta sparkle, bursts into a fan of light, a montage of three scenes (sunset, neon grid, night ocean), a violet haze, then the selected layout's own dial contours draw themselves in white around a glowing emblem, and it fades out over the layout while the needles sweep. All artwork is original and procedural (no images, no third-party logos or game art). "Once per car start" = once per app process (the app autostarts with the head unit); "Every time" replays it on each show; "Off" disables it.
+- Area x 8..1912, y 48..596: the top telltale row and the bottom strip stay free. **While it plays it covers the centre window** (BMW map, Waze, lyrics) — the only layer that does. It is one of our own layers, so leaving P, moving, stale data, Stop or a renderer error drops it immediately like the rest. It is dropped after 7.3 s.
+- With *Show layout in KOMBI automatically = parked*, starting the car in P shows the intro by itself after 3 s.
+
+**Needle sweep (setting, default on).** Scale bands / 6WB needles run to full scale and back (0.7 s + 0.7 s) when the layout appears; with the intro it starts under its fade-out.
+
+**Smooth gauges.** Bands and needles now ease towards the live value (~30 uniform updates/s, only scalars, only while shown) instead of jumping every 250 ms. Textures are still uploaded only when a readout changes.
+
+**Closer to OEM.** Dials are drawn 384 px (was 320) from 320 px textures (was 256): they fill the side area and stay sharp. The "… / TEST" caption is gone; the rev counter unit reads "1/min x1000".
+
+**Colours follow the driving mode.** New *Color source → Follow driving mode* (Comfort blue, Sport red, ECO PRO teal) and *6WB driving display → Follow driving mode* (Comfort/Sport/ECO). The mode is read (read-only) from FES `statusFESVehicleDynamicSwitchHMI`, the same signal as G21 Ambient. A mode change recolours the shown layout in place (face, readout, band, light edge) without rebuilding layers. Without the signal the colour stays Comfort.
+
+**Waze / map window framed.** The cover plates carry a soft accent light edge on the side facing the map, so Waze, BMW's map or Cluster Lyrics sit in a framed window between the dials. Custom Cluster still never uses the `map` target and never contends, so Waze and lyrics keep working.
+
+**Cluster Lyrics + Waze checked.** A new test runs Custom Cluster and Cluster Lyrics on one simulated render service: lyrics *exclusive* and *with Waze* (transparent footer, `guide_hold` on, non-contending) keep all their layers while the layout and intro come and go; Custom Cluster stays on `panel`, our layout keeps the centre free, and both apps stay far below the 64/96 layer limits. Combination and each app alone behave as before.
+
+**Verified here:** all unit tests; every new/changed shader (intro for all layouts, bands, cover plates, 6WB needle) compiled, linked and rendered with a real GLSL ES 1.00 compiler (Mesa); an emulated 1920×720 preview of the full intro. **Not verified on the car:** intro and sweep on the real KOMBI GPU, frame rate of the intro, whether Waze/lyrics reappear cleanly right after the intro, the FES signal on this car. The parked-only rule (P, < 0.5 km/h, fresh speed + RPM) is unchanged — nothing is shown while driving.
 
 
 ## 0.6.11 — Blitzer Status moves to its own app

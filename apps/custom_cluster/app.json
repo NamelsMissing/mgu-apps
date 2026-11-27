@@ -1,8 +1,8 @@
 {
   "id": "custom_cluster",
   "title": "Custom Cluster",
-  "description": "KOMBI-only selected-layout parked tests and reliable text diagnostics.",
-  "version": "0.6.11",
+  "description": "KOMBI layouts while parked: start-up intro, needle sweep, smooth gauges, driving-mode colours, diagnostics.",
+  "version": "0.7.0",
   "vendor": "custom",
   "loggingId": "OAQ7",
   "iconGlyph": "CC",
@@ -17,6 +17,10 @@
     "de.bmw.infrastructure.VehicleInformation": {
       "statusGearboxDrive": "s",
       "DataPowerTrain2": "s"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "_optional": "Read the driving mode for the instrument colour; read-only",
+      "statusFESVehicleDynamicSwitchHMI": "rs"
     }
   },
   "screens": [
@@ -154,6 +158,32 @@
       "default": true
     },
     {
+      "key": "intro",
+      "label": "Start-up intro on KOMBI",
+      "type": "choice",
+      "default": "start",
+      "options": [
+        [
+          "start",
+          "Once per car start"
+        ],
+        [
+          "always",
+          "Every time the layout appears"
+        ],
+        [
+          "off",
+          "Off"
+        ]
+      ]
+    },
+    {
+      "key": "needleSweep",
+      "label": "Needle sweep when the layout appears",
+      "type": "bool",
+      "default": true
+    },
+    {
       "key": "sixwbTheme",
       "label": "6WB driving display",
       "group": "6WB",
@@ -174,6 +204,10 @@
         [
           "eco",
           "ECO PRO (blue)"
+        ],
+        [
+          "drive",
+          "Follow driving mode"
         ]
       ]
     },
@@ -204,6 +238,10 @@
       "type": "choice",
       "default": "palette",
       "options": [
+        [
+          "drive",
+          "Follow driving mode (Comfort / Sport / ECO PRO)"
+        ],
         [
           "palette",
           "Color palette"

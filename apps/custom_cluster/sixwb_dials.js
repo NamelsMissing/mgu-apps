@@ -61,12 +61,13 @@ function fraction(pos,data) {
 
 // Track each allocated ref immediately so a partial construction is released.
 // Pixel upload is once per face; only scalar needle uniforms are updated.
-function buildDials(cr,target,data,options,accent,accentHex,track,CanvasOverride) {
+function buildDials(cr,target,data,options,accent,accentHex,track,CanvasOverride,motion) {
     const Canvas=CanvasOverride || require('./kit/canvas').Canvas;
     const needles=[];
     const cover=options.coverOriginal!==false;
     POSITIONS.forEach((pos,i)=>{
-        const pixels=face(pos,accentHex,options.sixwbTheme,Canvas);
+        const theme=require('./cluster_colors.js').sixwbThemeOf(options);
+        const pixels=face(pos,accentHex,theme,Canvas);
         const common={target,klass:'overlay',contend:false,guide_hold:false,
             visible:false,x:pos.x,y:pos.y,w:DRAW_SIZE,h:DRAW_SIZE};
         // Same bounded cover plate as the shared side layouts (0.6.7).
@@ -77,6 +78,7 @@ function buildDials(cr,target,data,options,accent,accentHex,track,CanvasOverride
             if(!plate) throw Error('6WB '+pos.key+' cover refused');
             track(plate);
             cr.uniform(plate,'u_color',[0.039,0.063,0.094,1]);
+            cr.uniform(plate,'u_accent',require('./layout_panels.js').edgeColor(accent));
         }
         const faceRef=cr.image(Object.assign({},common,{z:i*3+1,iw:SIZE,ih:SIZE,sampling:'bilinear'}));
         if(!faceRef) throw Error('6WB '+pos.key+' face refused');
@@ -88,7 +90,8 @@ function buildDials(cr,target,data,options,accent,accentHex,track,CanvasOverride
         const v=fraction(pos,data);
         cr.uniform(needleRef,'u_fraction',[v]);
         cr.uniform(needleRef,'u_color',accent);
-        needles.push({ref:needleRef,pos,last:v});
+        if(motion) motion.add(needleRef,v);
+        needles.push({ref:needleRef,face:faceRef,pos,last:v,theme,color:accentHex,motion:motion||null,Canvas});
     });
     return needles;
 }
@@ -96,9 +99,19 @@ function updateDials(cr,needles,data) {
     needles.forEach(n=>{
         const v=fraction(n.pos,data);
         if(Math.abs(v-n.last)>0.0001){
-            cr.uniform(n.ref,'u_fraction',[v]);
+            if(n.motion) n.motion.setTarget(n.ref,v);
+            else cr.uniform(n.ref,'u_fraction',[v]);
             n.last=v;
         }
     });
 }
-module.exports={buildDials,updateDials,POSITIONS,SIZE,DRAW_SIZE,NEEDLE_FS,face};
+/** Driving-mode colours (0.7.0): repaint faces and needles in place. */
+function recolorDials(cr,needles,accent,accentHex,theme) {
+    needles.forEach(n=>{
+        if(n.color===accentHex&&n.theme===theme) return;
+        if(n.face&&!cr.pixels(n.face,null,face(n.pos,accentHex,theme,n.Canvas))) throw Error('6WB face update refused');
+        cr.uniform(n.ref,'u_color',accent);
+        n.color=accentHex; n.theme=theme;
+    });
+}
+module.exports={buildDials,updateDials,recolorDials,POSITIONS,SIZE,DRAW_SIZE,NEEDLE_FS,face};

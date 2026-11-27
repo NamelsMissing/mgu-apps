@@ -3,7 +3,12 @@
 // no second RAMSES participant and no reconfiguration of Waze on cluster.
 const { ClusterRender } = require('./cluster_render_client.js');
 const probeShader = require('./panel_probe_shader.js');
-const { PALETTE, resolveColor, resolve6WBColor, colorHex } = require('./cluster_colors.js');
+const { PALETTE, resolveColor, resolve6WBColor, colorHex, sixwbThemeOf, followsDriveMode } = require('./cluster_colors.js');
+const { GaugeMotion } = require('./gauge_motion.js');
+const Intro = require('./intro_shader.js');
+const Panels = require('./layout_panels.js');
+const Dials = require('./sixwb_dials.js');
+const ANIM_MS = 33;   // ~30 Hz: intro clock and gauge easing, only while shown
 const COLORS = Object.keys(PALETTE).reduce((m, k) => { m[k] = PALETTE[k].concat([1]); return m; }, {});
 const { gearText } = require('./layout_panels.js');
 // Independent tiny effects: inspired by the architecture (not the code) of
@@ -50,6 +55,14 @@ function panelReleaseStatus(text, target) {
         idle: state[1].toLowerCase() === 'idle' && !mapped };
 }
 
+function sixwbOutlines() {
+    // Round 6WB faces: a circle per side for the intro to draw in.
+    return Dials.POSITIONS.map(p => {
+        const c = [p.x + Dials.DRAW_SIZE / 2, p.y + Dials.DRAW_SIZE / 2], r = Dials.DRAW_SIZE * 0.47, pts = [];
+        for (let i = 0; i <= 28; i++) { const a = (-145 + 290 * i / 28) * Math.PI / 180; pts.push([c[0] + Math.sin(a) * r, c[1] - Math.cos(a) * r]); }
+        return pts;
+    });
+}
 class ClusterLayers {
     constructor(log, socket, client) {
         this.log = log;
@@ -99,6 +112,13 @@ class ClusterLayers {
         this.autoReason = 'off';
         this.lastSent = 0;
         this.armedUntil = 0;
+        // 0.7.0: start-up intro, needle sweep, eased gauges, driving-mode colours.
+        this.motion = null;
+        this.introRef = 0;
+        this.introStart = 0;
+        this.introPlayed = false;   // per app process = per head-unit/car start
+        this.animTimer = null;
+        this.driveMode = null;
         this.disarmReason = 'Off by default';
         this.cr.on('ready', () => {
             this.ready = true;
@@ -120,6 +140,7 @@ class ClusterLayers {
                 const owned = this.panelRefs.slice();
                 this.panelRefs = []; this.panelRef = 0; this.dialNeedles = [];
                 this.layoutParts = []; this.layoutAccent = null;
+                this.stopAnimation();
                 this.activeTestMode = '';
                 owned.forEach(ref => this.cr.drop(ref));
                 this.recoveryRequestedAt = Date.now();
@@ -230,6 +251,7 @@ class ClusterLayers {
         this.panelRef = 0;
         this.dialNeedles = [];
         this.layoutParts = []; this.layoutAccent = null;
+        this.stopAnimation();
         owned.forEach(ref => this.cr.drop(ref));
         if (this.effectRef) { this.cr.drop(this.effectRef); this.effectRef = 0; }
         this.recoveryRequestedAt = Date.now();
@@ -256,7 +278,7 @@ class ClusterLayers {
 
     settings(options) {
         const previous = this.options;
-        this.options = options;
+        this.options = Object.assign({}, options, { driveMode: this.driveMode });
         if (previous.layout !== options.layout && options.layout === 'stock') {
             this.suspended = true; // stock never requests a custom display
         }
@@ -476,6 +498,88 @@ class ClusterLayers {
         this.autoSuppressed = true;
         this.autoReason = 'refused: ' + String(this.disarmReason || '-').slice(0, 60) + ' (paused until next parking)';
     }
+    /**
+     * Called right after a layout's layers were built (still hidden): adds the
+     * start-up intro above them when wanted and schedules the needle sweep.
+     * The intro is the only layer that crosses the centre window, for 7.3 s
+     * while parked; it is one of our own refs, so every release path drops it.
+     */
+    startShow(outlines, accent) {
+        const now = Date.now(), o = this.options;
+        const mode = ['start', 'always', 'off'].indexOf(o.intro) >= 0 ? o.intro : 'start';
+        const wantIntro = mode === 'always' || (mode === 'start' && !this.introPlayed);
+        let sweepAt = o.needleSweep === false ? 0 : now + 150;
+        if (wantIntro) {
+            const r = Intro.RECT;
+            const ref = this.cr.effect({ target: this.activePanelTarget, klass: 'overlay', z: 30,
+                contend: false, guide_hold: false, visible: false, x: r.x, y: r.y, w: r.w, h: r.h,
+                fs: Intro.introShader(outlines) });
+            if (ref) {
+                this.panelRefs.push(ref);
+                this.introRef = ref;
+                this.introStart = now;
+                this.introPlayed = true;
+                this.cr.uniform(ref, 'u_t', [0]);
+                this.cr.uniform(ref, 'u_accent', accent);
+                if (sweepAt) sweepAt = now + Intro.SWEEP_AT_MS;
+                this.tracePanel('start-up intro ' + Intro.DURATION_MS + ' ms (ref=' + ref + ', covers centre while parked)');
+            } else this.tracePanel('start-up intro refused by renderer; layout shown without it');
+        }
+        if (sweepAt && this.motion) this.motion.sweep(sweepAt);
+        this.startAnimation();
+    }
+    startAnimation() {
+        if (this.animTimer) return;
+        this.animTimer = setInterval(() => this.tickAnimation(Date.now()), ANIM_MS);
+        if (this.animTimer.unref) this.animTimer.unref();
+    }
+    stopAnimation() {
+        if (this.animTimer) clearInterval(this.animTimer);
+        this.animTimer = null;
+        this.motion = null;
+        this.introRef = 0;
+        this.introStart = 0;
+    }
+    /** Intro clock and eased gauges; drops the intro layer once it has played. */
+    tickAnimation(now) {
+        if (!this.panelRef) return;
+        try {
+            if (this.introRef) {
+                const ms = now - this.introStart;
+                if (ms >= Intro.DURATION_MS) {
+                    const ref = this.introRef;
+                    this.introRef = 0;
+                    this.panelRefs = this.panelRefs.filter(r => r !== ref);
+                    if (this.panelRef === ref) this.panelRef = this.panelRefs[0] || 0;
+                    this.cr.drop(ref);
+                    this.tracePanel('start-up intro finished; layer dropped');
+                } else this.cr.uniform(this.introRef, 'u_t', [Math.round(ms) / 1000]);
+            }
+            if (this.motion) this.motion.tick(now);
+        } catch (e) {
+            this.disarm('Animation failed: ' + String(e && e.message || e));
+        }
+    }
+    /** Driving mode from FES (comfort / sport / eco / adaptive / null). */
+    setDriveMode(mode) {
+        if (mode === this.driveMode) return;
+        this.driveMode = mode;
+        this.options = Object.assign({}, this.options, { driveMode: mode });
+        if (!this.panelRef || !followsDriveMode(this.options)) return;
+        try {
+            if (this.activeTestMode === 'selected_layout') {
+                this.layoutAccent = resolveColor(this.options, Date.now());
+                Panels.updateLayout(this.cr, this.layoutParts, this.viewData(), this.layoutAccent, colorHex(this.layoutAccent));
+            } else if (this.activeTestMode === 'sixwb_dials') {
+                const accent = resolve6WBColor(this.options, Date.now());
+                this.layoutAccent = accent;
+                Dials.recolorDials(this.cr, this.dialNeedles, accent, colorHex(accent), sixwbThemeOf(this.options));
+            }
+            this.tracePanel('driving mode ' + (mode || 'unknown') + ': instrument colour ' + colorHex(this.layoutAccent));
+        } catch (e) {
+            this.disarm('Driving-mode colour update failed: ' + String(e && e.message || e));
+        }
+    }
     disarm(reason) {
         const hadPanel = !!this.panelRef;
         if (this.armedUntil || hadPanel) this.tracePanel('test ended: ' + (reason || 'unknown'));
@@ -494,15 +598,17 @@ class ClusterLayers {
         const panelActive = mode > 0 && this.armedUntil > Date.now() && this.parked();
         if (panelActive && !this.panelRef && this.activeTestMode === 'selected_layout') {
             try {
-                const { buildLayout } = require('./layout_panels.js');
+                const { buildLayout } = Panels;
                 // Keep static artwork and live indicators the same colour
                 // throughout this short stationary test.
                 this.layoutAccent = resolveColor(this.options, Date.now());
+                this.motion = new GaugeMotion(this.cr, Date.now());
                 this.layoutParts = buildLayout(this.cr, this.activePanelTarget, this.viewData(),
                     this.options, this.layoutAccent, colorHex(this.layoutAccent), ref => {
                         this.panelRefs.push(ref);
                         if (!this.panelRef) this.panelRef = ref;
-                    });
+                    }, undefined, this.motion);
+                this.startShow(Panels.outlines(this.options.layout), this.layoutAccent);
                 this.panelRefs.forEach(ref => this.cr.set(ref, {visible:true}));
                 this.lastSent = Date.now();
                 this.tracePanel('selected artwork ' + this.options.layout +
@@ -518,7 +624,7 @@ class ClusterLayers {
         if (panelActive && this.panelRef && this.activeTestMode === 'selected_layout' &&
             Date.now() - this.lastSent >= 250) {
             try {
-                require('./layout_panels.js').updateLayout(this.cr,this.layoutParts,this.viewData(),
+                Panels.updateLayout(this.cr,this.layoutParts,this.viewData(),
                     this.layoutAccent,colorHex(this.layoutAccent));
                 this.lastSent = Date.now();
             } catch(e) {
@@ -528,13 +634,15 @@ class ClusterLayers {
         }
         if (panelActive && !this.panelRef && this.activeTestMode === 'sixwb_dials') {
             try {
-                const { buildDials } = require('./sixwb_dials.js');
                 const accent = resolve6WBColor(this.options, Date.now());
-                this.dialNeedles = buildDials(this.cr, this.activePanelTarget, this.data,
+                this.layoutAccent = accent;
+                this.motion = new GaugeMotion(this.cr, Date.now());
+                this.dialNeedles = Dials.buildDials(this.cr, this.activePanelTarget, this.data,
                     this.options, accent, colorHex(accent), ref => {
                         this.panelRefs.push(ref);
                         if (!this.panelRef) this.panelRef = ref;
-                    });
+                    }, undefined, this.motion);
+                this.startShow(sixwbOutlines(), accent);
                 this.panelRefs.forEach(ref => this.cr.set(ref, { visible: true }));
                 this.lastSent = Date.now();
                 this.tracePanel('6WB side dials: two faces + two real-value needles; visibility requested; refs=' +
@@ -548,7 +656,7 @@ class ClusterLayers {
         if (panelActive && this.panelRef && this.activeTestMode === 'sixwb_dials' &&
             Date.now() - this.lastSent >= 150) {
             try {
-                require('./sixwb_dials.js').updateDials(this.cr, this.dialNeedles, this.data);
+                Dials.updateDials(this.cr, this.dialNeedles, this.data);
                 this.lastSent = Date.now();
             } catch (e) {
                 this.disarm('6WB update failed: ' + String(e.message || e));
@@ -617,6 +725,7 @@ class ClusterLayers {
             recoveryState: this.recoveryState, recoveryRequestedAt: this.recoveryRequestedAt,
             recoveryTarget: this.recoveryTarget, releaseConfirmed: this.releaseConfirmed,
             suspended: this.suspended,
+            driveMode: this.driveMode, introPlaying: !!this.introRef,
             autoMode: this.options.kombiAuto === 'parked' ? 'parked' : 'off', autoRun: this.autoRun, autoReason: this.autoReason,
             testGuard: this.testGuard(),
             secondsLeft: this.panelRef ? Math.max(0, Math.ceil((this.armedUntil - Date.now()) / 1000)) : 0,

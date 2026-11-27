@@ -3,7 +3,13 @@
  * Bounded side-instrument artwork for stationary tests. These are original
  * recreations, not BMW resources or native KOMBI palette edits.
  *
- * Per side (0.6.7):
+ * 0.7.0: dials drawn 384 px (was 320) from 320 px textures (was 256) so
+ * they fill the side area like the OEM instruments and stay sharp; artwork is
+ * still designed in 256 "design units" (U) and scaled when painted. The
+ * progress band moves smoothly (gauge_motion.js) and sweeps at start-up; the
+ * cover plate carries an accent light edge that frames the map window.
+ *
+ * Per side:
  *   1. optional opaque cover plate over the original BMW dial area
  *      (x 8..412 / 1508..1912, y 48..596; centre map aperture and bottom
  *      strip stay free),
@@ -13,11 +19,21 @@
  *      (not for Minimal).
  * At most eight layers in total. Only changed values are uploaded.
  */
-const SIZE=256, DRAW=320, READ_W=160, READ_H=96;
-// Inside the scale contour, above its start (tex y 78..160, x 60..196).
-const READ_BOX={dx:75,dy:98,w:170,h:102};
-const SIDES=[{key:'speed',x:88,y:190,max:260,unit:'km/h'},
-    {key:'rpm',x:1512,y:190,max:6000,unit:'x1000 rpm'}];
+const U=256, SIZE=320, DRAW=384, READ_W=200, READ_H=120, READ_S=READ_W/160;
+// Inside the scale contour, above its start (design y 78..160, x 60..196).
+const READ_BOX={dx:90,dy:118,w:204,h:122};
+// Centred in the cover plates (x 8..412 / 1508..1912, y 48..596).
+const SIDES=[{key:'speed',x:18,y:130,max:260,unit:'km/h'},
+    {key:'rpm',x:1518,y:130,max:6000,unit:'1/min x1000'}];
+/** Draw on a canvas in design units (U) while it is SIZE pixels large. */
+function scaled(cv,k){
+    return {d:cv.d,labels:cv.labels,
+        circle:(x,y,r,c)=>cv.circle(x*k,y*k,r*k,c),
+        arc:(x,y,r0,r1,a0,a1,c,o)=>cv.arc(x*k,y*k,r0*k,r1*k,a0,a1,c,o),
+        line:(xa,ya,xb,yb,w,c)=>cv.line(xa*k,ya*k,xb*k,yb*k,w*k,c),
+        fillRect:(x,y,w,h,c)=>cv.fillRect(x*k,y*k,w*k,h*k,c),
+        text:(t,x,y,z,c,o)=>cv.text(t,x*k,y*k,z*k,c,o)};
+}
 // Cover plates: as large as possible without entering the nominal centre
 // map aperture (x 416..1504), the top telltale row (y < 48) or the bottom
 // strip (y >= 600). The real OEM telltale positions remain unverified.
@@ -36,19 +52,25 @@ void main(){
 // 28 px so the map window is not framed by a hard black line.
 // All shader maths stays in normalised units: KOMBI GPUs may implement
 // mediump as fp16, where squared pixel distances would overflow.
+// u_accent (optional, alpha 0 = off) adds a soft light edge on the side
+// facing the map, so Waze / the BMW map / lyrics sit in a framed window.
 function coverShader(inner){
     const fade=inner==='right'?'1.0-smoothstep(3.76,4.04,p.x)':'smoothstep(0.0,0.28,p.x)';
+    const edge=inner==='right'?'3.86':'0.18';
     return `#version 100
 precision mediump float;
 varying vec2 v_uv;
 uniform vec4 u_color;
+uniform vec4 u_accent;
 void main(){
   vec2 p=v_uv*vec2(4.04,5.48);
   vec2 q=abs(p-vec2(2.02,2.74))-vec2(1.76,2.48);
   float d=length(max(q,0.0))-0.26;
   float a=(1.0-smoothstep(-0.02,0.0,d))*(${fade});
   float shade=0.82+0.18*(1.0-v_uv.y);
-  gl_FragColor=vec4(u_color.rgb*shade,a*u_color.a);
+  float lit=u_accent.a*exp(-abs(p.x-${edge})*22.0)*smoothstep(0.35,1.3,p.y)*(1.0-smoothstep(4.2,5.15,p.y));
+  vec3 c=mix(u_color.rgb*shade,u_accent.rgb,clamp(lit,0.0,1.0));
+  gl_FragColor=vec4(c,max(a*u_color.a,clamp(lit,0.0,1.0)*0.9));
 }`;
 }
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -63,7 +85,7 @@ const PATHS={
 // Progress band geometry (texture pixels) per layout.
 const BAND={oem:4.2,g80:5.6,sport:8.5,classic:2.6};
 const CLASSIC_STEPS=24;
-function mirror(p,side){return side.key==='rpm'?[SIZE-p[0],p[1]]:p.slice();}
+function mirror(p,side){return side.key==='rpm'?[U-p[0],p[1]]:p.slice();}
 function path(layout,side){
     if(layout==='classic'){
         const ps=[];for(let i=0;i<=CLASSIC_STEPS;i++)ps.push(radial(i/CLASSIC_STEPS,113.5));
@@ -104,8 +126,8 @@ function progressShader(layout,side){
     const n=ps.length-1, w=BAND[layout]||4;
     const calls=[];
     for(let i=0;i<n;i++)
-        calls.push('  seg(p,vec2('+glsl(ps[i][0]/SIZE)+','+glsl(ps[i][1]/SIZE)+'),vec2('+
-            glsl(ps[i+1][0]/SIZE)+','+glsl(ps[i+1][1]/SIZE)+'),'+glsl(i)+');');
+        calls.push('  seg(p,vec2('+glsl(ps[i][0]/U)+','+glsl(ps[i][1]/U)+'),vec2('+
+            glsl(ps[i+1][0]/U)+','+glsl(ps[i+1][1]/U)+'),'+glsl(i)+');');
     return `#version 100
 precision mediump float;
 varying vec2 v_uv;
@@ -124,7 +146,7 @@ void main(){
   bestD=99.0;
   bestT=0.0;
 ${calls.join('\n')}
-  float band=1.0-smoothstep(${glsl((w-1)/SIZE)},${glsl((w+0.8)/SIZE)},bestD);
+  float band=1.0-smoothstep(${glsl((w-1)/U)},${glsl((w+0.8)/U)},bestD);
   float f=clamp(u_fraction,0.0,1.0);
   float lit=step(bestT,f)*step(0.002,f);
   float head=lit*(1.0-smoothstep(0.0,0.035,f-bestT));
@@ -133,7 +155,7 @@ ${calls.join('\n')}
 }
 function face(layout,side,accent,Canvas){
     if(!NAMES[layout])throw Error('Unsupported layout '+layout);
-    const cv=new Canvas(SIZE,SIZE).clear([0,0,0,0]);
+    const out=new Canvas(SIZE,SIZE).clear([0,0,0,0]),cv=scaled(out,SIZE/U);
     const white='#e7edf5',dim='#8696a7',bg=layout==='classic'?'#141510':'#0a1018';
     const track='#2b3846',trackHi='#3c4b5c';
     if(layout==='classic'){
@@ -196,8 +218,7 @@ function face(layout,side,accent,Canvas){
         cv.line(28,68,228,68,3,accent);
         cv.text(side.key==='rpm'?'ENGINE':'SPEED',128,190,19,dim,{align:'center',literal:true});
     }
-    cv.text(NAMES[layout]+' / TEST',128,251,11,'#e4bd7a',{align:'center',literal:true});
-    return cv;
+    return out;
 }
 // Secondary live line: selector/gear on the speed side, oil and coolant
 // temperature on the rev-counter side. Missing values are shown as '--'.
@@ -220,7 +241,7 @@ function infoText(side,data){
 function readout(side,data,accent,Canvas){
     // Transparent background: the face behind is already dark, and labels
     // near the readout (Classic 120/3) are not cut by an opaque box.
-    const cv=new Canvas(READ_W,READ_H).clear([0,0,0,0]);
+    const out=new Canvas(READ_W,READ_H).clear([0,0,0,0]),cv=scaled(out,READ_S);
     const v=valueOf(side,data);
     const str=v===null?'--':side.key==='speed'?String(Math.round(v)):(v/1000).toFixed(1);
     cv.text(str,80,38,34,'#f1f5fa',{align:'center',font:'num',literal:true});
@@ -230,7 +251,7 @@ function readout(side,data,accent,Canvas){
     else cv.text(info,80,79,14,'#d3dce6',{align:'center',literal:true});
     cv.fillRect(20,89,120,2,'#394651');
     if(v!==null)cv.fillRect(20,89,Math.round(120*clamp(v/side.max,0,1)),2,accent);
-    return cv;
+    return out;
 }
 function valueKey(side,data){
     const v=valueOf(side,data);if(v===null)throw Error('Invalid live '+side.key);
@@ -239,14 +260,16 @@ function valueKey(side,data){
 }
 function markerRect(layout,side,v){
     const p=point(layout,side,fraction(layout,side,v));
-    return p?{x:side.x+Math.round(p[0]*DRAW/SIZE)-6,
-        y:side.y+Math.round(p[1]*DRAW/SIZE)-6,w:12,h:12}:null;
+    return p?{x:side.x+Math.round(p[0]*DRAW/U)-6,
+        y:side.y+Math.round(p[1]*DRAW/U)-6,w:12,h:12}:null;
 }
-function buildLayout(cr,target,data,options,accent,accentHex,track,CanvasOverride){
+// motion (optional GaugeMotion): the progress band then eases and sweeps
+// instead of jumping; without it u_fraction is sent directly (as before).
+function buildLayout(cr,target,data,options,accent,accentHex,track,CanvasOverride,motion){
     const Canvas=CanvasOverride||require('./kit/canvas').Canvas, layout=options.layout;
     if(!NAMES[layout])throw Error('Unsupported panel layout '+layout);
     const cover=options.coverOriginal!==false;
-    const parts=[];
+    const parts=[],platesRefs=[];
     SIDES.forEach((side,i)=>{
         const common={target,klass:'overlay',contend:false,guide_hold:false,visible:false};
         const z=i*4;
@@ -255,6 +278,8 @@ function buildLayout(cr,target,data,options,accent,accentHex,track,CanvasOverrid
             const plate=cr.effect(Object.assign({},common,{x:c.x,y:c.y,w:c.w,h:c.h,z,fs:coverShader(c.inner)}));
             if(!plate)throw Error(layout+' cover refused');track(plate);
             cr.uniform(plate,'u_color',COVER_RGB.concat([1]));
+            cr.uniform(plate,'u_accent',edgeColor(accent));
+            platesRefs.push(plate);
         }
         const img=face(layout,side,accentHex,Canvas);
         const ref=cr.image(Object.assign({},common,{x:side.x,y:side.y,w:DRAW,h:DRAW,z:z+1,iw:SIZE,ih:SIZE,sampling:'bilinear'}));
@@ -269,12 +294,14 @@ function buildLayout(cr,target,data,options,accent,accentHex,track,CanvasOverrid
             track(progress);
             cr.uniform(progress,'u_color',accent);
             cr.uniform(progress,'u_fraction',[fraction(layout,side,v)]);
+            if(motion)motion.add(progress,fraction(layout,side,v));
         }
         const read=cr.image(Object.assign({},common,{x:side.x+READ_BOX.dx,y:side.y+READ_BOX.dy,
             w:READ_BOX.w,h:READ_BOX.h,z:z+3,iw:READ_W,ih:READ_H,sampling:'bilinear'}));
         if(!read)throw Error(layout+' readout refused');track(read);
         if(!cr.pixels(read,null,Buffer.from(readout(side,data,accentHex,Canvas).d)))throw Error(layout+' readout pixels refused');
-        parts.push({side,layout,read,progress,last:valueKey(side,data),lastValue:v,lastColor:accentHex,Canvas});
+        parts.push({side,layout,face:ref,plate:platesRefs[i]||0,read,progress,motion:motion||null,
+            last:valueKey(side,data),lastValue:v,lastColor:accentHex,Canvas});
     });
     return parts;
 }
@@ -282,13 +309,21 @@ function updateLayout(cr,parts,data,accent,accentHex){
     parts.forEach(p=>{
         const v=valueOf(p.side,data);if(v===null)throw Error('Invalid live '+p.side.key);
         const k=valueKey(p.side,data);
-        if(k!==p.last||accentHex!==p.lastColor){
+        const recolor=accentHex!==p.lastColor;
+        if(k!==p.last||recolor){
             if(!cr.pixels(p.read,null,Buffer.from(readout(p.side,data,accentHex,p.Canvas).d)))throw Error('readout update refused');
             p.last=k;
         }
+        // Colour follows the driving mode (0.7.0): repaint face + edge in place.
+        if(recolor&&p.face&&!cr.pixels(p.face,null,Buffer.from(face(p.layout,p.side,accentHex,p.Canvas).d)))
+            throw Error('face update refused');
+        if(recolor&&p.plate)cr.uniform(p.plate,'u_accent',edgeColor(accent));
         if(p.progress){
-            if(v!==p.lastValue)cr.uniform(p.progress,'u_fraction',[fraction(p.layout,p.side,v)]);
-            if(accentHex!==p.lastColor)cr.uniform(p.progress,'u_color',accent);
+            if(v!==p.lastValue){
+                if(p.motion)p.motion.setTarget(p.progress,fraction(p.layout,p.side,v));
+                else cr.uniform(p.progress,'u_fraction',[fraction(p.layout,p.side,v)]);
+            }
+            if(recolor)cr.uniform(p.progress,'u_color',accent);
         }
         p.lastValue=v;p.lastColor=accentHex;
     });
@@ -321,7 +356,7 @@ function drawLayoutPreview(cv,box,data,options,accentHex,CanvasOverride){
         const f=previewCache.faces[i];
         cv.drawImage(f.d,SIZE,SIZE,x,y,size,size);
         const v=valueOf(side,data);
-        if(v!==null)drawProgress(cv,options.layout,side,fraction(options.layout,side,v),x,y,size/SIZE,accentHex);
+        if(v!==null)drawProgress(cv,options.layout,side,fraction(options.layout,side,v),x,y,size/U,accentHex);
         const r=readout(side,data,accentHex,Canvas);
         cv.drawImage(r.d,READ_W,READ_H,x+size*READ_BOX.dx/DRAW,y+size*READ_BOX.dy/DRAW,
             size*READ_BOX.w/DRAW,size*READ_BOX.h/DRAW);
@@ -331,5 +366,12 @@ function drawLayoutPreview(cv,box,data,options,accentHex,CanvasOverride){
     cv.text('BMW / WAZE',mx,cy,22,'#dce7f0',{align:'center',literal:true});
     cv.text('MAP WINDOW',mx,cy+27,16,'#8cabc5',{align:'center',literal:true});
 }
-module.exports={buildLayout,updateLayout,drawLayoutPreview,drawProgress,face,readout,point,path,markerRect,
+// Accent light edge: the instrument colour, dimmed so it frames, not glares.
+function edgeColor(accent){const a=accent||[0,0,0,0];return [a[0],a[1],a[2],0.55];}
+/** Dial contours in panel pixels, for the start-up intro to draw in. */
+function outlines(layout){
+    const base=layout==='classic'||layout==='sixwb'?'classic':'oem';
+    return SIDES.map(side=>path(base,side).map(p=>[side.x+p[0]*DRAW/U,side.y+p[1]*DRAW/U]));
+}
+module.exports={buildLayout,outlines,edgeColor,U,updateLayout,drawLayoutPreview,drawProgress,face,readout,point,path,markerRect,
     progressShader,coverShader,infoText,gearText,NAMES,SIDES,COVERS,SIZE,DRAW,READ_W,READ_H,ticks,fraction,DOT_FS};
