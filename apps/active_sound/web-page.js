@@ -29,6 +29,7 @@ class ActiveSoundProcessor extends AudioWorkletProcessor {
             const m = e.data || {};
             if (m.type === 'profile') this.synth.setProfile(ActiveSoundEngines.get(m.id), m.tune || null);
             else if (m.type === 'tune') this.synth.setTune(m.tune || null);
+            else if (m.type === 'speaker') this.synth.setSpeaker(m.mode);
             else if (m.type === 'set') this.synth.set(m.rpm, m.load, m.on, m.volume);
         };
     }
@@ -90,7 +91,10 @@ ${cfg.mode === 'demo' ? `<div class="card"><div class="row" style="align-items:s
   <div id="pedal" class="pedal"><div id="pedalfill"></div><span>GAS<br><small>press higher = more throttle</small></span></div></div>
 <div class="row" style="margin-top:10px"><button id="auto" class="big off">AUTO DRIVE: OFF</button></div></div>` : `<div class="card"><div class="row">
   <button id="power" class="big off">CAR SOUND: OFF</button></div><p class="note" id="carline">Connecting to the car...</p></div>`}
-<div class="card"><div class="lbl">VOLUME <span id="volv"></span></div><input id="vol" type="range" min="0" max="100" step="5" value="50"></div>
+<div class="card"><div class="lbl">VOLUME <span id="volv"></span></div><input id="vol" type="range" min="0" max="100" step="5" value="50">
+  <div class="lbl" style="margin-top:12px">PLAYS THROUGH</div>
+  <div class="row"><button id="spk-small" class="small">Phone speaker</button><button id="spk-full" class="small">Car / headphones</button></div>
+  <p class="note">Phone speakers cannot play the deep firing pulses; this mode plays their overtones instead so it does not rattle.</p></div>
 <div class="card"><div class="lbl">ENGINE</div><div class="grid" id="engines"></div></div>
 <div class="card"><div class="lbl">TUNE <span id="tunename"></span></div><div id="tune"></div>
   <button id="tunereset" class="small">Reset this sound</button></div>
@@ -115,6 +119,7 @@ function post(m) {
     if (!local) return;
     if (m.type === 'profile') local.setProfile(E.get(m.id), m.tune || null);
     else if (m.type === 'tune') local.setTune(m.tune || null);
+    else if (m.type === 'speaker') local.setSpeaker(m.mode);
     else local.set(m.rpm, m.load, m.on, m.volume);
 }
 function fresh() { return MODE === 'demo' || Date.now() - st.at < 1500; }
@@ -133,7 +138,7 @@ function startAudio() {
     if (!AC) { lastErr = 'This browser has no Web Audio.'; draw(); return; }
     ctx = new AC({ latencyHint: 'interactive' });
     enabled = true;
-    var done = function () { post({ type: 'profile', id: st.profile, tune: st.tune }); push(); draw(); };
+    var done = function () { post({ type: 'speaker', mode: speaker }); post({ type: 'profile', id: st.profile, tune: st.tune }); push(); draw(); };
     var url = ${cfg.mode === 'demo' ? 'null' : "q('/worklet.js')"};
     var viaWorklet = function () {
         if (!ctx.audioWorklet) return Promise.reject(new Error('no AudioWorklet'));
@@ -203,6 +208,18 @@ function simStep(now) {
     if (out.rpm < E.get(st.profile).idle * 1.02 && out.kmh < 1) st.rpm += Math.sin(now / 90) * 10;   // idle wobble
     push();
 }
+
+// ---------- playback device (kept in this browser)
+var speaker = MODE === 'demo' ? 'small' : 'full';
+try { var sv = localStorage.getItem('activeSoundSpeaker'); if (sv === 'small' || sv === 'full') speaker = sv; } catch (e) {}
+function showSpeaker() {
+    $('spk-small').style.borderColor = speaker === 'small' ? '#e1001a' : '';
+    $('spk-full').style.borderColor = speaker === 'full' ? '#e1001a' : '';
+}
+function setSpeaker(m) { speaker = m; try { localStorage.setItem('activeSoundSpeaker', m); } catch (e) {} post({ type: 'speaker', mode: m }); showSpeaker(); }
+$('spk-small').onclick = function () { setSpeaker('small'); };
+$('spk-full').onclick = function () { setSpeaker('full'); };
+showSpeaker();
 
 // ---------- tuning (per engine; on the car page saved in the car)
 var tuneTouched = 0, demoTunes = {};

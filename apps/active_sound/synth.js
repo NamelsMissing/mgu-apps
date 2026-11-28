@@ -138,6 +138,17 @@
         this.setTune(tune || this.tune || null);
         this._resetState(true);
     };
+    /** Playback device: 'full' (car speakers, headphones) or 'small' (phone / tablet speaker). */
+    P.setSpeaker = function (mode) {
+        this.small = mode === 'small';
+        if (this.small && !this.smLow) {
+            this.smLow = new Biquad().lowpass(170, 0.7, this.sr);
+            this.smHarm = new Biquad().bandpass(320, 0.8, this.sr);
+            this.smHp = new Biquad().highpass(140, 0.6, this.sr);
+            this.smHp2 = new Biquad().highpass(140, 0.6, this.sr);
+        }
+    };
+
     /** Change the tuning live (no filter reset, no click). */
     P.setTune = function (tune) {
         this.tune = tune || null;
@@ -175,6 +186,7 @@
         for (i = 0; i < 2; i++) this.pipes.push({ len: len * (i ? 1.07 : 1), buf: new Float32Array(4096), w: 0, lp: 0, d: 400 });
         this.body2 = (p.body || []).map(function (b) { return { f: new Biquad().bandpass(b[0] * 1.04, b[1], sr), g: b[2] }; });
         this.mechF = new Biquad().bandpass(4200, 1.2, sr);
+        this.combF = new Biquad().bandpass(1400, 0.6, sr);
         this.sideF = new Biquad();
         this.dcS = new Biquad().highpass(60, 0.7, sr);
         this.body = (p.body || []).map(function (b) { return { f: new Biquad().bandpass(b[0], b[1], sr), g: b[2] }; });
@@ -207,7 +219,7 @@
         this.ctl = 0;
         this.body.forEach(function (b) { b.f.reset(); });
         [this.thumpF, this.thumpF2, this.intakeF, this.bovF, this.knockF, this.popF, this.bangF, this.jakeF, this.fxF, this.noiseF,
-            this.toneF, this.toneF2, this.dcF, this.mechF, this.sideF, this.dcS].forEach(function (f) { f.reset(); });
+            this.toneF, this.toneF2, this.dcF, this.mechF, this.combF, this.sideF, this.dcS].forEach(function (f) { f.reset(); });
         this.layers.forEach(function (l) { l.ph = 0; l.ph2 = 0; });
         if (hard) { this.rpm = this.tRpm; this.load = this.tLoad; this.gate = this.tOn; this.vol = this.tVol; }
     };
@@ -236,9 +248,10 @@
         this.thumpF.lowpass(clamp(fFire * 1.6 + 45, 50, 900), 1.2, sr);
         this.thumpF2.lowpass(clamp(fFire * 2.5 + 80, 80, 1400), 0.7, sr);
         this.intakeF.bandpass(350 + 1600 * rpmN, 0.8, sr);
-        var cut = p.tone * (0.65 + 0.35 * this.load) + p.bright * rpmN * (0.3 + 0.7 * this.load);
+        // cabin: closed throttle sounds duller, but never only a low hum (min ~1 kHz)
+        var cut = Math.max(950, p.tone * (1 + 0.4 * this.load) + p.bright * (0.25 + rpmN) * (0.35 + 0.65 * this.load));
         this.toneF.lowpass(cut, 0.6, sr);
-        this.toneF2.lowpass(cut * 1.4, 0.6, sr);
+        this.toneF2.lowpass(cut * 2, 0.5, sr);
         this.sideF.lowpass(cut * 0.9, 0.6, sr);
         if (!this.tonal) {
             // exhaust gas heats up under load (seconds) and cools on overrun: hotter = faster sound
@@ -259,7 +272,7 @@
         }
         var idleness = 1 - this.rpmN;
         var rough = (p.rough || 0) * (0.3 + 0.7 * idleness * idleness);
-        var lvl = this.fireAmp[i] * (1 + rough * this.noise()) * (0.3 + 0.7 * this.load) * (0.6 + 0.4 * this.rpmN);
+        var lvl = this.fireAmp[i] * (1 + rough * this.noise()) * (0.5 + 0.5 * this.load) * (0.65 + 0.35 * this.rpmN);
         // linear split of the impulse between this and the next sample (sub-sample timing)
         if (this.fireBank[i]) { this.impB += lvl * (1 - frac); this.carryB += lvl * frac; }
         else { this.imp += lvl * (1 - frac); this.carry += lvl * frac; }
@@ -342,7 +355,7 @@
                 this.loadHist += (this.load - this.loadHist) * 0.006;
                 this._control();
             }
-            var x = 0, fx = 0, side = 0;  // fx: crackle, bangs, engine brake (brighter path); side: L-R
+            var x = 0, fx = 0, tex = 0, side = 0;  // fx: crackle, bangs, engine brake; tex: combustion, clatter, valves (bright path); side: L-R
             if (this.gate === 0 && this.tOn === 0) { outL[s] = 0; if (outR) outR[s] = 0; continue; }
             var rpmHz = this.rpm / 60;
 
@@ -371,19 +384,21 @@
                     var pb = this._pipe(this.pipes[1], excB, refl);
                     for (k = 0; k < this.body2.length; k++) bodyB += this.body2[k].f.run(pb) * this.body2[k].g;
                 }
-                var thump = this.thumpF2.run(this.thumpF.run(this.imp + this.impB)) * (p.thump || 0) * 6;
+                var thump = this.thumpF2.run(this.thumpF.run(this.imp + this.impB)) * (p.thump || 0) * 6 * (0.35 + 0.65 * this.load);
+                // combustion noise: the broadband 'crack' of every firing, brighter under load
+                tex += this.combF.run((this.env + this.envB) * this.noise()) * (0.25 + (p.grit || 0)) * (0.5 + 0.5 * this.load) * 0.3;
                 x = (bodyA + bodyB) * 3 + thump;
                 side = (bodyA - bodyB) * 3 * 0.45;
                 // valvetrain: short high ticks with every firing, more with rpm
                 this.mechEnv *= mechDecay;
-                fx += this.mechF.run(this.noise() * this.mechEnv) * (p.mech === undefined ? 0.06 : p.mech);
+                tex += this.mechF.run(this.noise() * this.mechEnv) * (p.mech === undefined ? 0.06 : p.mech);
                 // ---- harmonic layer (engine orders)
                 this.phRev += rpmHz / sr; if (this.phRev >= 64) this.phRev -= 64;
                 var h = 0;
                 for (k = 0; k < this.orders.length; k++) h += Math.sin(TAU * this.phRev * this.orders[k].o) * this.orders[k].g;
-                x += h * 0.22 * (0.35 + 0.65 * this.load) * (0.5 + 0.5 * this.rpmN);
+                x += h * 0.14 * (0.35 + 0.65 * this.load) * (0.15 + 0.85 * this.rpmN);
                 // ---- knock / clatter
-                if (p.knock) { this.knockEnv *= knockDecay; x += this.knockF.run(this.noise() * this.knockEnv) * p.knock * 2.5; }
+                if (p.knock) { this.knockEnv *= knockDecay; tex += this.knockF.run(this.noise() * this.knockEnv) * p.knock * 0.45; }
                 // ---- overrun crackle
                 if (this.popEnv > 1e-3) {
                     this.popEnv *= popDecay;
@@ -431,15 +446,24 @@
                 x += Math.sin(TAU * this.phWhine) * p.whine.gain * (0.3 + 0.7 * this.load) * smoothstep(0, 0.1, this.rpmN + 0.02);
             }
             // ---- cabin tone, DC block, level
-            x = this.toneF2.run(this.toneF.run(x)) * (this.calibrating ? 1 : 0.55 + 0.45 * this.load);
-            x += this.fxF.run(fx) * 0.8;          // overrun effects are not darkened by the closed throttle
+            // level: idle and part load are quieter than full load, but not by 25 dB (about 10-12 dB)
+            var lift = this.calibrating || this.tonal ? 1 : 1 + 2.6 * (1 - this.load) * (1 - this.load) * (1 - this.rpmN);
+            x = this.toneF2.run(this.toneF.run(x)) * (this.calibrating ? 1 : 0.7 + 0.3 * this.load) * lift;
+            x += this.fxF.run(fx + tex * lift) * 0.8;          // overrun effects are not darkened by the closed throttle
             x = this.dcF.run(x) * this.norm;
+            if (this.small && !this.calibrating) {
+                // small speaker (phone, tablet): cut the sub-bass it can't play (it would only distort)
+                // and add its overtones instead, so the ear still hears the low firing pitch
+                var low = this.smLow.run(x);
+                var hm = this.smHarm.run(low * low * (low > 0 ? 6 : -6) + Math.abs(low) * 3);
+                x = this.smHp2.run(this.smHp.run(x)) + hm * 0.9;
+            }
             if (!this.calibrating) {
                 var g = this.gate * this.vol * this.vol;
                 x *= g;
                 if (outR && this.banks === 2 && !this.tonal) {
                     // stereo: the two banks' exhausts, slightly apart (mid stays as before)
-                    var sd = this.dcS.run(this.sideF.run(side)) * this.norm * g * (0.55 + 0.45 * this.load);
+                    var sd = this.dcS.run(this.sideF.run(side)) * this.norm * g * (0.7 + 0.3 * this.load) * lift;
                     outL[s] = soft(x + sd); outR[s] = soft(x - sd);
                     continue;
                 }

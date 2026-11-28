@@ -1,4 +1,4 @@
-# Active Sound 0.3.0 — MGU / iDrive 7
+# Active Sound 0.3.1 — MGU / iDrive 7
 
 Active Sound Design für die MGU: Die echte Motordrehzahl und das Motormoment steuern einen virtuellen Motor. 21 synthetisierte Motorklänge, jeder einzeln einstellbar, alle eigene Synthese (keine Aufnahmen, keine Samples, keine Markennamen).
 
@@ -37,6 +37,15 @@ Seite **Tune** im Auto und Bereich **TUNE** auf dem Handy, je Regler 0–200 % i
 
 Elektro und Turbine haben nur Bass, Rasp und Whine. Pops, Bangs und Motorbremse laufen über einen eigenen, helleren Signalweg, damit sie bei geschlossener Drosselklappe nicht im gedämpften Kabinenklang untergehen. Die Pegelangleichung der Profile bezieht sich auf den Werkszustand, Einstellungen werden also nicht wieder herausgerechnet. „Engines“ markiert eingestellte Motoren mit TUNED; „Reset sound“ setzt den aktuellen Motor zurück.
 
+## Klangbalance und Handy-Lautsprecher (0.3.1)
+
+Bis 0.3.0 bestanden Leerlauf und Teillast fast nur aus dem tiefen Zündgrundton (Diesel-R6 bei 1000–2000 U/min: 83–97 % der Energie unter 100 Hz). Das klang wie ein elektrisches Summen; das Diesel-Nageln wurde vom Kabinenfilter abgeschnitten. Seit 0.3.1:
+- Verbrennungsgeräusch je Zündung (breitbandig um 1,4 kHz), Nageln und Ventiltrieb laufen am Kabinenfilter vorbei; der Kabinenfilter geht nie unter ~1 kHz.
+- Zündimpulse bleiben bei Teillast kräftiger, die glatten Motorordnungen wirken vor allem bei hoher Drehzahl, der Tiefbass-„Thump“ hängt an der Last.
+- Leerlauf etwa 12–16 dB leiser als Volllast (vorher ~24 dB).
+- Ergebnis Diesel-R6 bei 1000/2000 U/min: 58 % / 50 % unter 100 Hz, Rest in Mitten und Höhen.
+- **Handy-Seite „Plays through“**: *Phone speaker* schneidet unter ~140 Hz ab (kleine Lautsprecher verzerren dort nur) und erzeugt die Obertöne des Zündtons, damit der tiefe Takt hörbar bleibt; *Car / headphones* gibt das volle Spektrum aus. Standard: Demo-Seite = Phone speaker, Auto-Seite = Car / headphones; die Wahl merkt sich der Browser.
+
 ## Demo ohne Auto: Fahrzeugmodell (ab 0.3.0)
 
 `vehicle.js` simuliert für Handy-Demo und WAV-Export ein Auto: Drehmomentkurve (Diesel früh flach, Turbo mit Plateau, Sauger steigend), Turboloch, 6–12 Gänge mit Sport-Schaltlogik (Zugkraftunterbrechung beim Schalten → Knaller/Blow-off, Kickdown, im Schub Gang halten), anfahrende Kupplung, Trägheit, Luft- und Rollwiderstand, Motorbremse, Bremse, Begrenzer. Fahrzeugdaten je Motor (z. B. Lkw 18 t, 12 Gänge; V-Twin als Motorrad). Auf dem Handy: Gaspedal-Fläche (höher drücken = mehr Gas), Bremse, Auto-Fahrt. Im Auto wird das Modell nicht benutzt, dort kommen Drehzahl und Moment vom echten Motor.
@@ -61,6 +70,6 @@ Bedienung: Seite *Sound* (Drehzahlmesser des virtuellen Motors, Status), *Engine
 node tests/active_sound.test.js
 python3 tools/build_store_app.py active_sound
 ```
-Geprüft am PC: alle Profile (auch mit allen Reglern auf 0 % und 200 %), Stereo der Bänke, Erhitzung des Auspuffs, Fahrzeugmodell (0–100, Gänge, Schub, Bremsen, Schaltunterbrechung) (endlich, begrenzt, ähnliche Lautheit, Zündfrequenz als stärkste Linie), Ausblenden, Mapping, getakteter Player mit Fake-`aplay`, WAV-Header, Tuning (Bereinigung, Pops/Bangs und Motorbremse messbar lauter im Schub, Live-Änderung ohne Filter-Reset), Handy-Server (Token, Health, Größenlimit), Worklet in simuliertem AudioWorklet-Scope, Firewall-Helfer. Zusätzlich Handy-Seite in Headless-Chrome: AudioWorklet lädt und erzeugt Ton.
+Geprüft am PC: Klangbalance (Leerlauf/Teillast mit Anteil über 200 Hz, Pegelabstand zu Volllast, Handy-Lautsprecher-Modus), alle Profile (auch mit allen Reglern auf 0 % und 200 %), Stereo der Bänke, Erhitzung des Auspuffs, Fahrzeugmodell (0–100, Gänge, Schub, Bremsen, Schaltunterbrechung) (endlich, begrenzt, ähnliche Lautheit, Zündfrequenz als stärkste Linie), Ausblenden, Mapping, getakteter Player mit Fake-`aplay`, WAV-Header, Tuning (Bereinigung, Pops/Bangs und Motorbremse messbar lauter im Schub, Live-Änderung ohne Filter-Reset), Handy-Server (Token, Health, Größenlimit), Worklet in simuliertem AudioWorklet-Scope, Firewall-Helfer. Zusätzlich Handy-Seite in Headless-Chrome: AudioWorklet lädt und erzeugt Ton.
 
 Lizenz: GPL-3.0-only wie das Repo; `qr_vendor.js` MIT (siehe `QR_VENDOR_LICENSE.txt`).

@@ -1,5 +1,5 @@
 'use strict';
-// Active Sound 0.3: engine profiles, per-sound tuning, exhaust pipes + stereo banks, vehicle model, synthesizer, car mapping, head-unit player, WAV export,
+// Active Sound 0.3.1: engine profiles, per-sound tuning, exhaust pipes + stereo banks, vehicle model, synthesizer, car mapping, head-unit player, WAV export,
 // phone server + page, firewall helper. PC only, no car.
 const assert = require('assert');
 const fs = require('fs');
@@ -149,6 +149,29 @@ function mag(b, f, from) {
     assert.ok(E.get('v8_cross').bank.length === 8 && E.get('flat6').banks === 2 && !E.get('inline6').banks);
     const s = new EngineSynth(SR, E.get('flat6'), 9); s.set(5000, 1, true, 1);
     const buf = s.renderS16(100); assert.strictEqual(buf.length, 400);
+}
+/* voicing: idle and cruise are not just a low hum (the 'electric fart' of 0.3.0), level gap to full load ~10-16 dB */
+{
+    const share = (b, f0) => {      // energy share above f0 via a crude DFT on 0.25 s
+        const N = 11025, seg = b.subarray(b.length - N); let hi = 0, all = 0;
+        for (let k = 2; k < 2000; k += 2) { const f = k * SR / N; let re = 0, im = 0;
+            for (let i = 0; i < N; i += 2) { const a = 2 * Math.PI * k * i / N; re += seg[i] * Math.cos(a); im += seg[i] * Math.sin(a); }
+            const pw = re * re + im * im; all += pw; if (f >= f0) hi += pw; }
+        return hi / all;
+    };
+    for (const id of ['diesel6', 'v8_cross', 'inline4']) {
+        const p = E.get(id);
+        const idle = render(id, p.idle, 0.05, 1), cruise = render(id, p.idle + 0.25 * (p.redline - p.idle), 0.25, 1);
+        const full = render(id, p.idle + 0.6 * (p.redline - p.idle), 1, 1);
+        assert.ok(share(idle, 200) > 0.2, id + ' idle has content above 200 Hz: ' + share(idle, 200).toFixed(2));
+        assert.ok(share(cruise, 200) > 0.15, id + ' cruise above 200 Hz: ' + share(cruise, 200).toFixed(2));
+        const gap = 20 * Math.log10(rms(full, SR / 2) / rms(idle, SR / 2));
+        assert.ok(gap > 8 && gap < 18, id + ' idle -> full load ' + gap.toFixed(1) + ' dB');
+    }
+    // small speaker: almost nothing below 120 Hz, still clearly audible
+    const s = new EngineSynth(SR, E.get('diesel6'), 3); s.setSpeaker('small'); s.set(1200, 0.25, true, 1);
+    const b = new Float32Array(SR); s.render(b, null, SR);
+    assert.ok(share(b, 120) > 0.85 && rms(b, SR / 2) > 0.02, 'phone speaker mode: ' + share(b, 120).toFixed(2));
 }
 /* exhaust pipe: gets hot under load (resonance moves up), resonance control works */
 {
