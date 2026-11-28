@@ -4,7 +4,8 @@
  * Runs on the head unit (Node 8, PCM for ALSA / WAV export) and on the phone (AudioWorklet
  * or ScriptProcessor). Same code, same sound. ES2015 only, no dependencies.
  *
- *   var s = new EngineSynth(44100, profile, seed);
+ *   var s = new EngineSynth(44100, profile, seed, tune);
+ *   s.setTune({ pops: 1.5, turbo: 0 });   // per-sound tuning, see tuneProfile()
  *   s.set(rpm, load, on, volume);   // targets; smoothed per sample
  *   s.render(left, right, n);       // fills two Float32Arrays (or one, mono) with n samples
  *
@@ -55,7 +56,42 @@
     function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
     function smoothstep(a, b, x) { var t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
 
-    function EngineSynth(sampleRate, profile, seed) {
+    /*
+     * Per-sound tuning. tune = { key: factor 0..2 }, 1 (or missing) = the profile as designed.
+     * Above 1 a feature the profile lacks is added from a floor value (e.g. pops on a diesel,
+     * a turbo on the muscle V8); 0 removes it. Returns an effective profile for the synthesizer.
+     */
+    function up(base, m, floor) { return m <= 1 ? base * m : base + (m - 1) * Math.max(base, floor); }
+    function tuneProfile(p, tune) {
+        var t = tune || {}, q = {}, k;
+        var g = function (key) { var v = t[key]; return typeof v === 'number' && isFinite(v) ? clamp(v, 0, 2) : 1; };
+        for (k in p) if (Object.prototype.hasOwnProperty.call(p, k)) q[k] = p[k];
+        var bass = g('bass'), rasp = g('rasp');
+        q.pops = up(p.pops || 0, g('pops'), 0.6);
+        q.bangs = up(p.bangs !== undefined ? p.bangs : (p.pops || 0) * 0.6, g('bangs'), 0.5);
+        q.rough = up(p.rough || 0, g('lope'), 0.2);
+        q.intake = up(p.intake || 0, g('intake'), 0.3);
+        q.knock = up(p.knock || 0, g('clatter'), 0.3);
+        q.jake = p.fuel === 'diesel' ? up(p.jake || 0, g('brake'), 0.6) : 0;
+        q.thump = (p.thump || 0) * bass;
+        q.grit = (p.grit || 0) * rasp;
+        q.bright = (p.bright || 0) * (0.6 + 0.4 * rasp);
+        q.body = (p.body || []).map(function (b, i) { return [b[0], b[1], b[2] * (i === 0 ? 0.4 + 0.6 * bass : i >= 2 ? 0.5 + 0.5 * rasp : 1)]; });
+        if (p.hum) q.hum = p.hum; q.humGain = 0.12 * bass;
+        if (p.noise) q.noise = { gain: p.noise.gain * rasp, f0: p.noise.f0, f1: p.noise.f1, q: p.noise.q };
+        var tb = g('turbo'), bov = g('bov');
+        if (p.turbo) q.turbo = { whistle: p.turbo.whistle, gain: p.turbo.gain * tb, bov: up(p.turbo.bov || 0, bov, 0.12) };
+        else if (p.kind !== 'tonal' && (tb > 1 || bov > 1)) q.turbo = { whistle: 4500, gain: 0.07 * Math.max(0, tb - 1), bov: bov > 1 ? 0.12 * (bov - 1) * 2 : 0 };
+        else q.turbo = null;
+        var wh = g('whine');
+        if (p.blower) q.blower = { ratio: p.blower.ratio, gain: p.blower.gain * wh };
+        else if (p.kind !== 'tonal' && wh > 1) q.blower = { ratio: 32, gain: 0.025 * (wh - 1) };
+        else q.blower = null;
+        if (p.whine) q.whine = { f0: p.whine.f0, f1: p.whine.f1, gain: p.whine.gain * wh };
+        return q;
+    }
+
+    function EngineSynth(sampleRate, profile, seed, tune) {
         this.sr = sampleRate || 44100;
         this.seed = (seed >>> 0) || 0x9e3779b9;
         this.rnd = this.seed;
@@ -66,7 +102,7 @@
         this.kSpoolUp = k(0.7, this.sr); this.kSpoolDown = k(0.25, this.sr);
         this.tRpm = 0; this.tLoad = 0; this.tOn = 0; this.tVol = 0.5;
         this.vol = 0.5;
-        this.setProfile(profile);
+        this.setProfile(profile, tune);
     }
     var P = EngineSynth.prototype;
 
@@ -86,17 +122,25 @@
         if (volume !== undefined && isFinite(volume)) this.tVol = clamp(volume, 0, 1);
     };
 
-    P.setProfile = function (profile) {
+    P.setProfile = function (profile, tune) {
         if (!profile) throw new Error('no profile');
         this.p = profile;
+        this.q = tuneProfile(profile, null);       // level matching on the sound as designed
         this._build();
         this.norm = 1;
         this._calibrate();
+        this.setTune(tune || this.tune || null);
         this._resetState(true);
+    };
+    /** Change the tuning live (no filter reset, no click). */
+    P.setTune = function (tune) {
+        this.tune = tune || null;
+        this.q = tuneProfile(this.p, this.tune);
+        for (var k = 0; k < this.body.length; k++) this.body[k].g = this.q.body[k][2];
     };
 
     P._build = function () {
-        var p = this.p, sr = this.sr, i;
+        var p = this.q, sr = this.sr, i;
         this.tonal = p.kind === 'tonal';
         var n = this.tonal ? 0 : p.cyl;
         var fire = [];
@@ -114,6 +158,9 @@
         this.bovF = new Biquad().bandpass(2300, 1.4, sr);
         this.knockF = new Biquad().bandpass(2800, 1.6, sr);
         this.popF = new Biquad().lowpass(1700, 0.9, sr);
+        this.bangF = new Biquad().lowpass(700, 0.8, sr);
+        this.jakeF = new Biquad().bandpass(900, 1.1, sr);
+        this.fxF = new Biquad().lowpass(3200, 0.7, sr);
         this.noiseF = new Biquad();
         this.toneF = new Biquad();
         this.toneF2 = new Biquad();
@@ -126,11 +173,11 @@
         this.th = 0; this.base = 0; this.fi = 0;
         this.nextAt = this.fireAt.length ? this.fireAt[0] : 1e9;
         this.phRev = 0; this.phWhine = 0; this.phBlow = 0; this.phHum = 0; this.phTurbo = 0; this.phFm = 0;
-        this.carry = 0; this.env = 0; this.knockEnv = 0; this.popEnv = 0; this.bovEnv = 0;
+        this.carry = 0; this.env = 0; this.knockEnv = 0; this.popEnv = 0; this.bovEnv = 0; this.bangEnv = 0; this.jakeEnv = 0; this.jakeOn = 0;
         this.boost = 0; this.loadHist = 0; this.lastRpm = 0;
         this.ctl = 0;
         this.body.forEach(function (b) { b.f.reset(); });
-        [this.thumpF, this.thumpF2, this.intakeF, this.bovF, this.knockF, this.popF, this.noiseF,
+        [this.thumpF, this.thumpF2, this.intakeF, this.bovF, this.knockF, this.popF, this.bangF, this.jakeF, this.fxF, this.noiseF,
             this.toneF, this.toneF2, this.dcF].forEach(function (f) { f.reset(); });
         this.layers.forEach(function (l) { l.ph = 0; l.ph2 = 0; });
         if (hard) { this.rpm = this.tRpm; this.load = this.tLoad; this.gate = this.tOn; this.vol = this.tVol; }
@@ -155,7 +202,7 @@
 
     /** Coefficients that follow rpm / load, updated every CONTROL samples. */
     P._control = function () {
-        var p = this.p, sr = this.sr, rpmN = this.rpmN;
+        var p = this.q, sr = this.sr, rpmN = this.rpmN;
         var fFire = this.tonal ? 0 : this.rpm / 60 / p.cycle * p.cyl;
         this.thumpF.lowpass(clamp(fFire * 1.6 + 45, 50, 900), 1.2, sr);
         this.thumpF2.lowpass(clamp(fFire * 2.5 + 80, 80, 1400), 0.7, sr);
@@ -167,8 +214,12 @@
     };
 
     P._fire = function (i, frac) {
-        var p = this.p;
-        if (this.limiter && this.random() < 0.55) { this.popEnv = Math.max(this.popEnv, 0.35 * (p.pops || 0)); return; }
+        var p = this.q;
+        if (this.limiter && this.random() < 0.55) {
+            this.popEnv = Math.max(this.popEnv, 0.35 * (p.pops || 0));
+            if (p.bangs && this.random() < 0.12 * p.bangs) this._bang(0.6);
+            return;
+        }
         var idleness = 1 - this.rpmN;
         var rough = (p.rough || 0) * (0.3 + 0.7 * idleness * idleness);
         var lvl = this.fireAmp[i] * (1 + rough * this.noise()) * (0.3 + 0.7 * this.load) * (0.6 + 0.4 * this.rpmN);
@@ -177,14 +228,31 @@
         this.carry += lvl * frac;
         if (lvl > this.env) this.env = lvl;
         if (p.knock) this.knockEnv = Math.max(this.knockEnv, lvl * (1.1 - 0.6 * this.load));
-        // overrun: throttle closed, rpm falling from higher up -> unburnt fuel pops
-        if (p.pops && this.load < 0.08 && this.rpmN > 0.3 && this.falling && this.random() < 0.06 * p.pops) {
+        // engine (compression) brake: on overrun every firing becomes a sharp bark
+        if (this.jakeOn > 0.02) {
+            var jl = this.fireAmp[i] * p.jake * this.jakeOn * (0.45 + 0.55 * this.rpmN);
+            this.imp += jl * 0.9 * (1 - frac); this.carry += jl * 0.9 * frac;
+            this.jakeEnv = Math.max(this.jakeEnv, jl);
+        }
+        // overrun: throttle closed above idle (coasting in gear) -> unburnt fuel pops
+        if (p.pops && this.load < 0.08 && this.rpmN > 0.25 && this.random() < 0.06 * p.pops) {
             this.popEnv = Math.max(this.popEnv, (0.5 + 0.5 * this.random()) * p.pops);
         }
     };
 
+    /** One backfire: a heavy low thump into the exhaust plus a burst of crackle. */
+    P._bang = function (strength) {
+        var b = this.q.bangs * strength * (0.7 + 0.3 * this.random());
+        if (b <= this.bangEnv) return;
+        this.bangEnv = b;
+        this.imp += b * 2.2;
+        this.popEnv = Math.max(this.popEnv, 0.6 * b);
+    };
+
     P._renderRaw = function (outL, n, outR) {
-        var p = this.p, sr = this.sr, i, k;
+        var p = this.q, sr = this.sr, i, k;
+        var bangDecay = Math.exp(-1 / (sr * 0.045));
+        var jakeDecay = Math.exp(-1 / (sr * 0.012));
         var decay = Math.exp(-1 / (sr * (p.decay || 0.006)));
         var knockDecay = Math.exp(-1 / (sr * 0.0018));
         var popDecay = Math.exp(-1 / (sr * 0.022));
@@ -203,14 +271,26 @@
                 this.lastRpm = this.rpm;
                 this.limiter = !this.tonal && this.tRpm >= p.redline * 0.995 && this.load > 0.5;
                 // blow-off: boost was up and the throttle closed quickly
-                if (p.turbo && p.turbo.bov && this.boost > 0.45 && this.loadHist - this.load > 0.25) {
+                // lift-off: the throttle target dropped well below the recent load (slow follower, ~150 ms)
+                var lift = this.loadHist - this.tLoad > 0.3;
+                if (p.turbo && p.turbo.bov && this.boost > 0.45 && lift) {
                     this.bovEnv = Math.max(this.bovEnv, this.boost);
                     this.boost *= 0.5;
                 }
-                this.loadHist += (this.load - this.loadHist) * 0.08;
+                // bangs: a hard lift from high rpm (gear shift, letting off)
+                if (p.bangs && lift && this.rpmN > 0.35 && !this.liftArmed) {
+                    this.liftArmed = true;
+                    if (this.random() < 0.35 + 0.3 * Math.min(1, p.bangs)) this._bang(0.6 + 0.4 * this.rpmN);
+                }
+                if (!lift) this.liftArmed = false;
+                // overrun bangs now and then while coasting from higher rpm
+                if (p.bangs && this.load < 0.08 && this.rpmN > 0.3 && this.random() < 0.0025 * p.bangs) this._bang(0.5);
+                var jw = p.jake && this.load < 0.08 && this.rpmN > 0.1 ? 1 : 0;
+                this.jakeOn += (jw - this.jakeOn) * 0.04;
+                this.loadHist += (this.load - this.loadHist) * 0.006;
                 this._control();
             }
-            var x = 0;
+            var x = 0, fx = 0;      // fx: crackle, bangs, engine brake (own brighter path)
             if (this.gate === 0 && this.tOn === 0) { outL[s] = 0; if (outR) outR[s] = 0; continue; }
             var rpmHz = this.rpm / 60;
 
@@ -244,8 +324,10 @@
                 // ---- overrun crackle
                 if (this.popEnv > 1e-3) {
                     this.popEnv *= popDecay;
-                    x += this.popF.run(this.noise() * this.popEnv) * 1.6 + (this.random() < 0.002 ? this.popEnv * 1.5 : 0);
+                    fx += this.popF.run(this.noise() * this.popEnv) * 1.6 + (this.random() < 0.004 ? this.popEnv * 1.2 * this.noise() : 0);
                 }
+                if (this.bangEnv > 1e-3) { this.bangEnv *= bangDecay; fx += this.bangF.run(this.noise() * this.bangEnv) * 3.2; }
+                if (this.jakeEnv > 1e-3) { this.jakeEnv *= jakeDecay; fx += this.jakeF.run(this.noise() * this.jakeEnv) * 2.2; }
             } else {
                 // ---- tonal (electric / turbine)
                 var fm = 1 + (p.fm || 0) * Math.sin(TAU * this.phFm);
@@ -261,7 +343,7 @@
                 if (p.noise) x += this.noiseF.run(this.noise()) * p.noise.gain * (0.2 + 0.8 * this.rpmN) * (0.5 + 0.5 * this.load);
                 if (p.hum) {
                     this.phHum += p.hum / sr; if (this.phHum >= 1) this.phHum -= 1;
-                    x += Math.sin(TAU * this.phHum) * 0.12 * (0.3 + 0.7 * this.load);
+                    x += Math.sin(TAU * this.phHum) * (p.humGain === undefined ? 0.12 : p.humGain) * (0.3 + 0.7 * this.load);
                 }
             }
             // ---- intake roar
@@ -286,10 +368,11 @@
                 x += Math.sin(TAU * this.phWhine) * p.whine.gain * (0.3 + 0.7 * this.load) * smoothstep(0, 0.1, this.rpmN + 0.02);
             }
             // ---- cabin tone, DC block, level
-            x = this.toneF2.run(this.toneF.run(x));
+            x = this.toneF2.run(this.toneF.run(x)) * (this.calibrating ? 1 : 0.55 + 0.45 * this.load);
+            x += this.fxF.run(fx) * 0.8;          // overrun effects are not darkened by the closed throttle
             x = this.dcF.run(x) * this.norm;
             if (!this.calibrating) {
-                x *= this.gate * this.vol * this.vol * (0.55 + 0.45 * this.load);
+                x *= this.gate * this.vol * this.vol;
                 x = x > 0 ? x / (1 + x * 0.6) : x / (1 - x * 0.6);   // gentle soft clip
                 x = clamp(x, -0.95, 0.95);
             }
@@ -321,5 +404,5 @@
         return { rpm: this.rpm, load: this.load, gate: this.gate, boost: this.boost || 0, limiter: !!this.limiter };
     };
 
-    return { EngineSynth: EngineSynth, Biquad: Biquad, TARGET_RMS: TARGET_RMS };
+    return { EngineSynth: EngineSynth, Biquad: Biquad, TARGET_RMS: TARGET_RMS, tuneProfile: tuneProfile };
 });

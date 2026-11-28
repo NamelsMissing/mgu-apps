@@ -52,12 +52,12 @@ function wavHeader(frames, channels, rate) {
 
 /**
  * Render the demo drive for a profile as WAV (stereo, 16 bit). Async in slices so the UI keeps
- * drawing on the head unit. opts: { seconds, rate, volume, yieldEvery }.
+ * drawing on the head unit. opts: { seconds, rate, volume, tune }.
  */
 function renderDrive(profile, opts) {
     const o = opts || {};
     const rate = o.rate || RATE, seconds = o.seconds || DRIVE_SECONDS;
-    const synth = new EngineSynth(rate, profile, 1234);
+    const synth = new EngineSynth(rate, profile, 1234, o.tune || null);
     const total = Math.round(seconds * rate), block = 441;
     const parts = [];
     let done = 0;
@@ -86,8 +86,8 @@ function renderDrive(profile, opts) {
 }
 
 /** Write the demo drive of a profile into dir, atomically. Resolves to the file path. */
-async function exportDrive(profile, dir) {
-    const wav = await renderDrive(profile);
+async function exportDrive(profile, dir, tune) {
+    const wav = await renderDrive(profile, { tune });
     const file = path.join(dir, 'active-sound-' + profile.id + '.wav');
     const tmp = file + '.tmp-' + process.pid;
     fs.mkdirSync(dir, { recursive: true });
@@ -115,7 +115,7 @@ class LivePlayer {
         this.dspRuntime = o.dspRuntime;
         this.log = o.log || console;
         this.onState = o.onState || (() => {});
-        this.synth = new EngineSynth(RATE, o.profile, 77);
+        this.synth = new EngineSynth(RATE, o.profile, 77, o.tune || null);
         this.run = null;
         this.status = 'off'; this.detail = '';
     }
@@ -128,7 +128,8 @@ class LivePlayer {
         return null;
     }
     available() { return !!this.backend(); }
-    setProfile(profile) { this.synth.setProfile(profile); }
+    setProfile(profile, tune) { this.synth.setProfile(profile, tune); }
+    setTune(tune) { this.synth.setTune(tune); }
     set(rpm, load, on, volume) { this.synth.set(rpm, load, on, volume); }
     state(status, detail) {
         this.status = status; this.detail = detail || '';

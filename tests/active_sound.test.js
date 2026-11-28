@@ -1,5 +1,5 @@
 'use strict';
-// Active Sound 0.1: engine profiles, synthesizer, car mapping, head-unit player, WAV export,
+// Active Sound 0.2: engine profiles, per-sound tuning, synthesizer, car mapping, head-unit player, WAV export,
 // phone server + page, firewall helper. PC only, no car.
 const assert = require('assert');
 const fs = require('fs');
@@ -11,7 +11,7 @@ const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 const APP = path.join(__dirname, '../apps/active_sound');
 const E = require(APP + '/engines');
-const { EngineSynth } = require(APP + '/synth');
+const { EngineSynth, tuneProfile } = require(APP + '/synth');
 const M = require(APP + '/mapping');
 const { LivePlayer, renderDrive, exportDrive, drive } = require(APP + '/player');
 const { WebServer } = require(APP + '/web-server');
@@ -19,8 +19,8 @@ const pages = require(APP + '/web-page');
 const NET = path.join(__dirname, '../native/sound-net');
 
 const SR = 44100;
-function render(id, rpm, load, seconds, on) {
-    const s = new EngineSynth(SR, E.get(id), 7);
+function render(id, rpm, load, seconds, on, tune) {
+    const s = new EngineSynth(SR, E.get(id), 7, tune);
     s.set(rpm, load, on === undefined ? true : on, 1);
     const n = Math.round(SR * seconds), b = new Float32Array(n);
     s.render(b, null, n);
@@ -35,7 +35,8 @@ function mag(b, f, from) {
 
 /* ---------- profiles ---------- */
 {
-    assert.ok(E.PROFILES.length >= 16, 'at least 16 engines');
+    assert.ok(E.PROFILES.length >= 21, 'at least 21 engines');
+    assert.ok(E.PROFILES.filter((p) => p.fuel === 'diesel').length >= 6, 'six diesels');
     const ids = new Set();
     for (const p of E.PROFILES) {
         assert.ok(!ids.has(p.id), 'unique id ' + p.id); ids.add(p.id);
@@ -90,6 +91,48 @@ function mag(b, f, from) {
     const st = new EngineSynth(SR, E.get('inline6'), 1); st.set(0, 0, false, 1);
     const z = new Float32Array(1000); st.render(z, null, 1000);
     assert.ok(z.every((v) => v === 0), 'no output without engine');
+}
+/* ---------- tuning ---------- */
+{
+    // metadata and cleaning
+    const truck = E.get('diesel_truck'), v8 = E.get('v8_cross'), ev = E.get('ev_pulse');
+    assert.ok(E.tuneKeys(truck).some((c) => c.key === 'brake'), 'diesel has engine brake');
+    assert.ok(!E.tuneKeys(v8).some((c) => c.key === 'brake'), 'petrol has no engine brake');
+    assert.deepStrictEqual(E.tuneKeys(ev).map((c) => c.key), ['bass', 'rasp', 'whine']);
+    assert.ok(E.TUNE.every((c) => /^[\x20-\x7e]+$/.test(c.name + c.desc)), 'tune texts ASCII');
+    assert.deepStrictEqual(E.cleanTune(v8, { pops: 1.6, brake: 2, x: 1, bass: 1, rasp: -3, turbo: 9, lope: 'a' }), { pops: 1.5, rasp: 0, turbo: 2 });
+    // effective profile: 0 removes, >1 adds a missing feature, 1 = as designed
+    assert.deepStrictEqual(tuneProfile(v8, {}).body, v8.body);
+    assert.strictEqual(tuneProfile(v8, { pops: 0 }).pops, 0);
+    assert.ok(tuneProfile(E.get('diesel4'), { pops: 2 }).pops > 0.5, 'pops added to a diesel');
+    assert.ok(tuneProfile(E.get('v8_flat'), { turbo: 2 }).turbo.gain > 0, 'turbo added');
+    assert.strictEqual(tuneProfile(v8, { brake: 2 }).jake, 0, 'no engine brake on petrol');
+    assert.ok(tuneProfile(E.get('diesel4'), { brake: 2 }).jake > 0.5);
+    // level matching ignores tuning; the tuning is audible
+    const plain = new EngineSynth(SR, v8, 1), loud = new EngineSynth(SR, v8, 1, { bass: 2 });
+    assert.strictEqual(plain.norm, loud.norm, 'tuning is not normalised away');
+    const coast = (id, tune) => {        // pull to 80 %, then lift off: overrun energy
+        const p = E.get(id), s = new EngineSynth(SR, p, 11, tune), b = new Float32Array(SR);
+        s.set(p.idle + 0.8 * (p.redline - p.idle), 1, true, 1); s.render(b, null, SR);
+        s.set(p.idle + 0.3 * (p.redline - p.idle), 0, true, 1); s.render(b, null, SR);
+        return rms(b, SR * 0.1);
+    };
+    const popsOff = coast('v8_cross', { pops: 0, bangs: 0 }), popsMax = coast('v8_cross', { pops: 2, bangs: 2 });
+    assert.ok(popsMax > popsOff * 1.5, 'pops & bangs louder on overrun: ' + popsOff.toFixed(4) + ' -> ' + popsMax.toFixed(4));
+    const brakeOff = coast('diesel_truck', { brake: 0 }), brakeOn = coast('diesel_truck', null);
+    assert.ok(brakeOn > brakeOff * 1.5, 'engine brake bark: ' + brakeOff.toFixed(4) + ' -> ' + brakeOn.toFixed(4));
+    // every profile stays finite and bounded at the extremes of every control
+    for (const p of E.PROFILES) for (const ext of [0, 2]) {
+        const t = {}; E.tuneKeys(p).forEach((c) => { t[c.key] = ext; });
+        for (const b of [render(p.id, p.redline * 1.02, 1, 0.25, true, t), render(p.id, p.idle, 0, 0.25, true, t)]) {
+            for (const v of b) { assert.ok(isFinite(v) && Math.abs(v) <= 0.95, p.id + ' tune ' + ext); }
+        }
+    }
+    // live change keeps the filter state (no reset)
+    const live = new EngineSynth(SR, truck, 2); live.set(1500, 0.5, true, 1);
+    const pre = new Float32Array(2000); live.render(pre, null, 2000);
+    const y1 = live.body[0].f.y1; live.setTune({ bass: 1.5 }); assert.strictEqual(live.body[0].f.y1, y1);
+    assert.ok(live.body[0].g !== truck.body[0][2]);
 }
 /* stereo + S16 */
 {
@@ -161,7 +204,7 @@ function mag(b, f, from) {
     scripts.forEach((s) => new vm.Script(s));            // all of it parses
     assert.ok(html.indexOf('"abc"') > 0 && html.indexOf('/worklet.js') > 0);
     const demo = pages.build({ mode: 'demo' });
-    assert.ok(demo.indexOf('id="gas"') > 0 && demo.indexOf('/api/') > 0 === true);
+    assert.ok(demo.indexOf('id="gas"') > 0 && demo.indexOf('id="tune"') > 0);
     // the worklet runs in a fake AudioWorkletGlobalScope and makes sound
     let Proc = null;
     const scope = { sampleRate: 48000, registerProcessor: (n, c) => { assert.strictEqual(n, 'active-sound'); Proc = c; },
@@ -169,7 +212,9 @@ function mag(b, f, from) {
     scope.globalThis = scope;
     vm.runInNewContext(pages.worklet(), scope);
     const proc = new Proc();
-    proc.port.onmessage({ data: { type: 'profile', id: 'v10' } });
+    proc.port.onmessage({ data: { type: 'profile', id: 'v10', tune: { rasp: 1.5 } } });
+    proc.port.onmessage({ data: { type: 'tune', tune: { pops: 2 } } });
+    assert.deepStrictEqual(proc.synth.tune, { pops: 2 });
     proc.port.onmessage({ data: { type: 'set', rpm: 6000, load: 1, on: true, volume: 0.8 } });
     const out = [new Float32Array(128), new Float32Array(128)];
     let energy = 0;
@@ -177,7 +222,7 @@ function mag(b, f, from) {
     assert.ok(energy > 1, 'worklet output');
 
     /* ---------- phone server ---------- */
-    let st = { on: false, profile: 'inline6', volume: 0.5 };
+    let st = { on: false, profile: 'inline6', volume: 0.5, tune: {} };
     const server = new WebServer({ state: () => Object.assign({ ok: true, rpm: 1000, load: 0.2, running: true }, st),
         set: (b) => { Object.assign(st, b); return { ok: true }; } }, { warn() {} }, { token: 'tok', port: 0, netStatusPort: 1 });
     server.start();
@@ -200,6 +245,8 @@ function mag(b, f, from) {
     assert.strictEqual(JSON.parse((await req('GET', '/api/state?t=tok')).body).rpm, 1000);
     assert.strictEqual((await req('POST', '/api/set?t=tok', JSON.stringify({ on: true, profile: 'v12' }))).status, 200);
     assert.ok(st.on && st.profile === 'v12');
+    assert.strictEqual((await req('POST', '/api/set?t=tok', JSON.stringify({ tune: { pops: 2 } }))).status, 200);
+    assert.deepStrictEqual(st.tune, { pops: 2 });
     assert.strictEqual((await req('POST', '/api/set?t=tok', '[1]')).status, 400);
     assert.strictEqual((await req('POST', '/api/set?t=tok', 'x'.repeat(5000))).status, 413);
     assert.ok(server.phoneConnected());

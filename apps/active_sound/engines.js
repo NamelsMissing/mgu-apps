@@ -4,6 +4,7 @@
  * Shared by the head unit (Node 8) and the phone page (browser, AudioWorklet): plain
  * data, no syntax newer than ES2015, exported as module.exports or the global
  * ActiveSoundEngines.
+ * * 21 profiles, 6 of them diesel.
  *
  * All profiles are original synthesis settings (generic engine layouts, no recordings,
  * no samples, no brand names). Combustion profiles ('pulse'):
@@ -21,7 +22,8 @@
  *   turbo         { whistle Hz at full boost, gain, bov = blow-off on lift }
  *   blower        { ratio x crank speed, gain } supercharger / e-motor whine
  *   knock         short high click per firing (diesel clatter, air-cooled twins)
- *   pops          overrun crackle
+ *   pops          overrun crackle; bangs: backfires on lift-off (default 0.6 x pops)
+ *   fuel, jake    'diesel'; engine (compression) brake bark on overrun
  *   tone, bright  cabin low-pass: base Hz and extra Hz with load x rpm
  * Tonal profiles ('tonal', electric / turbine): layers [ratio x rpm/60 Hz, gain],
  * fm (vibrato depth), whine { f0, f1 Hz, gain }, noise { gain, f0, f1 Hz, q }.
@@ -102,12 +104,42 @@
             body: [[300, 3, 1], [650, 4, 0.6], [1400, 4, 0.35], [2800, 3, 0.2]], decay: 0.0025, grit: 0.3, rough: 0.03,
             thump: 0.4, orders: [[3, 0.5], [6, 0.25], [1.5, 0.1]], intake: 0.3,
             turbo: { whistle: 7000, gain: 0.07, bov: 0 }, blower: { ratio: 14, gain: 0.03 }, pops: 0.3, tone: 2000, bright: 5000 },
-        { id: 'diesel6', name: 'Diesel Inline-6', short: 'DIESEL I6', kind: 'pulse', group: 'Torque',
+        { id: 'diesel4', name: 'Diesel Inline-4', short: 'DIESEL I4', kind: 'pulse', group: 'Diesel', fuel: 'diesel',
+            desc: 'Everyday turbo diesel four: grainy idle, strong mid-range pull.',
+            cyl: 4, cycle: 2, amp: [1, 0.95, 0.98, 0.94], idle: 800, redline: 4800,
+            body: [[90, 2.5, 1], [200, 3, 0.6], [450, 3.5, 0.3], [1000, 3, 0.08]], decay: 0.009, grit: 0.4, rough: 0.12,
+            thump: 1, orders: [[2, 0.5], [1, 0.2], [4, 0.12]], intake: 0.45, knock: 0.6,
+            turbo: { whistle: 3600, gain: 0.1, bov: 0.04 }, pops: 0, tone: 700, bright: 1500 },
+        { id: 'diesel6', name: 'Diesel Inline-6', short: 'DIESEL I6', kind: 'pulse', group: 'Diesel', fuel: 'diesel',
             desc: 'Big diesel six: clatter at idle, deep turbo torque.',
             cyl: 6, cycle: 2, amp: [1, 0.95, 1, 0.96, 0.98, 0.94], idle: 650, redline: 4600,
             body: [[75, 2.5, 1], [160, 3, 0.6], [350, 3.5, 0.3], [800, 3, 0.08]], decay: 0.01, grit: 0.4, rough: 0.1,
             thump: 1.1, orders: [[3, 0.5], [1.5, 0.25], [6, 0.1]], intake: 0.5, knock: 0.5,
             turbo: { whistle: 3200, gain: 0.09, bov: 0.05 }, pops: 0, tone: 650, bright: 1500 },
+        { id: 'diesel_v6', name: 'Diesel V6 Biturbo', short: 'DIESEL V6', kind: 'pulse', group: 'Diesel', fuel: 'diesel',
+            desc: 'Three-litre V6 diesel: smooth, deep and full of torque.',
+            cyl: 6, cycle: 2, amp: [1, 0.9, 1, 0.9, 1, 0.9], idle: 650, redline: 4800,
+            body: [[80, 2.5, 1], [170, 3, 0.65], [380, 3.5, 0.3], [850, 3, 0.1]], decay: 0.01, grit: 0.38, rough: 0.1,
+            thump: 1.15, orders: [[3, 0.5], [1.5, 0.3], [6, 0.1]], intake: 0.45, knock: 0.45,
+            turbo: { whistle: 3400, gain: 0.08, bov: 0.05 }, pops: 0, tone: 680, bright: 1600 },
+        { id: 'diesel_v8', name: 'Diesel V8 Biturbo', short: 'DIESEL V8', kind: 'pulse', group: 'Diesel', fuel: 'diesel',
+            desc: 'Big V8 diesel with two turbos: a low, heavy rumble.',
+            cyl: 8, cycle: 2, amp: [1, 0.8, 1, 0.8, 0.8, 1, 0.8, 1], idle: 600, redline: 4600,
+            body: [[65, 2.2, 1], [140, 2.8, 0.7], [310, 3.2, 0.35], [720, 3, 0.1]], decay: 0.012, grit: 0.38, rough: 0.14,
+            thump: 1.3, orders: [[4, 0.5], [2, 0.35], [1, 0.15]], intake: 0.5, knock: 0.4,
+            turbo: { whistle: 3000, gain: 0.09, bov: 0.06 }, pops: 0, tone: 600, bright: 1400 },
+        { id: 'diesel_pickup', name: 'Straight-Pipe Diesel', short: 'PIPE DIESEL', kind: 'pulse', group: 'Diesel', fuel: 'diesel',
+            desc: 'Pickup V8 diesel on a straight pipe: loud rasp and a huge turbo.',
+            cyl: 8, cycle: 2, amp: [1, 0.85, 1, 0.85, 0.85, 1, 0.85, 1], idle: 700, redline: 3800,
+            body: [[70, 2, 1], [150, 2.5, 0.8], [330, 3, 0.45], [800, 3, 0.18]], decay: 0.011, grit: 0.55, rough: 0.2,
+            thump: 1.3, orders: [[4, 0.45], [2, 0.3], [1, 0.1]], intake: 0.6, knock: 0.5,
+            turbo: { whistle: 3800, gain: 0.14, bov: 0.1 }, jake: 0.4, pops: 0, tone: 800, bright: 2000 },
+        { id: 'diesel_truck', name: 'Big Rig Diesel', short: 'BIG RIG', kind: 'pulse', group: 'Diesel', fuel: 'diesel',
+            desc: 'Heavy-truck inline-6: slow, huge, with the engine brake bark.',
+            cyl: 6, cycle: 2, amp: [1, 0.96, 1, 0.95, 0.98, 0.94], idle: 600, redline: 2300,
+            body: [[55, 2, 1], [120, 2.5, 0.7], [260, 3, 0.35], [600, 3, 0.1]], decay: 0.014, grit: 0.45, rough: 0.15,
+            thump: 1.4, orders: [[3, 0.5], [1.5, 0.3], [0.5, 0.1]], intake: 0.55, knock: 0.35,
+            turbo: { whistle: 2600, gain: 0.1, bov: 0.03 }, jake: 0.9, pops: 0, tone: 550, bright: 1200 },
         { id: 'vtwin', name: 'V-Twin', short: 'V-TWIN', kind: 'pulse', group: 'Classic',
             desc: 'Big 45-degree V-twin: the off-beat potato rhythm.',
             cyl: 2, cycle: 2, fire: [0, 0.4375], amp: [1, 0.9], idle: 900, redline: 5800,
@@ -126,6 +158,44 @@
             whine: { f0: 1800, f1: 6500, gain: 0.08 }, noise: { gain: 0.6, f0: 150, f1: 2500, q: 0.5 },
             hum: 40, tone: 2200, bright: 4000 },
     ];
+    /*
+     * Per-sound tuning controls (factor 0..2 in steps of 0.25, 1 = as designed). Stored per
+     * profile; applied by synth.js tuneProfile(). 'for' limits a control to some profiles.
+     */
+    var TUNE = [
+        { key: 'pops', name: 'Pops & crackle', desc: 'Overrun crackle when you lift off' },
+        { key: 'bangs', name: 'Bangs', desc: 'Backfires on gear shifts and at the limiter' },
+        { key: 'bass', name: 'Exhaust bass', desc: 'Depth and weight of the exhaust' },
+        { key: 'rasp', name: 'Rasp', desc: 'Grit and brightness of the exhaust' },
+        { key: 'lope', name: 'Idle lope', desc: 'Uneven, lumpy idle' },
+        { key: 'intake', name: 'Intake roar', desc: 'Air rushing in under load' },
+        { key: 'turbo', name: 'Turbo whistle', desc: 'Spool whistle (adds a turbo above 100 %)' },
+        { key: 'bov', name: 'Blow-off', desc: 'Pssh when the throttle closes on boost' },
+        { key: 'whine', name: 'Whine', desc: 'Supercharger / e-motor whine' },
+        { key: 'clatter', name: 'Diesel clatter', desc: 'Injection knock, strongest at idle' },
+        { key: 'brake', name: 'Engine brake', desc: 'Diesel compression brake bark on overrun', for: function (p) { return p.fuel === 'diesel'; } },
+    ];
+    var TONAL_TUNE = ['bass', 'rasp', 'whine'];
+    var TUNE_STEP = 0.25, TUNE_MAX = 2;
+    /** Controls that apply to a profile. */
+    function tuneKeys(p) {
+        return TUNE.filter(function (c) {
+            if (p.kind === 'tonal') return TONAL_TUNE.indexOf(c.key) >= 0;
+            return !c.for || c.for(p);
+        });
+    }
+    /** Clean a stored tuning: known keys only, 0..2 in 0.25 steps, defaults (1) dropped. */
+    function cleanTune(p, t) {
+        var out = {};
+        if (!t || typeof t !== 'object') return out;
+        tuneKeys(p).forEach(function (c) {
+            var v = t[c.key];
+            if (typeof v !== 'number' || !isFinite(v)) return;
+            v = Math.round(Math.max(0, Math.min(TUNE_MAX, v)) / TUNE_STEP) * TUNE_STEP;
+            if (v !== 1) out[c.key] = v;
+        });
+        return out;
+    }
     var BY_ID = {};
     PROFILES.forEach(function (p) { BY_ID[p.id] = p; });
     function get(id) { return BY_ID[id] || PROFILES[0]; }
@@ -134,7 +204,8 @@
     /** Short technical line for lists: "6 cyl - 7000 rpm". */
     function spec(p) {
         if (p.kind === 'tonal') return (p.source === 'speed' ? 'follows speed' : 'follows rpm') + ' - ' + p.group.toLowerCase();
-        return (p.cycle === 1 ? p.cyl + ' rotors' : p.cyl + ' cyl') + ' - ' + p.redline + ' rpm';
+        return (p.cycle === 1 ? p.cyl + ' rotors' : p.cyl + ' cyl') + (p.fuel === 'diesel' ? ' diesel' : '') + ' - ' + p.redline + ' rpm';
     }
-    return { PROFILES: PROFILES, DEFAULT: 'inline6', get: get, index: index, step: step, spec: spec };
+    return { PROFILES: PROFILES, DEFAULT: 'inline6', get: get, index: index, step: step, spec: spec,
+        TUNE: TUNE, TUNE_STEP: TUNE_STEP, TUNE_MAX: TUNE_MAX, tuneKeys: tuneKeys, cleanTune: cleanTune };
 });

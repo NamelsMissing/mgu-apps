@@ -27,7 +27,8 @@ class ActiveSoundProcessor extends AudioWorkletProcessor {
         this.synth = new ActiveSoundSynth.EngineSynth(sampleRate, ActiveSoundEngines.get('${'inline6'}'), 99);
         this.port.onmessage = (e) => {
             const m = e.data || {};
-            if (m.type === 'profile') this.synth.setProfile(ActiveSoundEngines.get(m.id));
+            if (m.type === 'profile') this.synth.setProfile(ActiveSoundEngines.get(m.id), m.tune || null);
+            else if (m.type === 'tune') this.synth.setTune(m.tune || null);
             else if (m.type === 'set') this.synth.set(m.rpm, m.load, m.on, m.volume);
         };
     }
@@ -62,6 +63,11 @@ input[type=range]{width:100%;accent-color:#e1001a;height:34px}
 .gas{user-select:none;-webkit-user-select:none;touch-action:none;height:120px;font-size:22px}
 .note{font-size:13px;color:#8592a5;margin:8px 2px}
 .err{color:#ff8a8f}
+.tune{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;margin-bottom:6px}
+.tune b{font-size:14px}.tune i{font-style:normal;font-size:13px;color:#c9d3e0;font-weight:700;min-width:44px;text-align:right}
+.tune small{grid-column:1/3;font-size:12px;color:#8592a5;margin-top:-4px}
+.tune input{grid-column:1/3;height:30px}
+.small{border:1px solid #233043;background:#0e141d;color:#e8edf5;border-radius:12px;padding:10px 14px;font-weight:700}
 `;
 
 function page(cfg) {
@@ -81,6 +87,8 @@ ${cfg.mode === 'demo' ? `<div class="card"><div class="row"><button id="gas" cla
   <button id="power" class="big off">CAR SOUND: OFF</button></div><p class="note" id="carline">Connecting to the car...</p></div>`}
 <div class="card"><div class="lbl">VOLUME <span id="volv"></span></div><input id="vol" type="range" min="0" max="100" step="5" value="50"></div>
 <div class="card"><div class="lbl">ENGINE</div><div class="grid" id="engines"></div></div>
+<div class="card"><div class="lbl">TUNE <span id="tunename"></span></div><div id="tune"></div>
+  <button id="tunereset" class="small">Reset this sound</button></div>
 <p class="note">Original synthesized sounds, no recordings. Keep the volume moderate: warning and navigation sounds must stay audible.</p>
 </main>
 <script>${source('engines.js')}</script>
@@ -90,18 +98,24 @@ ${cfg.mode === 'demo' ? `<div class="card"><div class="row"><button id="gas" cla
 'use strict';
 var MODE = ${JSON.stringify(cfg.mode)}, TOKEN = ${JSON.stringify(cfg.token || '')};
 var E = ActiveSoundEngines;
-var st = { on: MODE === 'demo', profile: E.DEFAULT, volume: 0.5, rpm: 0, load: 0, running: MODE === 'demo', demo: false, at: 0, reason: '' };
+var st = { tune: {}, on: MODE === 'demo', profile: E.DEFAULT, volume: 0.5, rpm: 0, load: 0, running: MODE === 'demo', demo: false, at: 0, reason: '' };
 var ctx = null, node = null, local = null, enabled = false, lastErr = '', wake = null;
 var $ = function (id) { return document.getElementById(id); };
 function q(p) { return p + (p.indexOf('?') < 0 ? '?' : '&') + 't=' + encodeURIComponent(TOKEN); }
 
 // ---------- audio
-function post(m) { if (node) node.port.postMessage(m); else if (local) { if (m.type === 'profile') local.setProfile(E.get(m.id)); else local.set(m.rpm, m.load, m.on, m.volume); } }
+function post(m) {
+    if (node) return node.port.postMessage(m);
+    if (!local) return;
+    if (m.type === 'profile') local.setProfile(E.get(m.id), m.tune || null);
+    else if (m.type === 'tune') local.setTune(m.tune || null);
+    else local.set(m.rpm, m.load, m.on, m.volume);
+}
 function fresh() { return MODE === 'demo' || Date.now() - st.at < 1500; }
 function audible() { return enabled && st.on && st.running && fresh(); }
 function push() { post({ type: 'set', rpm: st.rpm, load: st.load, on: audible(), volume: st.volume }); }
 function startScript() {
-    local = new ActiveSoundSynth.EngineSynth(ctx.sampleRate, E.get(st.profile), 99);
+    local = new ActiveSoundSynth.EngineSynth(ctx.sampleRate, E.get(st.profile), 99, st.tune);
     var sp = ctx.createScriptProcessor(1024, 0, 2);
     sp.onaudioprocess = function (e) { var b = e.outputBuffer; local.render(b.getChannelData(0), b.getChannelData(1), b.length); };
     sp.connect(ctx.destination);
@@ -113,7 +127,7 @@ function startAudio() {
     if (!AC) { lastErr = 'This browser has no Web Audio.'; draw(); return; }
     ctx = new AC({ latencyHint: 'interactive' });
     enabled = true;
-    var done = function () { post({ type: 'profile', id: st.profile }); push(); draw(); };
+    var done = function () { post({ type: 'profile', id: st.profile, tune: st.tune }); push(); draw(); };
     var url = ${cfg.mode === 'demo' ? 'null' : "q('/worklet.js')"};
     var viaWorklet = function () {
         if (!ctx.audioWorklet) return Promise.reject(new Error('no AudioWorklet'));
@@ -146,7 +160,9 @@ function poll() {
     fetch(q('/api/state'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
         busy = false;
         if (!v || !v.ok) return;
-        if (v.profile !== st.profile) { st.profile = v.profile; post({ type: 'profile', id: st.profile }); buildEngines(); }
+        var tj = JSON.stringify(v.tune || {});
+        if (v.profile !== st.profile) { st.profile = v.profile; st.tune = v.tune || {}; post({ type: 'profile', id: st.profile, tune: st.tune }); buildEngines(); buildTune(); }
+        else if (tj !== JSON.stringify(st.tune) && Date.now() - tuneTouched > 1500) { st.tune = v.tune || {}; post({ type: 'tune', tune: st.tune }); buildTune(); }
         st.on = !!v.on; st.volume = v.volume; st.rpm = v.rpm; st.load = v.load; st.running = !!v.running;
         st.demo = !!v.demo; st.reason = v.reason || ''; st.at = Date.now(); st.realRpm = v.realRpm; st.speed = v.speed;
         if (document.activeElement !== $('vol')) $('vol').value = Math.round(st.volume * 100);
@@ -177,6 +193,29 @@ function simStep(now) {
     push();
 }
 
+// ---------- tuning (per engine; on the car page saved in the car)
+var tuneTouched = 0, demoTunes = {};
+function pct(v) { return v === 0 ? 'Off' : Math.round(v * 100) + ' %'; }
+function buildTune() {
+    var box = $('tune'), p = E.get(st.profile); box.innerHTML = '';
+    $('tunename').textContent = '- ' + p.name.toUpperCase();
+    E.tuneKeys(p).forEach(function (c) {
+        var v = st.tune[c.key] === undefined ? 1 : st.tune[c.key];
+        var row = document.createElement('div'); row.className = 'tune';
+        row.innerHTML = '<b></b><i></i><small></small><input type="range" min="0" max="' + E.TUNE_MAX + '" step="' + E.TUNE_STEP + '">';
+        row.children[0].textContent = c.name; row.children[1].textContent = pct(v); row.children[2].textContent = c.desc;
+        var r = row.children[3]; r.value = v;
+        r.oninput = function () {
+            var x = Number(r.value); tuneTouched = Date.now();
+            st.tune = E.cleanTune(p, Object.assign({}, st.tune, (function () { var o = {}; o[c.key] = x; return o; })()));
+            row.children[1].textContent = pct(x); post({ type: 'tune', tune: st.tune });
+        };
+        r.onchange = function () { var o = {}; o[c.key] = Number(r.value); send({ tune: o }); };
+        box.appendChild(row);
+    });
+}
+$('tunereset').onclick = function () { st.tune = {}; tuneTouched = Date.now(); post({ type: 'tune', tune: st.tune }); buildTune(); send({ tuneReset: true }); };
+
 // ---------- UI
 function buildEngines() {
     var g = $('engines'); g.innerHTML = '';
@@ -185,7 +224,10 @@ function buildEngines() {
         b.className = 'eng' + (p.id === st.profile ? ' on' : '');
         b.innerHTML = '<b></b><span></span>';
         b.firstChild.textContent = p.name; b.lastChild.textContent = E.spec(p);
-        b.onclick = function () { st.profile = p.id; post({ type: 'profile', id: p.id }); push(); send({ profile: p.id }); buildEngines(); };
+        b.onclick = function () {
+            if (MODE === 'demo') { demoTunes[st.profile] = st.tune; st.tune = demoTunes[p.id] || {}; } else st.tune = {};
+            st.profile = p.id; post({ type: 'profile', id: p.id, tune: st.tune }); push(); send({ profile: p.id }); buildEngines(); buildTune();
+        };
         g.appendChild(b);
     });
 }
@@ -235,7 +277,7 @@ if ($('gas')) {
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (n) { $('gas').addEventListener(n, up); });
     $('auto').onclick = function () { sim.auto = !sim.auto; sim.t = 0; this.textContent = 'AUTO DRIVE: ' + (sim.auto ? 'ON' : 'OFF'); this.className = 'big' + (sim.auto ? '' : ' off'); if (!ctx) startAudio(); };
 }
-buildEngines(); draw(); tach();
+buildEngines(); buildTune(); draw(); tach();
 setInterval(function () { if (MODE === 'demo') simStep(Date.now()); else poll(); }, 60);
 setInterval(function () { if (MODE !== 'demo') push(); draw(); }, 250);
 (function loop() { tach(); requestAnimationFrame(loop); })();

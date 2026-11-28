@@ -9,8 +9,8 @@ const qrcode = require('./qr_vendor');
 const E = require('./engines');
 
 const W = 1600, H = 520;
-const TABS = ['Sound', 'Engines', 'Phone', 'Setup'];
-const PAGE = { SOUND: 0, ENGINES: 1, PHONE: 2, SETUP: 3 };
+const TABS = ['Sound', 'Engines', 'Tune', 'Phone', 'Setup'];
+const PAGE = { SOUND: 0, ENGINES: 1, TUNE: 2, PHONE: 3, SETUP: 4 };
 const TOP = 52, EDGE = 24, FOOT_Y = 452, FOOT_H = 52;
 
 function makeUi(G) {
@@ -86,14 +86,16 @@ function makeUi(G) {
 
     /* ---------------- Engines ---------------- */
     function drawEngines(cv, t, vm, a) {
-        const cols = 4, gap = 12, cw = (W - 2 * EDGE - (cols - 1) * gap) / cols, ch = 86;
+        const cols = 5, gap = 10, cw = (W - 2 * EDGE - (cols - 1) * gap) / cols, ch = 70;
         E.PROFILES.forEach((p, i) => {
-            const c = i % cols, r = Math.floor(i / cols), x = EDGE + c * (cw + gap), y = TOP + r * (ch + 10);
+            const c = i % cols, r = Math.floor(i / cols), x = EDGE + c * (cw + gap), y = TOP + r * (ch + 8);
             const on = p.id === vm.profile.id, S = t.sel || t.accent;
             cv.roundRect(x, y, cw, ch, 14, on ? withAlpha(S, 0.28) : withAlpha('#b4bccc', 0.07));
             if (on) cv.strokeRoundRect(x, y, cw, ch, 14, 2, S);
-            label(cv, p.name, x + 20, y + 38, 24, t.text, cw - 40, { font: 'bold' });
-            label(cv, E.spec(p), x + 20, y + 68, 17, t.dim, cw - 40);
+            const tuned = vm.cfg.tune && vm.cfg.tune[p.id];
+            label(cv, p.name, x + 16, y + 31, 21, t.text, cw - 32, { font: 'bold' });
+            label(cv, E.spec(p), x + 16, y + 57, 16, t.dim, tuned ? cw - 100 : cw - 32);
+            if (tuned) label(cv, 'TUNED', x + cw - 16, y + 57, 14, t.accent2 || t.warn, 80, { align: 'right', font: 'bold', spacing: 1 });
             if (cv.target) cv.target(x, y, cw, ch, () => a.pick(p.id), 'ENG_' + p.id);
         });
         let fx = EDGE;
@@ -101,6 +103,34 @@ function makeUi(G) {
         fx += btn(cv, t, fx, 170, '< Prev', a.prev) + 12;
         btn(cv, t, fx, 170, 'Next >', a.next);
         label(cv, 'Tap an engine. It changes on the car and on a linked phone.', W - EDGE, FOOT_Y + 34, 18, t.dim, 760, { align: 'right' });
+    }
+
+    /* ---------------- Tune ---------------- */
+    function pct(v) { return Math.round(v * 100) + ' %'; }
+    function drawTune(cv, t, vm, a) {
+        const keys = E.tuneKeys(vm.profile), tune = vm.tune || {}, S = t.sel || t.accent;
+        const cols = 2, rowsPer = Math.ceil(keys.length / cols), gap = 16;
+        const cw = (W - 2 * EDGE - gap) / cols, rh = Math.min(64, Math.floor((FOOT_Y - TOP - 12) / Math.max(1, rowsPer)));
+        keys.forEach((c, i) => {
+            const col = Math.floor(i / rowsPer), row = i % rowsPer;
+            const x = EDGE + col * (cw + gap), y = TOP + row * rh, v = tune[c.key] === undefined ? 1 : tune[c.key];
+            cv.roundRect(x, y, cw, rh - 8, 12, withAlpha('#b4bccc', 0.07));
+            label(cv, c.name, x + 18, y + 25, 20, t.text, 230, { font: 'bold' });
+            label(cv, c.desc, x + 18, y + 47, 14, t.dim, 300);
+            // bar: 0..200 %, mark at 100 %
+            const bx = x + 340, bw = cw - 340 - 210, by = y + 22;
+            cv.roundRect(bx, by, bw, 12, 6, t.track);
+            if (v > 0) cv.roundRect(bx, by, Math.max(12, bw * v / E.TUNE_MAX), 12, 6, v === 1 ? withAlpha(S, 0.6) : S);
+            cv.fillRect(bx + bw / 2 - 1, by - 5, 2, 22, withAlpha('#ffffff', 0.5));
+            label(cv, v === 0 ? 'Off' : pct(v), bx + bw / 2, by + 36, 14, v === 1 ? t.dim : t.text, 120, { align: 'center', font: 'bold' });
+            G.button(cv, t, x + cw - 196, y + 6, 88, rh - 20, '-', () => a.tuneStep(c.key, -1), { key: 'T-' + c.key });
+            G.button(cv, t, x + cw - 100, y + 6, 88, rh - 20, '+', () => a.tuneStep(c.key, 1), { key: 'T+' + c.key });
+        });
+        let fx = EDGE;
+        fx += btn(cv, t, fx, 170, '< Prev', a.prev) + 12;
+        fx += btn(cv, t, fx, 170, 'Next >', a.next) + 16;
+        fx += btn(cv, t, fx, 220, 'Reset sound', a.tuneReset) + 24;
+        label(cv, 'Tuning: ' + vm.profile.name + '  -  100 % = as designed, saved per engine', W - EDGE, FOOT_Y + 34, 18, t.dim, W - EDGE - fx, { align: 'right' });
     }
 
     /* ---------------- Phone ---------------- */
@@ -166,6 +196,7 @@ function makeUi(G) {
         cv.clear(t.bg);
         if (vm.page === PAGE.SOUND) drawSound(cv, t, vm, a);
         else if (vm.page === PAGE.ENGINES) drawEngines(cv, t, vm, a);
+        else if (vm.page === PAGE.TUNE) drawTune(cv, t, vm, a);
         else if (vm.page === PAGE.PHONE) drawPhone(cv, t, vm, a);
         else drawSetup(cv, t, vm, a);
         const badges = [vm.demo ? { text: 'DEMO', color: t.warn } : null, vm.audible ? { text: 'LIVE', color: '#3ddc97' } : null];
