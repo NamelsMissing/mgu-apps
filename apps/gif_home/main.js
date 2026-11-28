@@ -215,7 +215,7 @@ mgu.run({
             if (!inst.visible || widgetIndex[key] === stamp) return null;
             if (!inst.big) {
                 ctx.widget.set(inst.spawnId, 'Title', 'GIF Home', 'Text');
-                ctx.widget.set(inst.spawnId, 'TextRecordings', label(player.id), 'Text');
+                ctx.widget.set(inst.spawnId, 'TextRecordings', label(player.id), 'Text', files().some(item => item.id === player.id));
                 ctx.widget.set(inst.spawnId, 'TextCam', 'Tap to open', 'Text');
                 widgetIndex[key] = stamp;
                 return null;
