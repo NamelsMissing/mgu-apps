@@ -59,6 +59,7 @@ Version numbers below are those in the **main** store catalog. **Stable** is the
 | --- | --- | --- | --- |
 | [**Heating Comfort**](apps/g21_wheelheat/README.md) | **0.5.6** | Stable / vehicle-specific | Automatic seat and steering-wheel heating, BDC / seat-module detection, saved settings, background startup, manual controls and logs; 0.5.6 detects cold starts without relying on the start reason (MGU boot gap and drive-ready heartbeat) and adds a start-conditions diagnosis. Separate seat-module writes are opt-in and experimental; ECU acceptance varies by vehicle. |
 | [**DPF Monitor**](apps/dpf_monitor/README.md) | **0.2.8** | Stable / read-only | Requests diesel particulate-filter measurements and regeneration-history values from the DDE. DID scaling was reviewed offline; live routing and actual responses still need vehicle verification. Does **not** start forced regeneration. |
+| [**Eco Coach**](apps/eco_coach/README.md) | **0.1.0** | Experimental / read-only | Analyses your driving for fuel (score, tips, consumption by speed, gear, slope, temperature, driving mode) and runs an interactive consumption test: steady speeds in two gears, three ways to accelerate, two ways to roll out, ECO PRO vs Comfort. Diesel and petrol. Not yet tested in the car; the fuel figure comes from the engine unit or the car's injection signal. |
 | [**Ambient Lighting**](apps/g21_ambient/README.md) | **0.4.7** | Experimental | Reads the OEM BMW ambient-color status and offers manual selection of menu slots 1–12 with separate setter/readback feedback. Includes RGB previews, saved looks and carefully gated BDC LIN testing; aftermarket LED control is not yet verified. |
 
 ### Screens and cluster
@@ -101,7 +102,7 @@ Use lighting effects only while safely parked in P on private ground, with nobod
 
 ### Background components installed with apps
 
-The same [store catalog](mgu-repo.json) lists **14 apps** and **9 native helper components**. These tools are dependencies, not additional user-facing MGU apps.
+The same [store catalog](mgu-repo.json) lists **15 apps** and **9 native helper components**. These tools are dependencies, not additional user-facing MGU apps.
 
 | Helper | Version | Used by |
 | --- | --- | --- |

@@ -25,6 +25,29 @@
       }
     },
     {
+      "id": "eco_coach",
+      "kind": "app",
+      "title": "Eco Coach",
+      "version": "0.1.0",
+      "path": "apps/eco_coach",
+      "icon": "icon.png",
+      "mguHmi": [
+        "ID7"
+      ],
+      "requires": {
+        "idrive7-renderd": "2.1.6",
+        "mgu-inputgate": "1.0.0"
+      },
+      "build": {
+        "python": "tools/build_store_app.py",
+        "args": [
+          "{id}"
+        ],
+        "sdk": "oap-sdk",
+        "output": "dist/{id}@{version}.tgz"
+      }
+    },
+    {
       "id": "g21_ambient",
       "kind": "app",
       "title": "G21 Ambient",

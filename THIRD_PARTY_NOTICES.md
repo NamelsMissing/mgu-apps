@@ -36,3 +36,11 @@ https://www.w3.org/TR/audio-eq-cookbook/. The filter, service and streaming
 client are new repository code; no Moonride, BMW DSP binary or firmware audio
 code is redistributed. Existing MGU App Kit runtime assets retain their
 previous notices.
+
+## Eco Coach
+
+`apps/eco_coach/fuel.js` (class `Flow`, the fuel-injection counter with its learned
+scale) and the signal scalings in `apps/eco_coach/decode.js` follow the Live Data app of
+[cauliflowermossgrape/idrive7-apps](https://github.com/cauliflowermossgrape/idrive7-apps),
+used under the MIT License above. The consumption model, the trip score, the interactive
+test and the simulated car are new repository code.

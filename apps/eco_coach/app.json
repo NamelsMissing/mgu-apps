@@ -1,0 +1,145 @@
+{
+  "id": "eco_coach",
+  "title": "Eco Coach",
+  "description": "Analyses your driving for fuel, learns your car's consumption by speed, gear, slope, temperature and driving mode, and runs an interactive consumption test that finds your most economical speed, gear, acceleration and roll-out. Diesel and petrol. Read only.",
+  "version": "0.1.0",
+  "vendor": "NamelsMissing",
+  "loggingId": "OAEC",
+  "iconGlyph": "ECO",
+  "signals": {
+    "de.bmw.infotainment.vehicle.Vehicle2": {
+      "statusCarSpeed2": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS": {
+      "statusEngineSpeed2": "rs",
+      "statusEngineTemperature": "rs",
+      "statusEngineStatus": "rs"
+    },
+    "de.bmw.infotainment.vehicle.CDS2": {
+      "_optional": "fuel injection counter (calibrated against the engine unit) and the acceleration sensor for the road slope",
+      "statusInjectionVolume": "rs",
+      "statusLongitudinalAccelerationMassCenter": "rs"
+    },
+    "de.bmw.infotainment.drivingexcitement.FES": {
+      "_optional": "driving mode (ECO PRO / Comfort / Sport) as a factor of the model and the test",
+      "statusFESVehicleDynamicSwitchHMI": "rs"
+    },
+    "de.bmw.powertrain.AcceleratorPedal": {
+      "_optional": "pedal: roll-outs are only counted without it",
+      "AngleAcceleratorPedal": "s"
+    },
+    "de.bmw.infrastructure.VehicleInformation": {
+      "_optional": "gear and selector position",
+      "statusGearboxDrive": "s",
+      "DataPowerTrain2": "s"
+    },
+    "de.bmw.infrastructure.EnvironmentalInformation": {
+      "_optional": "outside temperature as a factor of the model",
+      "ExteriorTemperature": "s"
+    },
+    "de.bmw.infotainment.KombiIF": {
+      "_optional": "tank and odometer",
+      "statusRangeTankStatus": "rs"
+    },
+    "de.bmw.infotainment.climate.climatemaster.ClimateMaster": {
+      "_optional": "A/C on or off as a factor of the model (layout checked in the car: the first value is logged)",
+      "statusAirCondAC": "rs"
+    },
+    "com.harman.infotainment.systemfunctions.tasu.tasu.InternalTasu": {
+      "_instances": "SystemFunctionsInternalTasuInst1",
+      "_methods": [
+        "sendTasuRequest"
+      ],
+      "_broadcasts": [
+        "sendTasuResponse"
+      ]
+    }
+  },
+  "screens": [
+    {
+      "name": "MAIN",
+      "kind": "canvas",
+      "title": "Eco Coach",
+      "buttons": [
+        ["BTN_PAGE", "Next page"],
+        ["BTN_TEST", "Start / stop consumption test"],
+        ["BTN_CLEAR", "Clear test results (press twice)"]
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "key": "fuelType",
+      "label": "Fuel",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "Automatic (from the engine unit)"], ["diesel", "Diesel"], ["petrol", "Petrol"]]
+    },
+    {
+      "key": "fuelPrice",
+      "label": "Fuel price per litre",
+      "type": "number",
+      "unit": "EUR",
+      "default": 1.75,
+      "steps": [1.45, 1.55, 1.65, 1.75, 1.85, 1.95, 2.05, 2.15]
+    },
+    {
+      "key": "fuelSource",
+      "label": "Fuel figure",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "Car signal, learned from the engine unit"], ["diag", "Engine unit only (more diagnostic traffic)"]]
+    },
+    {
+      "key": "testTop",
+      "label": "Test: highest steady speed",
+      "type": "number",
+      "unit": "km/h",
+      "default": 130,
+      "steps": [130, 150]
+    },
+    {
+      "key": "testWindow",
+      "label": "Test: steady window",
+      "type": "number",
+      "unit": "s",
+      "default": 20,
+      "steps": [20, 30, 45]
+    },
+    {
+      "key": "coach",
+      "label": "Coaching hints on the Live page",
+      "type": "bool",
+      "default": true
+    },
+    {
+      "key": "demo",
+      "label": "Demo data (no car)",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "When the car does not answer"], ["on", "On"], ["off", "Off"]]
+    },
+    {
+      "key": "theme",
+      "label": "Colour theme",
+      "type": "choice",
+      "default": "m_tricolour",
+      "options": [["m_tricolour", "M Tricolour"], ["m_red", "M Red"], ["ice", "Ice White"], ["amber", "Night Amber"]]
+    },
+    {
+      "key": "layout",
+      "label": "Screen layout",
+      "type": "choice",
+      "default": "full",
+      "options": [["full", "Full screen"], ["standard", "Standard"]]
+    },
+    {
+      "key": "renderer",
+      "label": "Renderer",
+      "type": "choice",
+      "default": "auto",
+      "options": [["auto", "GPU 60 fps"], ["software", "Software"]]
+    }
+  ],
+  "showRepoCredits": false
+}
