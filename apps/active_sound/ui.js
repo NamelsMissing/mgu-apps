@@ -184,7 +184,7 @@ function makeUi(G) {
             vm.huAvailable ? 'Head unit: ' + vm.huBackend + ' found' : 'Head unit: no aplay / ffmpeg, phone only', 'Change', a.nextOutput, 'S_OUT');
         setRow(cv, t, TOP + 128, 'Real redline', c.realRedline + ' rpm', 'Your engine\'s top rpm. 318d / diesel: 5000', 'Change', a.nextRedline, 'S_RED');
         setRow(cv, t, TOP + 200, 'Max torque', c.maxTorque + ' Nm', 'Full load at this torque. 318d: 400 Nm', 'Change', a.nextTorque, 'S_TQ');
-        setRow(cv, t, TOP + 272, 'Demo drive WAV', vm.exporting ? 'Rendering...' : vm.exportText ? 'Saved' : '24 s, ' + vm.profile.short,
+        setRow(cv, t, TOP + 272, 'Demo drive WAV', vm.exporting ? 'Rendering...' : vm.exportText ? 'Saved' : '30 s, ' + vm.profile.short,
             vm.exportText || 'Writes active-sound-<engine>.wav to the app data folder', 'Export', a.exportWav, 'S_WAV', { busy: vm.exporting });
         cv.fillRect(EDGE + 28, TOP + 306, W - 2 * EDGE - 56, 1, withAlpha('#ffffff', 0.12));
         label(cv, 'Real rpm from idle to redline is spread over the virtual engine\'s range; load = torque / max torque.', EDGE + 28, TOP + 344, 18, t.dim, W - 2 * EDGE - 56);

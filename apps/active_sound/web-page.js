@@ -60,7 +60,10 @@ canvas{display:block;width:100%;height:auto}
 .eng b{display:block;font-size:15px}.eng span{font-size:12px;color:#8592a5}
 .eng.on{border-color:#e1001a;background:#2a0b10}
 input[type=range]{width:100%;accent-color:#e1001a;height:34px}
-.gas{user-select:none;-webkit-user-select:none;touch-action:none;height:120px;font-size:22px}
+.gas{user-select:none;-webkit-user-select:none;touch-action:none;height:170px;font-size:20px}
+.pedal{position:relative;height:170px;border-radius:16px;background:#1d2633;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none;display:flex;align-items:center;justify-content:center;text-align:center}
+.pedal span{position:relative;font-weight:800;letter-spacing:2px;font-size:20px}.pedal small{font-size:11px;letter-spacing:0;font-weight:600;color:#c9d3e0}
+#pedalfill{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(0deg,#e1001a,#ff5a3c)}
 .note{font-size:13px;color:#8592a5;margin:8px 2px}
 .err{color:#ff8a8f}
 .tune{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;margin-bottom:6px}
@@ -79,10 +82,12 @@ function page(cfg) {
 <div class="card">
   <button id="audio" class="big">TAP TO START SOUND</button>
   <p class="note" id="hint">${cfg.mode === 'demo'
-        ? 'Demo: hold GAS or switch on auto drive. Sound plays on this phone (and through the car with CarPlay or Bluetooth).'
+        ? 'Demo with a simulated car (gears, weight, air resistance). Press the pedal (higher = more throttle), brake, or switch on auto drive.'
         : 'The phone makes the sound. With CarPlay or Bluetooth audio connected it plays through the car speakers. Keep this page open.'}</p>
 </div>
-${cfg.mode === 'demo' ? `<div class="card"><div class="row"><button id="gas" class="big gas">GAS</button></div>
+${cfg.mode === 'demo' ? `<div class="card"><div class="row" style="align-items:stretch">
+  <button id="brake" class="big off gas" style="flex:0 0 32%">BRAKE</button>
+  <div id="pedal" class="pedal"><div id="pedalfill"></div><span>GAS<br><small>press higher = more throttle</small></span></div></div>
 <div class="row" style="margin-top:10px"><button id="auto" class="big off">AUTO DRIVE: OFF</button></div></div>` : `<div class="card"><div class="row">
   <button id="power" class="big off">CAR SOUND: OFF</button></div><p class="note" id="carline">Connecting to the car...</p></div>`}
 <div class="card"><div class="lbl">VOLUME <span id="volv"></span></div><input id="vol" type="range" min="0" max="100" step="5" value="50"></div>
@@ -93,6 +98,7 @@ ${cfg.mode === 'demo' ? `<div class="card"><div class="row"><button id="gas" cla
 </main>
 <script>${source('engines.js')}</script>
 <script>${source('synth.js')}</script>
+<script>${source('vehicle.js')}</script>
 <script>
 (function () {
 'use strict';
@@ -170,26 +176,31 @@ function poll() {
     }, function () { busy = false; push(); });
 }
 
-// ---------- demo drive (no car)
-var sim = { n: 0, gear: 1, gas: false, auto: false, t: 0, last: 0 };
-function simStep(now) {
-    var dt = Math.min(0.1, (now - (sim.last || now)) / 1000); sim.last = now; sim.t += dt;
-    var gas = sim.gas;
-    if (sim.auto) { var c = sim.t % 14; gas = (c > 1.5 && c < 8.5) || (c > 10 && c < 10.6); }
-    if (gas) {
-        sim.n += dt * (0.55 / sim.gear + 0.08);
-        if (sim.n > 0.97 && sim.gear < 5 && !sim.gas) { sim.gear++; sim.n = 0.62; }
-        if (sim.n > 1.02) sim.n = 1.02;
-        st.load += (1 - st.load) * Math.min(1, dt * 12);
-    } else {
-        sim.n -= dt * (sim.gear > 1 ? 0.18 : 0.6);
-        if (sim.n < 0.35 && sim.gear > 1) { sim.gear--; sim.n = 0.6; }
-        if (sim.n < 0) { sim.n = 0; sim.gear = 1; }
-        st.load += (0.02 - st.load) * Math.min(1, dt * 14);
-    }
+// ---------- demo drive (no car): vehicle model with gears, inertia, resistance (vehicle.js)
+var sim = { gas: 0, brake: 0, auto: false, t: 0, last: 0, car: null };
+function simCar() {
     var p = E.get(st.profile);
-    st.rpm = p.idle + Math.max(0, sim.n) * (p.redline - p.idle);
-    if (sim.n < 0.02 && !gas) st.rpm += Math.sin(now / 90) * 12;
+    if (sim.car && sim.car.p === p) return sim.car;
+    var old = sim.car, car = new ActiveSoundVehicle.VehicleSim(p);
+    if (old && car.ratios.length > 1) {          // keep the speed, pick a sensible gear
+        car.v = old.v;
+        for (var g = car.ratios.length; g >= 1; g--) if (car.wheelRpm(g) > p.idle * 1.3 || g === 1) { car.gear = g; break; }
+    } else if (old) car.v = old.v;
+    sim.car = car;
+    return car;
+}
+function simStep(now) {
+    var dt = Math.min(0.1, (now - (sim.last || now)) / 1000); sim.last = now;
+    var car = simCar(), u = sim.gas, b = sim.brake, out = null;
+    for (var left = dt; left > 1e-6; left -= 0.01) {
+        var h = Math.min(0.01, left);
+        sim.t += h;
+        if (sim.auto) { var c = ActiveSoundVehicle.script(sim.t % ActiveSoundVehicle.DRIVE_SECONDS); u = c.u; b = c.b; }
+        out = car.step(h, u, b);
+    }
+    if (!out) return;
+    st.rpm = out.rpm; st.load = out.load; st.gear = out.gear; st.kmh = out.kmh; st.pedal = u;
+    if (out.rpm < E.get(st.profile).idle * 1.02 && out.kmh < 1) st.rpm += Math.sin(now / 90) * 10;   // idle wobble
     push();
 }
 
@@ -260,7 +271,9 @@ function tach() {
     if (st.rpm > 0) { g.beginPath(); g.arc(cx, cy, r, a0, a0 + (a1 - a0) * frac(st.rpm)); g.stroke(); }
     g.fillStyle = on ? '#ffffff' : '#7d889a'; g.textAlign = 'center';
     g.font = '800 120px -apple-system,Segoe UI,Roboto,sans-serif'; g.fillText(Math.round(st.rpm / 10) * 10, cx, cy - 92);
-    g.font = '700 30px -apple-system,Segoe UI,Roboto,sans-serif'; g.fillStyle = '#8b97aa'; g.fillText('RPM  -  ' + p.name.toUpperCase(), cx, cy - 40);
+    g.font = '700 30px -apple-system,Segoe UI,Roboto,sans-serif'; g.fillStyle = '#8b97aa';
+    g.fillText(MODE === 'demo' && st.kmh !== undefined ? (p.kind === 'tonal' ? '' : 'GEAR ' + st.gear + '  -  ') + Math.round(st.kmh) + ' KM/H  -  ' + p.short
+        : 'RPM  -  ' + p.name.toUpperCase(), cx, cy - 40);
     g.fillStyle = '#1b2431'; g.fillRect(cx - 200, cy - 14, 400, 12);
     g.fillStyle = '#e1001a'; g.fillRect(cx - 200, cy - 14, 400 * Math.max(0, Math.min(1, st.load)), 12);
     g.font = '700 22px -apple-system,Segoe UI,Roboto,sans-serif'; g.fillStyle = '#8b97aa'; g.fillText('LOAD', cx, cy + 24);
@@ -270,15 +283,28 @@ $('audio').onclick = startAudio;
 $('vol').oninput = function () { st.volume = this.value / 100; push(); draw(); };
 $('vol').onchange = function () { send({ volume: st.volume }); };
 if ($('power')) $('power').onclick = function () { st.on = !st.on; push(); draw(); send({ on: st.on }); };
-if ($('gas')) {
-    var down = function (e) { e.preventDefault(); sim.gas = true; sim.auto = false; $('auto').textContent = 'AUTO DRIVE: OFF'; $('auto').className = 'big off'; if (!ctx) startAudio(); };
-    var up = function (e) { e.preventDefault(); sim.gas = false; };
-    ['pointerdown'].forEach(function (n) { $('gas').addEventListener(n, down); });
-    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (n) { $('gas').addEventListener(n, up); });
+if ($('pedal')) {
+    var stopAuto = function () { sim.auto = false; $('auto').textContent = 'AUTO DRIVE: OFF'; $('auto').className = 'big off'; };
+    var pedal = $('pedal'), pid = null;
+    var setGas = function (e) {
+        var r = pedal.getBoundingClientRect();
+        sim.gas = Math.max(0.1, Math.min(1, (r.bottom - e.clientY) / r.height * 1.15));
+        $('pedalfill').style.height = Math.round(sim.gas * 100) + '%';
+    };
+    pedal.addEventListener('pointerdown', function (e) {
+        e.preventDefault(); pid = e.pointerId; try { pedal.setPointerCapture(pid); } catch (x) {}
+        stopAuto(); setGas(e); if (!ctx) startAudio();
+    });
+    pedal.addEventListener('pointermove', function (e) { if (e.pointerId === pid) setGas(e); });
+    ['pointerup', 'pointercancel'].forEach(function (n) { pedal.addEventListener(n, function (e) {
+        if (e.pointerId !== pid) return; pid = null; sim.gas = 0; $('pedalfill').style.height = '0';
+    }); });
+    $('brake').addEventListener('pointerdown', function (e) { e.preventDefault(); stopAuto(); sim.brake = 1; $('brake').className = 'big gas'; if (!ctx) startAudio(); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(function (n) { $('brake').addEventListener(n, function () { sim.brake = 0; $('brake').className = 'big off gas'; }); });
     $('auto').onclick = function () { sim.auto = !sim.auto; sim.t = 0; this.textContent = 'AUTO DRIVE: ' + (sim.auto ? 'ON' : 'OFF'); this.className = 'big' + (sim.auto ? '' : ' off'); if (!ctx) startAudio(); };
 }
 buildEngines(); buildTune(); draw(); tach();
-setInterval(function () { if (MODE === 'demo') simStep(Date.now()); else poll(); }, 60);
+setInterval(function () { if (MODE === 'demo') simStep(Date.now()); else poll(); }, MODE === 'demo' ? 30 : 60);
 setInterval(function () { if (MODE !== 'demo') push(); draw(); }, 250);
 (function loop() { tach(); requestAnimationFrame(loop); })();
 })();

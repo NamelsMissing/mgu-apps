@@ -325,7 +325,7 @@
       "id": "active_sound",
       "kind": "app",
       "title": "Active Sound",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "path": "apps/active_sound",
       "icon": "icon.png",
       "mguHmi": [

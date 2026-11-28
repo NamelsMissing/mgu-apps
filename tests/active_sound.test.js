@@ -1,5 +1,5 @@
 'use strict';
-// Active Sound 0.2: engine profiles, per-sound tuning, synthesizer, car mapping, head-unit player, WAV export,
+// Active Sound 0.3: engine profiles, per-sound tuning, exhaust pipes + stereo banks, vehicle model, synthesizer, car mapping, head-unit player, WAV export,
 // phone server + page, firewall helper. PC only, no car.
 const assert = require('assert');
 const fs = require('fs');
@@ -13,7 +13,8 @@ const APP = path.join(__dirname, '../apps/active_sound');
 const E = require(APP + '/engines');
 const { EngineSynth, tuneProfile } = require(APP + '/synth');
 const M = require(APP + '/mapping');
-const { LivePlayer, renderDrive, exportDrive, drive } = require(APP + '/player');
+const { LivePlayer, renderDrive, exportDrive, driveStates } = require(APP + '/player');
+const { VehicleSim, script } = require(APP + '/vehicle');
 const { WebServer } = require(APP + '/web-server');
 const pages = require(APP + '/web-page');
 const NET = path.join(__dirname, '../native/sound-net');
@@ -134,12 +135,55 @@ function mag(b, f, from) {
     const y1 = live.body[0].f.y1; live.setTune({ bass: 1.5 }); assert.strictEqual(live.body[0].f.y1, y1);
     assert.ok(live.body[0].g !== truck.body[0][2]);
 }
-/* stereo + S16 */
+/* stereo: inline engines mono, V / boxer engines two banks (correlated, not identical) + S16 */
 {
+    const st = (id) => { const s = new EngineSynth(SR, E.get(id), 9); s.set(4000, 0.8, true, 1);
+        const l = new Float32Array(SR / 2), r = new Float32Array(SR / 2); s.render(l, r, l.length); return [l, r]; };
+    let [l, r] = st('inline6');
+    assert.deepStrictEqual(Array.from(l), Array.from(r), 'inline-6 is mono');
+    [l, r] = st('v8_cross');
+    let lr = 0, ll = 0, rr = 0, diff = 0;
+    for (let i = SR / 10; i < l.length; i++) { lr += l[i] * r[i]; ll += l[i] * l[i]; rr += r[i] * r[i]; diff += Math.abs(l[i] - r[i]); }
+    const corr = lr / Math.sqrt(ll * rr);
+    assert.ok(diff > 1 && corr > 0.6 && corr < 0.995, 'V8 banks in stereo, correlation ' + corr.toFixed(3));
+    assert.ok(E.get('v8_cross').bank.length === 8 && E.get('flat6').banks === 2 && !E.get('inline6').banks);
     const s = new EngineSynth(SR, E.get('flat6'), 9); s.set(5000, 1, true, 1);
-    const l = new Float32Array(512), r = new Float32Array(512); s.render(l, r, 512);
-    assert.deepStrictEqual(Array.from(l), Array.from(r));
     const buf = s.renderS16(100); assert.strictEqual(buf.length, 400);
+}
+/* exhaust pipe: gets hot under load (resonance moves up), resonance control works */
+{
+    const s = new EngineSynth(SR, E.get('inline6'), 4); s.set(5000, 1, true, 1);
+    const d0 = s.pipes[0].d, b = new Float32Array(SR * 3); s.render(b, null, b.length);
+    assert.ok(s.heat > 0.6 && s.pipes[0].d < d0 * 0.9, 'hot exhaust shortens the delay: ' + d0.toFixed(0) + ' -> ' + s.pipes[0].d.toFixed(0));
+    assert.strictEqual(tuneProfile(E.get('inline6'), { pipe: 0 }).pipeRefl, 0);
+    assert.strictEqual(tuneProfile(E.get('inline6'), { pipe: 2 }).pipeRefl, 1);
+}
+/* vehicle model: plausible acceleration, gears, limiter, overrun, brakes */
+{
+    const run = (id, seconds, u, b) => { const c = new VehicleSim(E.get(id)); let last; for (let t = 0; t < seconds; t += 0.01) last = c.step(0.01, u, b); return { c, last }; };
+    const t100 = (id) => { const c = new VehicleSim(E.get(id)); for (let t = 0; t < 90; t += 0.01) if (c.step(0.01, 1, 0).kmh >= 100) return t; return 99; };
+    const i6 = t100('inline6'), d4 = t100('diesel4'), truck = t100('diesel_truck');
+    assert.ok(i6 > 3 && i6 < 7, '0-100 inline-6 ' + i6.toFixed(1));
+    assert.ok(d4 > 6 && d4 < 11, '0-100 diesel-4 ' + d4.toFixed(1));
+    assert.ok(truck > 20, '0-100 truck ' + truck.toFixed(1));
+    const full = run('inline6', 12, 1, 0).last;
+    assert.ok(full.gear >= 4 && full.kmh > 150 && full.rpm <= E.get('inline6').redline * 1.02, 'pull through the gears');
+    const idle = run('diesel4', 3, 0, 0).last;
+    assert.ok(idle.kmh < 0.1 && Math.abs(idle.rpm - E.get('diesel4').idle) < 1 && idle.load === 0, 'idle at standstill');
+    // overrun: throttle closed at speed -> load 0, rpm above idle, car slows (engine braking)
+    const c = new VehicleSim(E.get('v8_cross')); for (let t = 0; t < 8; t += 0.01) c.step(0.01, 1, 0);
+    const v0 = c.kmh(); let o; for (let t = 0; t < 2; t += 0.01) o = c.step(0.01, 0, 0);
+    assert.ok(o.load === 0 && o.rpm > E.get('v8_cross').idle * 2 && o.kmh < v0, 'overrun');
+    for (let t = 0; t < 15; t += 0.01) o = c.step(0.01, 0, 1);
+    assert.ok(o.kmh < 1, 'brakes stop the car');
+    // shifting cuts the load (bangs / blow-off on upshifts); limiter reports the redline
+    const states = driveStates(E.get('inline6'), 13, 0.01);
+    assert.ok(states.some((x) => x.shifting && x.load === 0), 'upshift torque cut');
+    const ev = run('ev_pulse', 30, 1, 0).last; assert.ok(ev.kmh <= 205 && ev.gear === 1, 'EV single gear, top speed');
+    assert.deepStrictEqual(script(5), { u: 1, b: 0 });
+    for (const p of E.PROFILES) {
+        for (const x of driveStates(p, 30, 0.02)) assert.ok(isFinite(x.rpm) && isFinite(x.kmh) && x.load >= 0 && x.load <= 1, p.id + ' drive finite');
+    }
 }
 
 /* ---------- mapping ---------- */
@@ -186,7 +230,6 @@ function mag(b, f, from) {
 
 /* ---------- WAV export ---------- */
 (async () => {
-    assert.strictEqual(drive(0).n, 0); assert.strictEqual(drive(16).load, 1); assert.strictEqual(drive(19).load, 0);
     const wav = await renderDrive(E.get('v12'), { seconds: 2 });
     assert.strictEqual(wav.toString('ascii', 0, 4), 'RIFF'); assert.strictEqual(wav.toString('ascii', 8, 12), 'WAVE');
     assert.strictEqual(wav.readUInt16LE(22), 2); assert.strictEqual(wav.readUInt32LE(24), 44100);
@@ -200,11 +243,11 @@ function mag(b, f, from) {
     /* ---------- phone page + worklet ---------- */
     const html = pages.build({ mode: 'car', token: 'abc' });
     const scripts = html.split('<script>').slice(1).map((s) => s.split('</script>')[0]);
-    assert.strictEqual(scripts.length, 3);
+    assert.strictEqual(scripts.length, 4);
     scripts.forEach((s) => new vm.Script(s));            // all of it parses
     assert.ok(html.indexOf('"abc"') > 0 && html.indexOf('/worklet.js') > 0);
     const demo = pages.build({ mode: 'demo' });
-    assert.ok(demo.indexOf('id="gas"') > 0 && demo.indexOf('id="tune"') > 0);
+    assert.ok(demo.indexOf('id="pedal"') > 0 && demo.indexOf('id="brake"') > 0 && demo.indexOf('id="tune"') > 0);
     // the worklet runs in a fake AudioWorkletGlobalScope and makes sound
     let Proc = null;
     const scope = { sampleRate: 48000, registerProcessor: (n, c) => { assert.strictEqual(n, 'active-sound'); Proc = c; },

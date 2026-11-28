@@ -10,35 +10,25 @@
  * Samples are paced by the clock (a fixed lead of ~120 ms), not by pipe back-pressure, so the
  * delay between pedal and sound stays bounded.
  *
- * Demo drive + WAV export: a scripted 24 s drive (idle, blips, three pulls with shifts, the
- * rev limiter, overrun) rendered to a stereo WAV file - to listen to a profile from a USB stick.
+ * Demo drive + WAV export: a scripted 30 s drive through the vehicle model (idle, a blip, a
+ * full-throttle pull through the gears, overrun, cruise, kickdown, braking) rendered to a stereo
+ * WAV file - to listen to a profile from a USB stick.
  */
 const fs = require('fs');
 const path = require('path');
 const cp = require('child_process');
 const { EngineSynth } = require('./synth');
+const { VehicleSim, script, DRIVE_SECONDS } = require('./vehicle');
 
 const RATE = 44100;
 const LEAD_MS = 120;
 const TICK_MS = 20;
-const DRIVE_SECONDS = 24;
 
-function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
-function ease(t) { t = Math.max(0, Math.min(1, t)); return 1 - Math.pow(1 - t, 1.6); }
-/** Scripted drive: { n: 0..1 of the engine's range, load: 0..1 } at time t (s). */
-function drive(t) {
-    if (t < 2.5) return { n: 0, load: 0.05 };
-    if (t < 3.2) return { n: lerp(0, 0.55, (t - 2.5) / 0.45), load: 1 };
-    if (t < 4.2) return { n: lerp(0.55, 0, (t - 3.2) / 0.9), load: 0 };
-    if (t < 4.6) return { n: lerp(0, 0.45, (t - 4.2) / 0.3), load: 1 };
-    if (t < 6.5) return { n: lerp(0.45, 0, (t - 4.6) / 0.9), load: t < 5.6 ? 0 : 0.05 };
-    if (t < 10) return { n: lerp(0.08, 0.85, ease((t - 6.5) / 3.5)), load: 1 };
-    if (t < 10.35) return { n: lerp(0.85, 0.5, (t - 10) / 0.35), load: 0 };
-    if (t < 14) return { n: lerp(0.5, 0.92, ease((t - 10.35) / 3.65)), load: 1 };
-    if (t < 14.35) return { n: lerp(0.92, 0.6, (t - 14) / 0.35), load: 0 };
-    if (t < 18) return { n: Math.min(1, lerp(0.6, 1.06, (t - 14.35) / 3.2)), load: 1 };
-    if (t < 21) return { n: lerp(1, 0.25, (t - 18) / 3), load: 0 };
-    return { n: lerp(0.25, 0, (t - 21) / 1.2), load: 0.05 };
+/** Demo drive: the vehicle model driven by the scripted throttle / brake (vehicle.js). */
+function driveStates(profile, seconds, dt) {
+    const car = new VehicleSim(profile), out = [];
+    for (let t = 0; t < seconds; t += dt) { const c = script(t); out.push(car.step(dt, c.u, c.b)); }
+    return out;
 }
 
 function wavHeader(frames, channels, rate) {
@@ -58,7 +48,8 @@ function renderDrive(profile, opts) {
     const o = opts || {};
     const rate = o.rate || RATE, seconds = o.seconds || DRIVE_SECONDS;
     const synth = new EngineSynth(rate, profile, 1234, o.tune || null);
-    const total = Math.round(seconds * rate), block = 441;
+    const total = Math.round(seconds * rate), block = Math.round(rate / 100);
+    const states = driveStates(profile, seconds + 0.02, 0.01);
     const parts = [];
     let done = 0;
     return new Promise((resolve, reject) => {
@@ -66,10 +57,9 @@ function renderDrive(profile, opts) {
             try {
                 const until = Math.min(total, done + rate);           // one second per slice
                 while (done < until) {
-                    const t = done / rate, d = drive(t);
-                    const rpm = profile.idle + d.n * (profile.redline - profile.idle);
+                    const d = states[Math.min(states.length - 1, Math.floor(done / block))];
                     const fade = Math.min(1, (total - done) / (rate * 0.6));
-                    synth.set(rpm, d.load, fade > 0.05, o.volume === undefined ? 0.85 : o.volume);
+                    synth.set(d.rpm, d.load, fade > 0.05, o.volume === undefined ? 0.85 : o.volume);
                     const n = Math.min(block, until - done);
                     parts.push(synth.renderS16(n));
                     done += n;
@@ -196,4 +186,4 @@ class LivePlayer {
 
 function safeRequire(name) { try { return require(name); } catch (_) { return null; } }
 
-module.exports = { LivePlayer, renderDrive, exportDrive, drive, wavHeader, findExecutable, RATE, DRIVE_SECONDS };
+module.exports = { LivePlayer, renderDrive, exportDrive, driveStates, wavHeader, findExecutable, RATE, DRIVE_SECONDS };
