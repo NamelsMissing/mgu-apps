@@ -129,7 +129,7 @@ mgu.run({
             huTest: () => {
                 if (huTest.busy) return;
                 if (!route) { huTest.text = 'No AudioManager access in this runtime'; return; }
-                huTest = { busy: true, text: '' }; dirty = true;
+                huTest = { busy: true, text: '', lines: null }; dirty = true;
                 const canProbe = !!huBackend && huBackend.route;
                 route.discover(canProbe ? (d) => player.probe(d) : null).then((r) => {
                     const file = path.join(ctx.dataDir, 'active-sound-hu-report.json');
@@ -137,6 +137,14 @@ mgu.run({
                     const cand = r.candidates.map((c) => c.source + (c.present ? (c.available ? (c.endpoint ? (c.endpoint === 'ok' ? ' ok' : ' endpoint failed') : ' free') : ' unavailable') : ' missing')).join(', ');
                     huTest.text = (r.chosen ? 'Usable: ' + r.chosen : 'No usable source') + ' (' + cand + ')' +
                         (r.frontInUse.length ? '; front speakers used by ' + r.frontInUse.join(', ') : '') + (canProbe ? '' : '; mgu-sound-pcm not installed');
+                    // full result on the page (the row text is cut off): candidates, front sink, every source
+                    huTest.lines = [
+                        (r.chosen ? 'Usable: ' + r.chosen : 'No usable source') + '  -  ' + cand + (canProbe ? '' : '  -  PCM Output tool not installed'),
+                        'Front speakers: ' + (r.frontSink ? (r.frontInUse.length ? 'used by ' + r.frontInUse.join(', ') : 'free') : 'MediaSink_Front not found'),
+                        'Available sources (' + r.sources.filter((x) => x.available).length + '/' + r.sources.length + '): ' +
+                            r.sources.filter((x) => x.available).map((x) => x.name).join(', '),
+                        'Unavailable: ' + (r.sources.filter((x) => !x.available).map((x) => x.name).join(', ') || '-'),
+                    ];
                     log.info('hu test: ' + huTest.text + ' - ' + r.sources.length + ' sources, report ' + file);
                 }, (e) => { huTest.text = 'Test failed: ' + (e.message || e); }).then(() => { huTest.busy = false; dirty = true; });
             },

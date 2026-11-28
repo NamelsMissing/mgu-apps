@@ -1,4 +1,4 @@
-# Active Sound 0.4.0 — MGU / iDrive 7
+# Active Sound 0.4.1 — MGU / iDrive 7
 
 Active Sound Design für die MGU: Die echte Motordrehzahl und das Motormoment steuern einen virtuellen Motor. 21 synthetisierte Motorklänge, jeder einzeln einstellbar, alle eigene Synthese (keine Aufnahmen, keine Samples, keine Markennamen).
 
@@ -36,6 +36,10 @@ Seite **Tune** im Auto und Bereich **TUNE** auf dem Handy, je Regler 0–200 % i
 | Engine brake | Nur Diesel: Motorbremse („Jake Brake“), bellendes Stakkato im Schub |
 
 Elektro und Turbine haben nur Bass, Rasp und Whine. Pops, Bangs und Motorbremse laufen über einen eigenen, helleren Signalweg, damit sie bei geschlossener Drosselklappe nicht im gedämpften Kabinenklang untergehen. Die Pegelangleichung der Profile bezieht sich auf den Werkszustand, Einstellungen werden also nicht wieder herausgerechnet. „Engines“ markiert eingestellte Motoren mit TUNED; „Reset sound“ setzt den aktuellen Motor zurück.
+
+## 0.4.1: Headunit-Diagnose lesbar
+
+Im G21 meldete die Headunit-Ausgabe „No free BMW media source …“ (Text abgeschnitten). Jetzt nennt der Fehler je Kandidat *missing*, *unavailable* oder *busy*, und **Setup → Head unit test** zeigt das Ergebnis vollständig unter den Zeilen: Kandidaten, Belegung der Frontlautsprecher, alle verfügbaren und nicht verfügbaren BMW-Quellen. Die MGU-Bridge kann den Bericht im App-Datenordner nicht lesen (Agent-Allowlist: `/etc/cinemo`, `/etc/oap`, `/usr/lib/oap-mainapp`, `/var/log`).
 
 ## 0.4.0: dezenter Werks-ASD-Charakter und Headunit-Ausgabe
 

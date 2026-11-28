@@ -191,9 +191,23 @@ function makeUi(G) {
             vm.exportText || 'Writes active-sound-<engine>.wav to the app data folder', 'Export', a.exportWav, 'S_WAV', { busy: vm.exporting });
         const ht = vm.huTest || {};
         setRow(cv, t, R(5), 'Head unit test', ht.busy ? 'Checking...' : ht.text ? 'Done' : 'Read only',
-            ht.text || 'Lists BMW media sources, checks which one Active Sound could use', 'Test', a.huTest, 'S_HUT', { busy: ht.busy });
-        cv.fillRect(EDGE + 28, TOP + 410, W - 2 * EDGE - 56, 1, withAlpha('#ffffff', 0.12));
-        label(cv, 'Load = torque / max torque. Engine off or no fresh rpm for 5 s: silence. Original synthesized sounds, no recordings.', EDGE + 28, TOP + 440, 17, t.dim, W - 2 * EDGE - 56);
+            ht.lines ? 'Result below, also in active-sound-hu-report.json' : ht.text || 'Lists BMW media sources, checks which one Active Sound could use', 'Test', a.huTest, 'S_HUT', { busy: ht.busy });
+        cv.fillRect(EDGE + 28, TOP + 366, W - 2 * EDGE - 56, 1, withAlpha('#ffffff', 0.12));
+        if (ht.lines) {
+            // head unit test result in full, wrapped (source lists can be long)
+            const words = [], maxW = W - 2 * EDGE - 56;
+            ht.lines.forEach((ln) => {
+                let cur = '';
+                String(ln).split(' ').forEach((w) => {
+                    const next = cur ? cur + ' ' + w : w;
+                    if (cur && cv.textWidth(ascii(next), 16, LIT) > maxW) { words.push(cur); cur = '    ' + w; } else cur = next;
+                });
+                words.push(cur);
+            });
+            words.slice(0, 4).forEach((ln, i) => label(cv, ln, EDGE + 28, TOP + 390 + i * 22, 16, i === 0 ? t.text : t.dim, maxW));
+        } else {
+            label(cv, 'Load = torque / max torque. Engine off or no fresh rpm for 5 s: silence. Original synthesized sounds, no recordings.', EDGE + 28, TOP + 396, 17, t.dim, W - 2 * EDGE - 56);
+        }
     }
 
     function draw(cv, t, vm, a) {

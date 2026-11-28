@@ -126,7 +126,13 @@ class HuRoute {
             const rows = src.filter((s) => s.name === c.source);
             if (rows.length === 1 && id(rows[0].sourceID) && available(rows[0])) { pick = Object.assign({ row: rows[0] }, c); break; }
         }
-        if (!pick) throw new Error('No free BMW media source for Active Sound (tried ' + this.candidates().map((c) => c.source).join(', ') + ')');
+        if (!pick) {
+            const why = this.candidates().map((c) => {
+                const rows = src.filter((s) => s.name === c.source);
+                return c.source + (rows.length === 1 ? (available(rows[0]) ? ' busy' : ' unavailable') : ' missing');
+            });
+            throw new Error('No free BMW media source: ' + why.join(', ') + ' - see Setup > Head unit test');
+        }
         Object.assign(this.info, { source: pick.source, sourceID: pick.row.sourceID, sinkID: sink.sinkID, device: pick.device });
         const busy = (links) => links.some((c) => live(c) && !this.matches(c) && (c.sinkID === sink.sinkID || c.sourceID === pick.row.sourceID));
         if (busy(await this.links())) throw new Error('Front speakers busy (music or another app): head-unit sound would replace it - use the phone, or stop the media');

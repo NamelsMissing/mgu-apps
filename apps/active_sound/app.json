@@ -2,7 +2,7 @@
   "id": "active_sound",
   "title": "Active Sound",
   "description": "Active sound design: 21 synthesized engine sounds (inline-6, V8, V10, V12, rotary, boxer, six diesels incl. big rig with engine brake, electric, turbine) that follow the real engine speed and torque. Exhaust pipe model with two banks in stereo; every sound is tunable: pops, bangs, exhaust bass, rasp, resonance, turbo, blow-off, engine brake and more. Plays on the phone (QR code, through CarPlay or Bluetooth) or on head-unit ALSA where available.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "vendor": "NamelsMissing",
   "loggingId": "OASD",
   "iconGlyph": "ASD",
