@@ -83,7 +83,7 @@ Version numbers below are those in the **main** store catalog. **Stable** is the
 | --- | --- | --- | --- |
 | [**Equalizer DSP**](apps/equalizer/README.md) | **0.3.0** | Experimental | Seven-band PCM EQ, saved presets and a local BMW MediaPlayer A/B test. Direct CarPlay, radio and Bluetooth PCM routing remains unverified. |
 | [**Audio Diagnostics**](apps/mgu_audio_diagnostics/README.md) | **0.1.3** | Stable / read-only | Displays CarPlay process metadata, AudioManager routes, SmartX, ALSA, and PCM client diagnostics. |
-| [**Active Sound**](apps/active_sound/README.md) | **0.3.1** | Experimental | Active sound design: 21 synthesized engine sounds (inline-6, V8, V10, V12, rotary, boxer, six diesels incl. big rig with engine brake, electric, turbine) following real rpm and torque, exhaust pipe model with stereo banks, each tunable (pops, bangs, bass, rasp, resonance, turbo, blow-off, engine brake ...). Plays on the phone via QR code (through CarPlay/Bluetooth; needs **Active Sound Phone Port**) or head-unit ALSA where available. Not yet tested in the car. |
+| [**Active Sound**](apps/active_sound/README.md) | **0.3.2** | Experimental | Active sound design: 21 synthesized engine sounds (inline-6, V8, V10, V12, rotary, boxer, six diesels incl. big rig with engine brake, electric, turbine) following real rpm and torque, exhaust pipe model with stereo banks, each tunable (pops, bangs, bass, rasp, resonance, turbo, blow-off, engine brake ...). Plays on the phone via QR code (through CarPlay/Bluetooth; needs **Active Sound Phone Port**) or head-unit ALSA where available. Not yet tested in the car. |
 
 ### Exterior lighting (use on private ground while parked)
 

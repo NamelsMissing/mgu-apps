@@ -339,6 +339,10 @@ function mag(b, f, from) {
 
     /* ---------- manifest, store, Node 8 syntax ---------- */
     const app = JSON.parse(fs.readFileSync(APP + '/app.json', 'utf8'));
+    // every BMW bar button is drawn on the page: main.js hides all of them (the bar covered the footer in the car)
+    const mainSrc = fs.readFileSync(APP + '/main.js', 'utf8');
+    const hidden = (mainSrc.match(/\[('BTN_[A-Z_]+',?\s*)+\]\.forEach\(\(id\) => ctx\.hideButton\(id\)\)/) || [''])[0];
+    for (const [id] of app.screens[0].buttons) assert.ok(hidden.indexOf("'" + id + "'") >= 0, id + ' hidden from the BMW bar');
     const repo = JSON.parse(fs.readFileSync(path.join(__dirname, '../mgu-repo.json'), 'utf8'));
     const entry = repo.components.find((c) => c.id === 'active_sound');
     assert.ok(entry && entry.version === app.version && entry.requires['mgu-sound-net'] === comp.version);

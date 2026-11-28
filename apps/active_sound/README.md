@@ -1,4 +1,4 @@
-# Active Sound 0.3.1 — MGU / iDrive 7
+# Active Sound 0.3.2 — MGU / iDrive 7
 
 Active Sound Design für die MGU: Die echte Motordrehzahl und das Motormoment steuern einen virtuellen Motor. 21 synthetisierte Motorklänge, jeder einzeln einstellbar, alle eigene Synthese (keine Aufnahmen, keine Samples, keine Markennamen).
 
@@ -36,6 +36,13 @@ Seite **Tune** im Auto und Bereich **TUNE** auf dem Handy, je Regler 0–200 % i
 | Engine brake | Nur Diesel: Motorbremse („Jake Brake“), bellendes Stakkato im Schub |
 
 Elektro und Turbine haben nur Bass, Rasp und Whine. Pops, Bangs und Motorbremse laufen über einen eigenen, helleren Signalweg, damit sie bei geschlossener Drosselklappe nicht im gedämpften Kabinenklang untergehen. Die Pegelangleichung der Profile bezieht sich auf den Werkszustand, Einstellungen werden also nicht wieder herausgerechnet. „Engines“ markiert eingestellte Motoren mit TUNED; „Reset sound“ setzt den aktuellen Motor zurück.
+
+## Erster Test im Auto (28.11.2026, G21, 0.3.1)
+
+- Läuft: App startet, Drehzahl, Geschwindigkeit und **Motormoment** (`FES.statusActualValueTorque2`) kommen an (Leerlauf 890 rpm, 4 Nm).
+- Headunit ohne `aplay`/`ffmpeg` bestätigt. Seit 0.3.2 gilt dann immer die Handy-Ausgabe, egal was unter „Sound output“ gespeichert ist.
+- BMWs Tastenleiste lag über der Button-Zeile der Seite. Seit 0.3.2 blendet die App alle ihre Leistenbuttons aus (`ctx.hideButton`), weil die Seite sie selbst zeichnet.
+- „Port helper mgu-sound-net not running“: Das Werkzeug **Active Sound Phone Port** war im Auto nicht aktiv. Im MGU Store prüfen, ob es installiert ist (sonst installieren); ist es installiert, die Headunit neu starten. Ohne den Helfer erreicht das Handy die Seite über das Auto-WLAN nicht.
 
 ## Klangbalance und Handy-Lautsprecher (0.3.1)
 

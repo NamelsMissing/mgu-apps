@@ -70,7 +70,10 @@ mgu.run({
         const profile = () => E.get(cfg.profile);
         const tuneOf = (id) => cfg.tune[id || cfg.profile] || {};
         const save = () => { saveConfig(ctx.dataDir, cfg, log); dirty = true; };
-        const wantsHu = () => cfg.output === 'car' || cfg.output === 'both';
+        // head-unit output only where a player exists; otherwise the phone is the output, whatever is stored
+        let huBackend = null;
+        const output = () => (huBackend ? cfg.output : 'phone');
+        const wantsHu = () => output() === 'car' || output() === 'both';
         // demo data (no car answering) only makes a sound when the user asked for demo data
         const demoAudible = () => ctx.settings.get('demo') === 'on';
         const sounding = () => cfg.on && target.running && (!target.demo || demoAudible());
@@ -80,7 +83,7 @@ mgu.run({
             log.info('head unit audio ' + s.status + (s.detail ? ': ' + s.detail : ''));
             dirty = true;
         } });
-        const huBackend = player.backend();
+        huBackend = player.backend();
         log.info('Active Sound: head unit player ' + (huBackend ? huBackend.name + ' ' + huBackend.bin : 'not found (aplay/ffmpeg missing)'));
 
         const actions = {
@@ -107,7 +110,10 @@ mgu.run({
             volume: (v) => { cfg.volume = Math.round(Math.max(0, Math.min(1, v)) * 20) / 20; save(); },
             volUp: () => actions.volume(cfg.volume + VOLUME_STEP),
             volDown: () => actions.volume(cfg.volume - VOLUME_STEP),
-            nextOutput: () => { cfg.output = OUTPUTS[(OUTPUTS.indexOf(cfg.output) + 1) % OUTPUTS.length]; huRetryAt = 0; save(); },
+            nextOutput: () => {
+                if (!huBackend) { cfg.output = 'phone'; save(); say('This head unit has no audio player: sound comes from the phone'); return; }
+                cfg.output = OUTPUTS[(OUTPUTS.indexOf(cfg.output) + 1) % OUTPUTS.length]; huRetryAt = 0; save();
+            },
             nextRedline: () => { cfg.realRedline = M.nextIn(M.REAL_REDLINES, cfg.realRedline, 1); save(); },
             nextTorque: () => { cfg.maxTorque = M.nextIn(M.MAX_TORQUES, cfg.maxTorque, 1); save(); },
             exportWav: () => {
@@ -180,17 +186,17 @@ mgu.run({
             r.push({ name: 'Sound', value: !cfg.on ? 'Off' : sounding() ? 'On - following the engine' : target.demo ? 'On - silent with demo data' : 'On - waiting for the engine',
                 state: !cfg.on ? 'off' : sounding() ? 'ok' : 'warn' });
             const ph = server.phoneConnected();
-            r.push({ name: 'Phone', value: cfg.output === 'car' ? 'Not used (output: head unit)' : ph ? 'Connected - sound plays on the phone' : 'Not linked - see PHONE',
-                state: cfg.output === 'car' ? 'off' : ph ? 'ok' : 'warn' });
-            r.push({ name: 'Head unit audio', value: !wantsHu() ? 'Not used (output: phone)' : !huBackend ? 'Unavailable: no aplay / ffmpeg' :
+            r.push({ name: 'Phone', value: output() === 'car' ? 'Not used (output: head unit)' : ph ? 'Connected - sound plays on the phone' : 'Not linked - see PHONE',
+                state: output() === 'car' ? 'off' : ph ? 'ok' : 'warn' });
+            r.push({ name: 'Head unit audio', value: !huBackend ? 'Not on this head unit (no aplay / ffmpeg)' : !wantsHu() ? 'Not used (output: phone)' :
                 player.playing() ? 'Playing via ' + huBackend.name + ' (speakers not confirmed)' : player.detail || 'Ready (' + huBackend.name + ')',
-                state: !wantsHu() ? 'off' : !huBackend || player.status === 'error' ? 'bad' : player.playing() ? 'ok' : 'warn' });
+                state: !wantsHu() ? 'off' : player.status === 'error' ? 'bad' : player.playing() ? 'ok' : 'warn' });
             return r;
         }
         function viewModel() {
             if (notice && Date.now() - noticeAt > 4000) notice = null;
             return {
-                page, profile: profile(), on: cfg.on, volume: cfg.volume, cfg, tune: tuneOf(),
+                page, profile: profile(), on: cfg.on, volume: cfg.volume, cfg, output: output(), tune: tuneOf(),
                 rpm: target.rpm, load: target.load, running: target.running, demo: target.demo,
                 audible: sounding(), rows: rows(), notice,
                 huAvailable: !!huBackend, huBackend: huBackend ? huBackend.name : '',
@@ -210,6 +216,11 @@ mgu.run({
         ctx.ui.onClick('BTN_PAGE', () => open((page + 1) % 5));
         ctx.ui.onClick('BTN_EXPORT', a.exportWav);
         ctx.ui.onClick('BTN_TUNE_RESET', a.tuneReset);
+        // the page draws all of these itself: keep them out of BMW's button bar where the kit runs the
+        // screen (otherwise the bar covers the page's bottom row); they stay for the other render paths
+        if (typeof ctx.hideButton === 'function') {
+            ['BTN_TOGGLE', 'BTN_NEXT', 'BTN_PREV', 'BTN_VOLUP', 'BTN_VOLDN', 'BTN_PAGE', 'BTN_EXPORT', 'BTN_TUNE_RESET'].forEach((id) => ctx.hideButton(id));
+        }
 
         let lastDraw = 0;
         ctx.loop('MAIN', 15, () => {

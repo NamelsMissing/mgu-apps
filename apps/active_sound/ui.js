@@ -180,7 +180,7 @@ function makeUi(G) {
     function drawSetup(cv, t, vm, a) {
         card(cv, EDGE, TOP, W - 2 * EDGE, FOOT_Y + FOOT_H - TOP);
         const c = vm.cfg, OUT = { phone: 'Phone', car: 'Head unit', both: 'Phone + head unit' };
-        setRow(cv, t, TOP + 56, 'Sound output', OUT[c.output] || c.output,
+        setRow(cv, t, TOP + 56, 'Sound output', OUT[vm.output || c.output] || c.output,
             vm.huAvailable ? 'Head unit: ' + vm.huBackend + ' found' : 'Head unit: no aplay / ffmpeg, phone only', 'Change', a.nextOutput, 'S_OUT');
         setRow(cv, t, TOP + 128, 'Real redline', c.realRedline + ' rpm', 'Your engine\'s top rpm. 318d / diesel: 5000', 'Change', a.nextRedline, 'S_RED');
         setRow(cv, t, TOP + 200, 'Max torque', c.maxTorque + ' Nm', 'Full load at this torque. 318d: 400 Nm', 'Change', a.nextTorque, 'S_TQ');
