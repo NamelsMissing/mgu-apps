@@ -325,7 +325,7 @@
       "id": "active_sound",
       "kind": "app",
       "title": "Active Sound",
-      "version": "0.3.2",
+      "version": "0.4.0",
       "path": "apps/active_sound",
       "icon": "icon.png",
       "mguHmi": [
@@ -340,7 +340,8 @@
         "output": "dist/{id}@{version}.tgz"
       },
       "requires": {
-        "mgu-sound-net": "0.1.0"
+        "mgu-sound-net": "0.1.0",
+        "mgu-sound-pcm": "0.1.0"
       }
     },
     {
@@ -352,6 +353,15 @@
       "mguHmi": [
         "ID7"
       ],
+      "uninstallable": true
+    },
+    {
+      "id": "mgu-sound-pcm",
+      "kind": "tool",
+      "title": "Active Sound PCM Output",
+      "version": "0.1.0",
+      "path": "native/sound-pcm",
+      "mguHmi": ["ID7"],
       "uninstallable": true
     },
     {

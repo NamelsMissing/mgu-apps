@@ -27,6 +27,7 @@
     'use strict';
     var TAU = Math.PI * 2;
     var TARGET_RMS = 0.16;            // per-profile loudness at the calibration point
+    var SUBTLE_RMS = 0.13;            // the subtle chain: a little lower, it is meant to sit underneath
     var CONTROL = 32;                 // samples between filter coefficient updates
 
     /** RBJ biquad (direct form I). */
@@ -108,6 +109,7 @@
         this.kSpoolUp = k(0.7, this.sr); this.kSpoolDown = k(0.25, this.sr);
         this.tRpm = 0; this.tLoad = 0; this.tOn = 0; this.tVol = 0.5;
         this.vol = 0.5;
+        this.setCharacter('subtle');
         this.setProfile(profile, tune);
     }
     var P = EngineSynth.prototype;
@@ -138,6 +140,18 @@
         this.setTune(tune || this.tune || null);
         this._resetState(true);
     };
+    /** Sound character: 'subtle' (factory-ASD, low orders, underneath; default) or 'detailed' (full exhaust). */
+    P.setCharacter = function (mode) {
+        this.subtle = mode !== 'detailed';
+        if (!this.subF1) {
+            this.subF1 = new Biquad(); this.subF2 = new Biquad();
+            this.subHp = new Biquad().highpass(32, 0.7, this.sr);
+            this.subFx = new Biquad().lowpass(650, 0.7, this.sr);
+            this.subFx2 = new Biquad().lowpass(650, 0.7, this.sr);
+            this.subF1.lowpass(250, 0.54, this.sr); this.subF2.lowpass(250, 1.31, this.sr);
+        }
+    };
+
     /** Playback device: 'full' (car speakers, headphones) or 'small' (phone / tablet speaker). */
     P.setSpeaker = function (mode) {
         this.small = mode === 'small';
@@ -219,7 +233,7 @@
         this.ctl = 0;
         this.body.forEach(function (b) { b.f.reset(); });
         [this.thumpF, this.thumpF2, this.intakeF, this.bovF, this.knockF, this.popF, this.bangF, this.jakeF, this.fxF, this.noiseF,
-            this.toneF, this.toneF2, this.dcF, this.mechF, this.combF, this.sideF, this.dcS].forEach(function (f) { f.reset(); });
+            this.toneF, this.toneF2, this.dcF, this.mechF, this.combF, this.subF1, this.subF2, this.subHp, this.subFx, this.subFx2, this.sideF, this.dcS].forEach(function (f) { f.reset(); });
         this.layers.forEach(function (l) { l.ph = 0; l.ph2 = 0; });
         if (hard) { this.rpm = this.tRpm; this.load = this.tLoad; this.gate = this.tOn; this.vol = this.tVol; }
     };
@@ -236,6 +250,16 @@
         for (var i = skip; i < n; i++) sum += buf[i] * buf[i];
         var rms = Math.sqrt(sum / (n - skip));
         this.norm = rms > 1e-6 ? TARGET_RMS / rms : 1;
+        // second pass: level of the subtle (factory-ASD) chain at the same point
+        this.normSub = 1;
+        this._resetState(true);
+        this.calSub = true;
+        sum = 0;
+        this._renderRaw(buf, n);
+        for (i = skip; i < n; i++) sum += buf[i] * buf[i];
+        rms = Math.sqrt(sum / (n - skip));
+        this.normSub = rms > 1e-6 ? SUBTLE_RMS / rms : 1;
+        this.calSub = false;
         this.calibrating = false;
         this.rnd = this.seed;
         this.tRpm = keep.rpm; this.tLoad = keep.load; this.tOn = keep.on; this.tVol = keep.vol;
@@ -253,6 +277,10 @@
         this.toneF.lowpass(cut, 0.6, sr);
         this.toneF2.lowpass(cut * 2, 0.5, sr);
         this.sideF.lowpass(cut * 0.9, 0.6, sr);
+        if (this.subtle) {
+            var fs = 190 + 200 * this.load + 110 * rpmN;
+            this.subF1.lowpass(fs, 0.54, sr); this.subF2.lowpass(fs, 1.31, sr);   // Butterworth-ish 4th order
+        }
         if (!this.tonal) {
             // exhaust gas heats up under load (seconds) and cools on overrun: hotter = faster sound
             var hot = 0.2 + 0.8 * this.load * (0.4 + 0.6 * rpmN);
@@ -355,7 +383,7 @@
                 this.loadHist += (this.load - this.loadHist) * 0.006;
                 this._control();
             }
-            var x = 0, fx = 0, tex = 0, side = 0;  // fx: crackle, bangs, engine brake; tex: combustion, clatter, valves (bright path); side: L-R
+            var x = 0, fx = 0, tex = 0, side = 0, hs = 0;  // fx: crackle, bangs, engine brake; tex: combustion, clatter, valves (bright path); side: L-R
             if (this.gate === 0 && this.tOn === 0) { outL[s] = 0; if (outR) outR[s] = 0; continue; }
             var rpmHz = this.rpm / 60;
 
@@ -397,6 +425,7 @@
                 var h = 0;
                 for (k = 0; k < this.orders.length; k++) h += Math.sin(TAU * this.phRev * this.orders[k].o) * this.orders[k].g;
                 x += h * 0.14 * (0.35 + 0.65 * this.load) * (0.15 + 0.85 * this.rpmN);
+                hs = h * (0.45 + 0.55 * this.load);            // the subtle chain is mostly these orders
                 // ---- knock / clatter
                 if (p.knock) { this.knockEnv *= knockDecay; tex += this.knockF.run(this.noise() * this.knockEnv) * p.knock * 0.45; }
                 // ---- overrun crackle
@@ -449,8 +478,20 @@
             // level: idle and part load are quieter than full load, but not by 25 dB (about 10-12 dB)
             var lift = this.calibrating || this.tonal ? 1 : 1 + 2.6 * (1 - this.load) * (1 - this.load) * (1 - this.rpmN);
             x = this.toneF2.run(this.toneF.run(x)) * (this.calibrating ? 1 : 0.7 + 0.3 * this.load) * lift;
-            x += this.fxF.run(fx + tex * lift) * 0.8;          // overrun effects are not darkened by the closed throttle
+            var sub = this.subtle && !this.tonal && (!this.calibrating || this.calSub);
+            // overrun effects are not darkened by the closed throttle; in the subtle character they
+            // bypass its hard low-pass as a muffled burble instead of crackle
+            x += this.fxF.run((sub ? 0 : fx) + tex * lift) * 0.8;
             x = this.dcF.run(x) * this.norm;
+            if (sub) {
+                // factory-ASD character: only the low engine orders and the dull body of the exhaust,
+                // low-passed hard (24 dB/oct) between ~170 and ~480 Hz with load and rpm, no hiss, mono
+                // like a factory ASD: barely there at idle and steady cruising, grows with load and rpm
+                var pres = this.calibrating ? 1 : 0.4 + 0.6 * Math.max(this.load, 0.6 * this.rpmN);
+                x = (x * 0.55 + hs * 1.6 * this.norm) * pres / Math.sqrt(lift);
+                x = this.subF2.run(this.subF1.run(x)) * this.normSub;
+                x = this.subHp.run(x) + this.subFx2.run(this.subFx.run(fx)) * 1.3 * this.norm;
+            }
             if (this.small && !this.calibrating) {
                 // small speaker (phone, tablet): cut the sub-bass it can't play (it would only distort)
                 // and add its overtones instead, so the ear still hears the low firing pitch
@@ -461,7 +502,7 @@
             if (!this.calibrating) {
                 var g = this.gate * this.vol * this.vol;
                 x *= g;
-                if (outR && this.banks === 2 && !this.tonal) {
+                if (outR && this.banks === 2 && !this.tonal && !sub) {
                     // stereo: the two banks' exhausts, slightly apart (mid stays as before)
                     var sd = this.dcS.run(this.sideF.run(side)) * this.norm * g * (0.7 + 0.3 * this.load) * lift;
                     outL[s] = soft(x + sd); outR[s] = soft(x - sd);

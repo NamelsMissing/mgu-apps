@@ -180,16 +180,20 @@ function makeUi(G) {
     function drawSetup(cv, t, vm, a) {
         card(cv, EDGE, TOP, W - 2 * EDGE, FOOT_Y + FOOT_H - TOP);
         const c = vm.cfg, OUT = { phone: 'Phone', car: 'Head unit', both: 'Phone + head unit' };
-        setRow(cv, t, TOP + 56, 'Sound output', OUT[vm.output || c.output] || c.output,
-            vm.huAvailable ? 'Head unit: ' + vm.huBackend + ' found' : 'Head unit: no aplay / ffmpeg, phone only', 'Change', a.nextOutput, 'S_OUT');
-        setRow(cv, t, TOP + 128, 'Real redline', c.realRedline + ' rpm', 'Your engine\'s top rpm. 318d / diesel: 5000', 'Change', a.nextRedline, 'S_RED');
-        setRow(cv, t, TOP + 200, 'Max torque', c.maxTorque + ' Nm', 'Full load at this torque. 318d: 400 Nm', 'Change', a.nextTorque, 'S_TQ');
-        setRow(cv, t, TOP + 272, 'Demo drive WAV', vm.exporting ? 'Rendering...' : vm.exportText ? 'Saved' : '30 s, ' + vm.profile.short,
+        const R = (i) => TOP + 46 + i * 58;
+        setRow(cv, t, R(0), 'Character', c.character === 'detailed' ? 'Detailed' : 'Subtle (factory ASD)',
+            c.character === 'detailed' ? 'Full exhaust sound with crackle and rasp' : 'Low engine orders only, underneath, grows with load', 'Change', a.nextCharacter, 'S_CHAR');
+        setRow(cv, t, R(1), 'Sound output', OUT[vm.output || c.output] || c.output,
+            vm.huAvailable ? 'Head unit via ' + vm.huBackend + ' (only while no music plays there)' : 'Head unit needs the tool Active Sound PCM Output', 'Change', a.nextOutput, 'S_OUT');
+        setRow(cv, t, R(2), 'Real redline', c.realRedline + ' rpm', 'Your engine\'s top rpm. 318d / diesel: 5000', 'Change', a.nextRedline, 'S_RED');
+        setRow(cv, t, R(3), 'Max torque', c.maxTorque + ' Nm', 'Full load at this torque. 318d: 400 Nm', 'Change', a.nextTorque, 'S_TQ');
+        setRow(cv, t, R(4), 'Demo drive WAV', vm.exporting ? 'Rendering...' : vm.exportText ? 'Saved' : '30 s, ' + vm.profile.short,
             vm.exportText || 'Writes active-sound-<engine>.wav to the app data folder', 'Export', a.exportWav, 'S_WAV', { busy: vm.exporting });
-        cv.fillRect(EDGE + 28, TOP + 306, W - 2 * EDGE - 56, 1, withAlpha('#ffffff', 0.12));
-        label(cv, 'Real rpm from idle to redline is spread over the virtual engine\'s range; load = torque / max torque.', EDGE + 28, TOP + 344, 18, t.dim, W - 2 * EDGE - 56);
-        label(cv, 'Electric profiles follow road speed (0-200 km/h). Engine off or no fresh rpm for 5 s: silence.', EDGE + 28, TOP + 374, 18, t.dim, W - 2 * EDGE - 56);
-        label(cv, 'Original synthesized sounds, no recordings. BMW warning chimes are not affected; keep the volume moderate.', EDGE + 28, TOP + 404, 18, t.dim, W - 2 * EDGE - 56);
+        const ht = vm.huTest || {};
+        setRow(cv, t, R(5), 'Head unit test', ht.busy ? 'Checking...' : ht.text ? 'Done' : 'Read only',
+            ht.text || 'Lists BMW media sources, checks which one Active Sound could use', 'Test', a.huTest, 'S_HUT', { busy: ht.busy });
+        cv.fillRect(EDGE + 28, TOP + 410, W - 2 * EDGE - 56, 1, withAlpha('#ffffff', 0.12));
+        label(cv, 'Load = torque / max torque. Engine off or no fresh rpm for 5 s: silence. Original synthesized sounds, no recordings.', EDGE + 28, TOP + 440, 17, t.dim, W - 2 * EDGE - 56);
     }
 
     function draw(cv, t, vm, a) {

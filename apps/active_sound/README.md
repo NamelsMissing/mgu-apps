@@ -1,4 +1,4 @@
-# Active Sound 0.3.2 — MGU / iDrive 7
+# Active Sound 0.4.0 — MGU / iDrive 7
 
 Active Sound Design für die MGU: Die echte Motordrehzahl und das Motormoment steuern einen virtuellen Motor. 21 synthetisierte Motorklänge, jeder einzeln einstellbar, alle eigene Synthese (keine Aufnahmen, keine Samples, keine Markennamen).
 
@@ -37,6 +37,16 @@ Seite **Tune** im Auto und Bereich **TUNE** auf dem Handy, je Regler 0–200 % i
 
 Elektro und Turbine haben nur Bass, Rasp und Whine. Pops, Bangs und Motorbremse laufen über einen eigenen, helleren Signalweg, damit sie bei geschlossener Drosselklappe nicht im gedämpften Kabinenklang untergehen. Die Pegelangleichung der Profile bezieht sich auf den Werkszustand, Einstellungen werden also nicht wieder herausgerechnet. „Engines“ markiert eingestellte Motoren mit TUNED; „Reset sound“ setzt den aktuellen Motor zurück.
 
+## 0.4.0: dezenter Werks-ASD-Charakter und Headunit-Ausgabe
+
+Rückmeldung aus dem Auto (Handy-Ausgabe über die BMW-Lautsprecher): zu präsent, zu hoch, man hört, dass es aus Lautsprechern kommt – gewünscht ist ein dumpfes, unterschwelliges Motorgeräusch im Hintergrund.
+
+- **Character „Subtle (factory ASD)“, jetzt Standard**: fast nur die tiefen Motorordnungen plus der dumpfe Kern des Auspuffs, Tiefpass 24 dB/Okt. zwischen ~190 und ~500 Hz (wandert mit Last und Drehzahl), kein Zischen, mono. Im Leerlauf ~21 dB und beim Mitschwimmen ~13 dB unter Volllast; erst unter Last richtig da. Pops, Bangs und Motorbremse laufen gedämpft (650 Hz) daran vorbei, die Regler wirken also weiter. **„Detailed“** ist der bisherige volle Auspuffklang. Umschalten im Setup oder auf dem Handy, gespeichert im Auto.
+- **Handy mischt mit Musik**: „Mix with music: ON“ (Standard) setzt die iOS-Audiositzung auf *ambient* – Spotify & Co. laufen weiter, der Motorsound liegt darunter; der Stummschalter des iPhones schaltet ihn dann aber stumm. OFF = *playback* (unterbricht andere Wiedergabe).
+- **Headunit-Ausgabe** über das neue Werkzeug **Active Sound PCM Output** (`mgu-sound-pcm`, [README](../../native/sound-pcm/README.md)) und `hu_route.js`: AudioManager verbindet eine freie BMW-Medienquelle (Kandidaten `ActiveSoundMedia`, `GameStationMedia`, `CarLifeMedia`; per `hu-route.json` im App-Datenordner überschreibbar) mit `MediaSink_Front`, der Helfer schreibt live in deren SmartX-Endpunkt (`plug:smartx:<Quelle>_CF_48_STEREO`). Nur wenn die Frontlautsprecher frei sind: Spielt dort Musik, verweigert die App, statt sie zu ersetzen (dann das Handy nehmen). Getrennt wird nur die eigene, bestätigte Verbindung. Nichts wird als verfügbar gemeldet oder umgemappt.
+- **Setup → Head unit test** (nur lesend): listet die BMW-Quellen, prüft die Kandidaten samt Endpunkt-Aushandlung und schreibt `active-sound-hu-report.json` in den App-Datenordner.
+- **Offen am Auto**: Welche Quellen der G21 anbietet und ob eine davon frei und verfügbar ist (CarLifeMedia ist in Europa ungenutzt, wird aber evtl. als nicht verfügbar gemeldet); ob der SmartX-Endpunkt hörbar auf die Lautsprecher geht; Verhalten bei Navigationsansagen und Telefon.
+
 ## Erster Test im Auto (28.11.2026, G21, 0.3.1)
 
 - Läuft: App startet, Drehzahl, Geschwindigkeit und **Motormoment** (`FES.statusActualValueTorque2`) kommen an (Leerlauf 890 rpm, 4 Nm).
@@ -59,7 +69,7 @@ Bis 0.3.0 bestanden Leerlauf und Teillast fast nur aus dem tiefen Zündgrundton 
 
 ## Wo der Ton herauskommt
 
-1. **Handy (Standard)**: Seite *Phone*, QR-Code scannen (Handy im Auto-WLAN), auf dem Handy **TAP TO START SOUND**. Das Handy rechnet denselben Synthesizer (AudioWorklet) und spielt ihn ab; mit CarPlay- oder Bluetooth-Audio kommt er aus den Fahrzeuglautsprechern. Das Auto schickt nur Drehzahl und Last (~16×/s); ohne Daten für 1,5 s blendet das Handy aus. Braucht das Root-Tool **Active Sound Phone Port** (`mgu-sound-net` 0.1.0, öffnet TCP 18885 auf `wlan_bridge`, nur solange die App lauscht; eigener nft-Tag).
+1. **Handy (Standard)**: mischt mit laufender Musik (ab 0.4.0). Seite *Phone*, QR-Code scannen (Handy im Auto-WLAN), auf dem Handy **TAP TO START SOUND**. Das Handy rechnet denselben Synthesizer (AudioWorklet) und spielt ihn ab; mit CarPlay- oder Bluetooth-Audio kommt er aus den Fahrzeuglautsprechern. Das Auto schickt nur Drehzahl und Last (~16×/s); ohne Daten für 1,5 s blendet das Handy aus. Braucht das Root-Tool **Active Sound Phone Port** (`mgu-sound-net` 0.1.0, öffnet TCP 18885 auf `wlan_bridge`, nur solange die App lauscht; eigener nft-Tag).
 2. **Headunit**: live PCM über den Equalizer-DSP (falls installiert) an `aplay` oder `ffmpeg` (ALSA-Standardgerät), wie die Equalizer-Testmusik. Auf der bisher untersuchten MGU fehlen beide Programme → Status „Unavailable“. BMW-Audio-Routing und SmartX werden nicht angefasst.
 3. **WAV-Export** (Setup → Export): 30-s-Demofahrt durch das Fahrzeugmodell (Leerlauf, Gasstoß, Volllast durch die Gänge, Schub, Teillast, Kickdown, Bremsen) mit den Einstellungen des Motors als `active-sound-<motor>.wav` (~5 MB) im App-Datenordner, z. B. per Phone Terminal/SFTP auf USB-Stick.
 

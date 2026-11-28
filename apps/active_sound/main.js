@@ -20,16 +20,18 @@ const Car = require('./kit/car');
 const E = require('./engines');
 const M = require('./mapping');
 const { LivePlayer, exportDrive } = require('./player');
+const { HuRoute } = require('./hu_route');
 const { WebServer } = require('./web-server');
 const { makeUi, PAGE, W, H } = require('./ui');
 
 const OUTPUTS = ['phone', 'car', 'both'];
+const CHARACTERS = ['subtle', 'detailed'];
 const VOLUME_STEP = 0.05;
 const CONFIG_FILE = 'active-sound.json';
 
 function loadConfig(dir, log) {
     const cfg = { profile: E.DEFAULT, on: false, volume: 0.6, output: 'phone',
-        realRedline: M.DEFAULTS.realRedline, maxTorque: M.DEFAULTS.maxTorque, tune: {} };
+        realRedline: M.DEFAULTS.realRedline, maxTorque: M.DEFAULTS.maxTorque, tune: {}, character: 'subtle' };
     try {
         const v = JSON.parse(fs.readFileSync(path.join(dir, CONFIG_FILE), 'utf8'));
         if (v && typeof v === 'object') {
@@ -37,6 +39,7 @@ function loadConfig(dir, log) {
             if (typeof v.on === 'boolean') cfg.on = v.on;
             if (typeof v.volume === 'number' && v.volume >= 0 && v.volume <= 1) cfg.volume = v.volume;
             if (OUTPUTS.indexOf(v.output) >= 0) cfg.output = v.output;
+            if (CHARACTERS.indexOf(v.character) >= 0) cfg.character = v.character;
             if (M.REAL_REDLINES.indexOf(v.realRedline) >= 0) cfg.realRedline = v.realRedline;
             if (M.MAX_TORQUES.indexOf(v.maxTorque) >= 0) cfg.maxTorque = v.maxTorque;
             if (v.tune && typeof v.tune === 'object') {
@@ -78,11 +81,14 @@ mgu.run({
         const demoAudible = () => ctx.settings.get('demo') === 'on';
         const sounding = () => cfg.on && target.running && (!target.demo || demoAudible());
 
-        const player = new LivePlayer({ profile: profile(), tune: tuneOf(), log, onState: (s) => {
+        const route = ctx.signals ? new HuRoute(ctx.signals, { dataDir: ctx.dataDir }) : null;
+        let huTest = { busy: false, text: '' };
+        const player = new LivePlayer({ profile: profile(), tune: tuneOf(), route, log, onState: (s) => {
             if (s.status === 'error') say('Head unit audio: ' + s.detail);
             log.info('head unit audio ' + s.status + (s.detail ? ': ' + s.detail : ''));
             dirty = true;
         } });
+        player.setCharacter(cfg.character);
         huBackend = player.backend();
         log.info('Active Sound: head unit player ' + (huBackend ? huBackend.name + ' ' + huBackend.bin : 'not found (aplay/ffmpeg missing)'));
 
@@ -111,8 +117,28 @@ mgu.run({
             volUp: () => actions.volume(cfg.volume + VOLUME_STEP),
             volDown: () => actions.volume(cfg.volume - VOLUME_STEP),
             nextOutput: () => {
-                if (!huBackend) { cfg.output = 'phone'; save(); say('This head unit has no audio player: sound comes from the phone'); return; }
+                if (!huBackend) { cfg.output = 'phone'; save(); say('Head-unit output needs the tool Active Sound PCM Output (MGU Store)'); return; }
                 cfg.output = OUTPUTS[(OUTPUTS.indexOf(cfg.output) + 1) % OUTPUTS.length]; huRetryAt = 0; save();
+            },
+            nextCharacter: () => actions.character(cfg.character === 'subtle' ? 'detailed' : 'subtle'),
+            character: (c) => {
+                if (CHARACTERS.indexOf(c) < 0) throw new Error('Unknown character');
+                cfg.character = c; player.setCharacter(c); save();
+                say(c === 'subtle' ? 'Subtle: low engine orders underneath, like a factory ASD' : 'Detailed: full exhaust sound');
+            },
+            huTest: () => {
+                if (huTest.busy) return;
+                if (!route) { huTest.text = 'No AudioManager access in this runtime'; return; }
+                huTest = { busy: true, text: '' }; dirty = true;
+                const canProbe = !!huBackend && huBackend.route;
+                route.discover(canProbe ? (d) => player.probe(d) : null).then((r) => {
+                    const file = path.join(ctx.dataDir, 'active-sound-hu-report.json');
+                    try { fs.writeFileSync(file, JSON.stringify(r, null, 1)); } catch (e) { log.warn('hu report: ' + e.message); }
+                    const cand = r.candidates.map((c) => c.source + (c.present ? (c.available ? (c.endpoint ? (c.endpoint === 'ok' ? ' ok' : ' endpoint failed') : ' free') : ' unavailable') : ' missing')).join(', ');
+                    huTest.text = (r.chosen ? 'Usable: ' + r.chosen : 'No usable source') + ' (' + cand + ')' +
+                        (r.frontInUse.length ? '; front speakers used by ' + r.frontInUse.join(', ') : '') + (canProbe ? '' : '; mgu-sound-pcm not installed');
+                    log.info('hu test: ' + huTest.text + ' - ' + r.sources.length + ' sources, report ' + file);
+                }, (e) => { huTest.text = 'Test failed: ' + (e.message || e); }).then(() => { huTest.busy = false; dirty = true; });
             },
             nextRedline: () => { cfg.realRedline = M.nextIn(M.REAL_REDLINES, cfg.realRedline, 1); save(); },
             nextTorque: () => { cfg.maxTorque = M.nextIn(M.MAX_TORQUES, cfg.maxTorque, 1); save(); },
@@ -120,7 +146,7 @@ mgu.run({
                 if (exporting) return;
                 exporting = true; exportText = ''; dirty = true;
                 const p = profile();
-                exportDrive(p, ctx.dataDir, tuneOf(p.id)).then((r) => {
+                exportDrive(p, ctx.dataDir, tuneOf(p.id), cfg.character).then((r) => {
                     exportText = path.basename(r.file) + ' (' + Math.round(r.bytes / 1048576 * 10) / 10 + ' MB)';
                     log.info('WAV export ' + r.file + ' ' + r.bytes + ' bytes');
                     say('Saved ' + path.basename(r.file));
@@ -138,7 +164,7 @@ mgu.run({
         const server = new WebServer({
             state: () => {
                 const d = car.data();
-                return { ok: true, on: cfg.on, profile: cfg.profile, volume: cfg.volume, tune: tuneOf(),
+                return { ok: true, on: cfg.on, profile: cfg.profile, volume: cfg.volume, tune: tuneOf(), character: cfg.character,
                     rpm: Math.round(target.rpm), load: Math.round(target.load * 1000) / 1000,
                     running: target.running && (!target.demo || demoAudible()), demo: !!target.demo,
                     reason: target.reason, realRpm: typeof d.rpm === 'number' ? Math.round(d.rpm) : null,
@@ -147,6 +173,7 @@ mgu.run({
             set: (body) => {
                 if (typeof body.profile === 'string') actions.pick(body.profile);
                 if (body.tuneReset === true) actions.tuneReset();
+                if (typeof body.character === 'string' && body.character !== cfg.character) actions.character(body.character);
                 if (body.tune && typeof body.tune === 'object' && !Array.isArray(body.tune)) actions.tune(body.tune);
                 if (typeof body.volume === 'number' && isFinite(body.volume)) actions.volume(body.volume);
                 if (typeof body.on === 'boolean' && body.on !== cfg.on) { cfg.on = body.on; save(); say(cfg.on ? 'Sound on (phone)' : 'Sound off (phone)'); }
@@ -188,7 +215,7 @@ mgu.run({
             const ph = server.phoneConnected();
             r.push({ name: 'Phone', value: output() === 'car' ? 'Not used (output: head unit)' : ph ? 'Connected - sound plays on the phone' : 'Not linked - see PHONE',
                 state: output() === 'car' ? 'off' : ph ? 'ok' : 'warn' });
-            r.push({ name: 'Head unit audio', value: !huBackend ? 'Not on this head unit (no aplay / ffmpeg)' : !wantsHu() ? 'Not used (output: phone)' :
+            r.push({ name: 'Head unit audio', value: !huBackend ? 'Install tool Active Sound PCM Output' : !wantsHu() ? 'Not used (output: phone)' :
                 player.playing() ? 'Playing via ' + huBackend.name + ' (speakers not confirmed)' : player.detail || 'Ready (' + huBackend.name + ')',
                 state: !wantsHu() ? 'off' : player.status === 'error' ? 'bad' : player.playing() ? 'ok' : 'warn' });
             return r;
@@ -200,7 +227,7 @@ mgu.run({
                 rpm: target.rpm, load: target.load, running: target.running, demo: target.demo,
                 audible: sounding(), rows: rows(), notice,
                 huAvailable: !!huBackend, huBackend: huBackend ? huBackend.name : '',
-                exporting, exportText,
+                exporting, exportText, huTest,
                 phone: { link: server.url(), listening: server.listening, error: server.error, net: server.net,
                     port: server.port, connected: server.phoneConnected() },
             };
@@ -216,10 +243,11 @@ mgu.run({
         ctx.ui.onClick('BTN_PAGE', () => open((page + 1) % 5));
         ctx.ui.onClick('BTN_EXPORT', a.exportWav);
         ctx.ui.onClick('BTN_TUNE_RESET', a.tuneReset);
+        ctx.ui.onClick('BTN_HU_TEST', a.huTest);
         // the page draws all of these itself: keep them out of BMW's button bar where the kit runs the
         // screen (otherwise the bar covers the page's bottom row); they stay for the other render paths
         if (typeof ctx.hideButton === 'function') {
-            ['BTN_TOGGLE', 'BTN_NEXT', 'BTN_PREV', 'BTN_VOLUP', 'BTN_VOLDN', 'BTN_PAGE', 'BTN_EXPORT', 'BTN_TUNE_RESET'].forEach((id) => ctx.hideButton(id));
+            ['BTN_TOGGLE', 'BTN_NEXT', 'BTN_PREV', 'BTN_VOLUP', 'BTN_VOLDN', 'BTN_PAGE', 'BTN_EXPORT', 'BTN_TUNE_RESET', 'BTN_HU_TEST'].forEach((id) => ctx.hideButton(id));
         }
 
         let lastDraw = 0;

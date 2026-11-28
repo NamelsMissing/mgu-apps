@@ -1,0 +1,12 @@
+{
+  "id": "mgu-sound-pcm",
+  "kind": "tool",
+  "version": "0.1.0",
+  "title": "Active Sound PCM Output",
+  "description": "Live 48 kHz stereo output for Active Sound into the SmartX endpoint of a BMW media source that Active Sound connected to the front speakers",
+  "mguHmi": ["ID7"],
+  "files": [
+    {"path": "mgu-sound-pcm", "mode": "0755"},
+    {"path": "LICENSE", "mode": "0644"}
+  ]
+}

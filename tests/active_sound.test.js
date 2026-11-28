@@ -20,8 +20,9 @@ const pages = require(APP + '/web-page');
 const NET = path.join(__dirname, '../native/sound-net');
 
 const SR = 44100;
-function render(id, rpm, load, seconds, on, tune) {
+function render(id, rpm, load, seconds, on, tune, character) {
     const s = new EngineSynth(SR, E.get(id), 7, tune);
+    s.setCharacter(character || 'detailed'); s.setProfile(E.get(id), tune);
     s.set(rpm, load, on === undefined ? true : on, 1);
     const n = Math.round(SR * seconds), b = new Float32Array(n);
     s.render(b, null, n);
@@ -112,16 +113,19 @@ function mag(b, f, from) {
     // level matching ignores tuning; the tuning is audible
     const plain = new EngineSynth(SR, v8, 1), loud = new EngineSynth(SR, v8, 1, { bass: 2 });
     assert.strictEqual(plain.norm, loud.norm, 'tuning is not normalised away');
-    const coast = (id, tune) => {        // pull to 80 %, then lift off: overrun energy
+    const coast = (id, tune, character) => {        // pull to 80 %, then lift off: overrun energy
         const p = E.get(id), s = new EngineSynth(SR, p, 11, tune), b = new Float32Array(SR);
+        if (character) { s.setCharacter(character); s.setProfile(p, tune); }
         s.set(p.idle + 0.8 * (p.redline - p.idle), 1, true, 1); s.render(b, null, SR);
         s.set(p.idle + 0.3 * (p.redline - p.idle), 0, true, 1); s.render(b, null, SR);
         return rms(b, SR * 0.1);
     };
-    const popsOff = coast('v8_cross', { pops: 0, bangs: 0 }), popsMax = coast('v8_cross', { pops: 2, bangs: 2 });
-    assert.ok(popsMax > popsOff * 1.5, 'pops & bangs louder on overrun: ' + popsOff.toFixed(4) + ' -> ' + popsMax.toFixed(4));
-    const brakeOff = coast('diesel_truck', { brake: 0 }), brakeOn = coast('diesel_truck', null);
-    assert.ok(brakeOn > brakeOff * 1.5, 'engine brake bark: ' + brakeOff.toFixed(4) + ' -> ' + brakeOn.toFixed(4));
+    for (const ch of ['detailed', 'subtle']) {
+    const popsOff = coast('v8_cross', { pops: 0, bangs: 0 }, ch), popsMax = coast('v8_cross', { pops: 2, bangs: 2 }, ch);
+    assert.ok(popsMax > popsOff * 1.5, ch + ': pops & bangs louder on overrun: ' + popsOff.toFixed(4) + ' -> ' + popsMax.toFixed(4));
+    const brakeOff = coast('diesel_truck', { brake: 0 }, ch), brakeOn = coast('diesel_truck', null, ch);
+    assert.ok(brakeOn > brakeOff * 1.5, ch + ': engine brake bark: ' + brakeOff.toFixed(4) + ' -> ' + brakeOn.toFixed(4));
+    }
     // every profile stays finite and bounded at the extremes of every control
     for (const p of E.PROFILES) for (const ext of [0, 2]) {
         const t = {}; E.tuneKeys(p).forEach((c) => { t[c.key] = ext; });
@@ -137,7 +141,7 @@ function mag(b, f, from) {
 }
 /* stereo: inline engines mono, V / boxer engines two banks (correlated, not identical) + S16 */
 {
-    const st = (id) => { const s = new EngineSynth(SR, E.get(id), 9); s.set(4000, 0.8, true, 1);
+    const st = (id) => { const s = new EngineSynth(SR, E.get(id), 9); s.setCharacter('detailed'); s.setProfile(E.get(id)); s.set(4000, 0.8, true, 1);
         const l = new Float32Array(SR / 2), r = new Float32Array(SR / 2); s.render(l, r, l.length); return [l, r]; };
     let [l, r] = st('inline6');
     assert.deepStrictEqual(Array.from(l), Array.from(r), 'inline-6 is mono');
@@ -169,9 +173,24 @@ function mag(b, f, from) {
         assert.ok(gap > 8 && gap < 18, id + ' idle -> full load ' + gap.toFixed(1) + ' dB');
     }
     // small speaker: almost nothing below 120 Hz, still clearly audible
-    const s = new EngineSynth(SR, E.get('diesel6'), 3); s.setSpeaker('small'); s.set(1200, 0.25, true, 1);
+    const s = new EngineSynth(SR, E.get('diesel6'), 3); s.setCharacter('detailed'); s.setProfile(E.get('diesel6')); s.setSpeaker('small'); s.set(1200, 0.25, true, 1);
     const b = new Float32Array(SR); s.render(b, null, SR);
     assert.ok(share(b, 120) > 0.85 && rms(b, SR / 2) > 0.02, 'phone speaker mode: ' + share(b, 120).toFixed(2));
+}
+/* subtle (factory-ASD) character, the default: almost nothing above 500 Hz, quiet at idle and cruise, mono */
+{
+    const sub = (id, n, load) => { const p = E.get(id), s = new EngineSynth(SR, p, 5); assert.ok(s.subtle, 'subtle is the default');
+        s.set(p.idle + n * (p.redline - p.idle), load, true, 1); const l = new Float32Array(SR), r = new Float32Array(SR); s.render(l, r, SR); return [l, r]; };
+    for (const id of ['diesel6', 'v8_cross', 'inline4']) {
+        const [idle] = sub(id, 0.03, 0.05), [cruise] = sub(id, 0.2, 0.25), [full, fullR] = sub(id, 0.6, 1);
+        const N = 4096, seg = full.subarray(SR - N); let hi = 0, all = 0;
+        for (let k = 1; k < 300; k++) { let re = 0, im = 0; for (let i = 0; i < N; i++) { const a = 2 * Math.PI * k * i / N; re += seg[i] * Math.cos(a); im += seg[i] * Math.sin(a); }
+            const pw = re * re + im * im; all += pw; if (k * SR / N > 600) hi += pw; }
+        assert.ok(hi / all < 0.03, id + ' subtle: energy above 600 Hz ' + (100 * hi / all).toFixed(1) + ' %');
+        const db = (a, b) => 20 * Math.log10(rms(a, SR / 2) / rms(b, SR / 2));
+        assert.ok(db(full, idle) > 16 && db(full, cruise) > 9 && db(full, cruise) < 18, id + ' subtle levels: idle -' + db(full, idle).toFixed(1) + ' dB, cruise -' + db(full, cruise).toFixed(1) + ' dB');
+        assert.deepStrictEqual(Array.from(full.subarray(SR - 64)), Array.from(fullR.subarray(SR - 64)), 'subtle is mono');
+    }
 }
 /* exhaust pipe: gets hot under load (resonance moves up), resonance control works */
 {
@@ -243,13 +262,92 @@ function mag(b, f, from) {
     fake.set(3000, 0.5, true, 0.5);
     assert.ok(fake.start());
     assert.strictEqual(spawned[0].bin, '/usr/bin/aplay');
-    assert.ok(spawned[0].args.indexOf('S16_LE') >= 0 && spawned[0].args.indexOf('44100') >= 0);
+    assert.ok(spawned[0].args.indexOf('S16_LE') >= 0 && spawned[0].args.indexOf('48000') >= 0);
     setTimeout(() => {
-        const b = spawned[0].c.bytes, expect = (300 + 120) / 1000 * 44100 * 4;
+        const b = spawned[0].c.bytes, expect = (300 + 120) / 1000 * 48000 * 4;
         assert.ok(b > expect * 0.6 && b < expect * 1.6, 'clock-paced output: ' + b + ' bytes');
         fake.stop(); assert.ok(!fake.playing());
     }, 300);
 }
+
+/* ---------- head unit: BMW media route (fake AudioManager) + route backend ---------- */
+const { HuRoute, endpoint } = require(APP + '/hu_route');
+function fakeAm(opts) {
+    const o = Object.assign({ sources: ['CarPlayMedia', 'CarLifeMedia'], frontBusy: false }, opts || {});
+    const st = { calls: [], links: [] };
+    const src = o.sources.map((name, i) => ({ name, sourceID: 260 + i, availability: { availability: 'A_AVAILABLE' } }));
+    const sinks = [{ name: 'MediaSink_Front', sinkID: 1024, availability: 1 }, { name: 'NaviSink', sinkID: 1030, availability: 1 }];
+    if (o.frontBusy) st.links.push({ mainConnectionID: 7, sourceID: 260, sinkID: 1024, connectionState: 'CS_CONNECTED' });
+    st.signals = {
+        proxy: () => 'P',
+        call: async (proxy, m, args) => {
+            st.calls.push(m);
+            if (m === 'getListMainSources') return { amError: 'E_OK', listMainSources: src };
+            if (m === 'getListMainSinks') return { amError: 'E_OK', listMainSinks: sinks };
+            if (m === 'getListMainConnections') return { amError: 'E_OK', listMainConnections: st.links.slice() };
+            if (m === 'connect') { st.links.push({ mainConnectionID: 42, sourceID: args.sourceID, sinkID: args.sinkID, connectionState: 2 }); return { amError: 'E_OK', mainConnectionID: 42 }; }
+            if (m === 'disconnect') { st.links = st.links.filter((c) => c.mainConnectionID !== args.mainConnectionID); return { amError: 0 }; }
+            throw new Error('unexpected ' + m);
+        },
+    };
+    return st;
+}
+(async () => {
+    assert.strictEqual(endpoint('CarLifeMedia'), 'plug:smartx:CarLifeMedia_CF_48_STEREO');
+    // discovery is read only and names the usable candidate
+    let am = fakeAm();
+    const r = await new HuRoute(am.signals, { wait: async () => {} }).discover(async () => {});
+    assert.strictEqual(r.chosen, 'CarLifeMedia');
+    assert.deepStrictEqual(r.candidates.map((c) => c.present), [false, false, true]);
+    assert.ok(!am.calls.includes('connect') && !am.calls.includes('disconnect'), 'discover never connects');
+    // busy front speakers (music): refuse, never touch the foreign connection
+    am = fakeAm({ frontBusy: true });
+    await assert.rejects(new HuRoute(am.signals, { wait: async () => {} }).acquire(() => true, async () => {}), /busy/);
+    assert.ok(!am.calls.includes('connect') && am.links.length === 1);
+    // free: connect, then release exactly our own connection
+    am = fakeAm();
+    const route = new HuRoute(am.signals, { wait: async () => {} });
+    assert.strictEqual(await route.acquire(() => true, async () => {}), 'plug:smartx:CarLifeMedia_CF_48_STEREO');
+    assert.deepStrictEqual(am.links.map((c) => [c.sourceID, c.sinkID]), [[261, 1024]]);
+    await route.release();
+    assert.strictEqual(am.links.length, 0); assert.strictEqual(route.owner, null);
+    // no candidate present
+    am = fakeAm({ sources: ['CarPlayMedia', 'TunerMedia'] });
+    await assert.rejects(new HuRoute(am.signals, { wait: async () => {} }).acquire(() => true, async () => {}), /No free BMW media source/);
+    // live player over the route: helper gets the endpoint, stop releases the route
+    am = fakeAm();
+    const spawned = [];
+    const pl = new LivePlayer({ profile: E.get('diesel6'), dspClient: null, find: () => null, helper: '/x/mgu-sound-pcm', exists: () => true,
+        route: new HuRoute(am.signals, { wait: async () => {} }),
+        execFile: (bin, args, opts, cb) => { assert.strictEqual(args[0], '--probe'); cb(null, '{}', ''); },
+        spawn: (bin, args) => { const c = new EventEmitter(); c.stdin = new PassThrough(); c.stdout = new PassThrough(); c.stderr = new PassThrough();
+            c.kill = () => c.emit('close', 0); c.bytes = 0; c.stdin.on('data', (d) => { c.bytes += d.length; }); spawned.push({ bin, args, c }); return c; } });
+    assert.strictEqual(pl.backend().route, true);
+    pl.set(1500, 0.5, true, 0.5); assert.ok(pl.start());
+    await new Promise((res) => setTimeout(res, 250));
+    assert.deepStrictEqual(spawned.map((x) => [x.bin, x.args[0]]), [['/x/mgu-sound-pcm', 'plug:smartx:CarLifeMedia_CF_48_STEREO']]);
+    assert.ok(spawned[0].c.bytes > 0.1 * 48000 * 4 && spawned[0].c.bytes < 0.5 * 48000 * 4, 'paced, short lead: ' + spawned[0].c.bytes);
+    spawned[0].c.stdout.write('{"writtenFrames":4800,"droppedFrames":0}\n');
+    await new Promise((res) => setImmediate(res));
+    assert.strictEqual(pl.stats.writtenFrames, 4800);
+    pl.stop();
+    await new Promise((res) => setTimeout(res, 20));
+    assert.strictEqual(am.links.length, 0, 'route released on stop');
+    // the native helper: glibc <= 2.17, refuses anything but a SmartX media endpoint
+    const helper = path.join(__dirname, '../native/sound-pcm/mgu-sound-pcm');
+    assert.ok(fs.statSync(helper).mode & 0o111, 'helper executable');
+    const cp = require('child_process');
+    try {
+        const vers = cp.execFileSync('objdump', ['-T', helper], { encoding: 'utf8' }).match(/GLIBC_[0-9.]+/g) || [];
+        vers.forEach((v) => { const n = v.slice(6).split('.').map(Number); assert.ok(n[0] < 2 || (n[0] === 2 && (n[1] || 0) <= 17), 'helper needs ' + v); });
+    } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    if (process.platform === 'linux' && process.arch === 'x64') {
+        for (const d of ['default', 'hw:0', 'plughw:0,0', 'smartx:CarPlayMain_CF_48_STEREO', 'smartx:NaviAnnouncement_CF_48_STEREO', 'smartx:x:y_CF_48_STEREO']) {
+            const res = cp.spawnSync(helper, ['--probe', d], { encoding: 'utf8' });
+            assert.strictEqual(res.status, 2, d + ' refused');
+        }
+    }
+})().catch((e) => { console.error(e); process.exit(1); });
 
 /* ---------- WAV export ---------- */
 (async () => {

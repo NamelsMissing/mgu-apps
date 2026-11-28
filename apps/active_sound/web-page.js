@@ -30,6 +30,7 @@ class ActiveSoundProcessor extends AudioWorkletProcessor {
             if (m.type === 'profile') this.synth.setProfile(ActiveSoundEngines.get(m.id), m.tune || null);
             else if (m.type === 'tune') this.synth.setTune(m.tune || null);
             else if (m.type === 'speaker') this.synth.setSpeaker(m.mode);
+            else if (m.type === 'character') { this.synth.setCharacter(m.mode); this.synth.setProfile(this.synth.p, this.synth.tune); }
             else if (m.type === 'set') this.synth.set(m.rpm, m.load, m.on, m.volume);
         };
     }
@@ -92,6 +93,11 @@ ${cfg.mode === 'demo' ? `<div class="card"><div class="row" style="align-items:s
 <div class="row" style="margin-top:10px"><button id="auto" class="big off">AUTO DRIVE: OFF</button></div></div>` : `<div class="card"><div class="row">
   <button id="power" class="big off">CAR SOUND: OFF</button></div><p class="note" id="carline">Connecting to the car...</p></div>`}
 <div class="card"><div class="lbl">VOLUME <span id="volv"></span></div><input id="vol" type="range" min="0" max="100" step="5" value="50">
+  <div class="lbl" style="margin-top:12px">CHARACTER</div>
+  <div class="row"><button id="chr-subtle" class="small">Subtle (factory ASD)</button><button id="chr-detailed" class="small">Detailed</button></div>
+  <p class="note">Subtle: only the low engine orders, quiet when cruising, stronger with load - meant to sit underneath, not to be noticed.</p>
+  <div class="row" style="margin-top:6px"><button id="mix" class="small">Mix with music: ON</button></div>
+  <p class="note">On: music from Spotify &amp; co. keeps playing (iPhone silent switch mutes the engine sound). Off: the engine sound pauses other audio.</p>
   <div class="lbl" style="margin-top:12px">PLAYS THROUGH</div>
   <div class="row"><button id="spk-small" class="small">Phone speaker</button><button id="spk-full" class="small">Car / headphones</button></div>
   <p class="note">Phone speakers cannot play the deep firing pulses; this mode plays their overtones instead so it does not rattle.</p></div>
@@ -108,7 +114,7 @@ ${cfg.mode === 'demo' ? `<div class="card"><div class="row" style="align-items:s
 'use strict';
 var MODE = ${JSON.stringify(cfg.mode)}, TOKEN = ${JSON.stringify(cfg.token || '')};
 var E = ActiveSoundEngines;
-var st = { tune: {}, on: MODE === 'demo', profile: E.DEFAULT, volume: 0.5, rpm: 0, load: 0, running: MODE === 'demo', demo: false, at: 0, reason: '' };
+var st = { character: 'subtle', mix: true, tune: {}, on: MODE === 'demo', profile: E.DEFAULT, volume: 0.5, rpm: 0, load: 0, running: MODE === 'demo', demo: false, at: 0, reason: '' };
 var ctx = null, node = null, local = null, enabled = false, lastErr = '', wake = null;
 var $ = function (id) { return document.getElementById(id); };
 function q(p) { return p + (p.indexOf('?') < 0 ? '?' : '&') + 't=' + encodeURIComponent(TOKEN); }
@@ -120,6 +126,7 @@ function post(m) {
     if (m.type === 'profile') local.setProfile(E.get(m.id), m.tune || null);
     else if (m.type === 'tune') local.setTune(m.tune || null);
     else if (m.type === 'speaker') local.setSpeaker(m.mode);
+    else if (m.type === 'character') { local.setCharacter(m.mode); local.setProfile(local.p, local.tune); }
     else local.set(m.rpm, m.load, m.on, m.volume);
 }
 function fresh() { return MODE === 'demo' || Date.now() - st.at < 1500; }
@@ -133,12 +140,12 @@ function startScript() {
 }
 function startAudio() {
     if (ctx) { ctx.resume(); enabled = !enabled; draw(); return; }
-    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    setSession();
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) { lastErr = 'This browser has no Web Audio.'; draw(); return; }
     ctx = new AC({ latencyHint: 'interactive' });
     enabled = true;
-    var done = function () { post({ type: 'speaker', mode: speaker }); post({ type: 'profile', id: st.profile, tune: st.tune }); push(); draw(); };
+    var done = function () { post({ type: 'character', mode: st.character }); post({ type: 'speaker', mode: speaker }); post({ type: 'profile', id: st.profile, tune: st.tune }); push(); draw(); };
     var url = ${cfg.mode === 'demo' ? 'null' : "q('/worklet.js')"};
     var viaWorklet = function () {
         if (!ctx.audioWorklet) return Promise.reject(new Error('no AudioWorklet'));
@@ -171,6 +178,7 @@ function poll() {
     fetch(q('/api/state'), { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (v) {
         busy = false;
         if (!v || !v.ok) return;
+        if (v.character && v.character !== st.character) { st.character = v.character; post({ type: 'character', mode: st.character }); showCharacter(); }
         var tj = JSON.stringify(v.tune || {});
         if (v.profile !== st.profile) { st.profile = v.profile; st.tune = v.tune || {}; post({ type: 'profile', id: st.profile, tune: st.tune }); buildEngines(); buildTune(); }
         else if (tj !== JSON.stringify(st.tune) && Date.now() - tuneTouched > 1500) { st.tune = v.tune || {}; post({ type: 'tune', tune: st.tune }); buildTune(); }
@@ -208,6 +216,23 @@ function simStep(now) {
     if (out.rpm < E.get(st.profile).idle * 1.02 && out.kmh < 1) st.rpm += Math.sin(now / 90) * 10;   // idle wobble
     push();
 }
+
+// ---------- character (car: saved in the car) and audio session
+function showCharacter() {
+    $('chr-subtle').style.borderColor = st.character === 'subtle' ? '#e1001a' : '';
+    $('chr-detailed').style.borderColor = st.character === 'detailed' ? '#e1001a' : '';
+}
+function setCharacter(c) { st.character = c; post({ type: 'character', mode: c }); showCharacter(); send({ character: c }); }
+$('chr-subtle').onclick = function () { setCharacter('subtle'); };
+$('chr-detailed').onclick = function () { setCharacter('detailed'); };
+try { var mv = localStorage.getItem('activeSoundMix'); if (mv === '0') st.mix = false; } catch (e) {}
+function setSession() {
+    // 'ambient' mixes with other apps' audio (music keeps playing); 'playback' interrupts it
+    try { if (navigator.audioSession) navigator.audioSession.type = st.mix ? 'ambient' : 'playback'; } catch (e) {}
+    $('mix').textContent = 'Mix with music: ' + (st.mix ? 'ON' : 'OFF');
+}
+$('mix').onclick = function () { st.mix = !st.mix; try { localStorage.setItem('activeSoundMix', st.mix ? '1' : '0'); } catch (e) {} setSession(); };
+setSession(); showCharacter();
 
 // ---------- playback device (kept in this browser)
 var speaker = MODE === 'demo' ? 'small' : 'full';
